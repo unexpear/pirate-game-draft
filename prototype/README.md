@@ -1,8 +1,10 @@
-# Sea Trial Prototype — Web Implementation
+# Sea Trial Prototype — Disposable Web Spike
 
-A single-file React + Three.js prototype of the vertical slice. Implements the slice's core loop in the browser as a real 3D scene: build a ship → validate → save → load in Sail → float on Gerstner waves → cargo / damage → sink or recover.
+> **The Three.js browser spike proved the vertical-slice loop. It is not the production path. The final game target is an engineless native C++ game using selected libraries — see [../tech-stack.md](../tech-stack.md).**
 
-This is **not** the engine-based prototype the slice plan ultimately calls for ([../vertical-slice.md §3](../vertical-slice.md) leans Unreal). It's a faster proof — runnable in any browser without a build step — to validate the math, the spine, and the 3D feel before sinking time into an engine project.
+A single-file React + Three.js spike of the vertical slice. Implements the slice's core loop in the browser as a real 3D scene: build a ship → validate → save → load in Sail → float on Gerstner waves → cargo / damage → sink or recover. Plus an 11-check self-test panel that exercises the model spine without WebGL.
+
+This is **disposable proof**. The real game gets built natively in C++ per [../vertical-slice.md §3](../vertical-slice.md). Keep this around as reference for the math, the JSON schema, and the test cases — do not extend it as if it were the production app.
 
 ## Files
 

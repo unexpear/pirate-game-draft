@@ -1,6 +1,6 @@
 # Vertical Slice Plan — Sea Trial Prototype
 
-> **Status:** initial web implementation lives at [prototype/](prototype/) — covers Phases 0–6 in browser-runnable form (single-player, real 3D Three.js scene with mesh ocean + WebGL ship). The engine-based prototype this plan ultimately calls for (lean Unreal, §3) is still ahead.
+> **Status:** the Three.js browser spike at [prototype/](prototype/) proved the vertical-slice loop. **It is not the production path.** The final game target is an engineless native C++ game using selected libraries — see [tech-stack.md](tech-stack.md). The next build target is a native C++ vertical slice, starting with the first-milestone scope in §3.
 
 ## Purpose
 
@@ -68,27 +68,41 @@ The water design already chose multi-frequency Gerstner waves, score-based buoya
 
 ---
 
-## 3. Engine decision for the slice
+## 3. Engine decision — engineless custom C++ stack
 
 ### Decision
 
-Use an existing engine for the vertical slice. Do **not** go engineless for the first prototype.
+The production target is an **engineless native C++ game using selected libraries**. Not Unreal, not Unity, not Godot. Not HTML.
 
-### Reason
+The Three.js browser spike at [prototype/](prototype/) already proved the loop end-to-end (build → ship data → validation → Sail → buoyancy → damage/cargo, plus 11/11 model-spine self-tests). That spike was disposable proof. The real slice gets built natively in C++.
 
-The current docs correctly say the engine decision gates everything else — see [tech-stack.md](tech-stack.md).
+### Stack
 
-For this slice, the goal is not to prove that a custom engine can exist. The goal is to prove the game concept works.
+Locked in [tech-stack.md](tech-stack.md):
 
-The slice needs water rendering, rigid body physics, input, UI, save/load, debug overlays, asset loading, and (later) Steamworks + multiplayer integration. Building those from scratch first burns time before the game has proven itself.
+- Language: **C++**
+- Window / input: **SDL3**
+- Rendering: **bgfx**
+- Physics: **Jolt**
+- UI / tools: **Dear ImGui**
+- Audio: **miniaudio**
+- Build: **CMake**
+- Networking (later): **Steamworks SDR**
 
-### Practical choice
+"Engineless" means custom engine assembled from libraries — not write-every-subsystem-from-scratch.
 
-Use **Unreal or Unity** for the prototype — both already noted as the strongest options in [tech-stack.md](tech-stack.md).
+### First native milestone
 
-For this specific game, lean **Unreal for the prototype** because the project wants ocean visuals, ships, physics, multiplayer, Steam release, and large-world feel.
+Before resuming the full Build → Sail loop in native code, hit a smaller bootstrap milestone:
 
-The architecture below stays engine-neutral enough to port later. Engineless is still open for the final game.
+- Open a native window
+- Render a 3D grid
+- Render a generated ship mesh
+- Render a Gerstner water mesh
+- Run the same 11 self-tests in C++
+- Show a Dear ImGui debug panel
+
+No sailing yet. That's the bridge from the browser spike to the engineless game. Once it passes, the rest of the slice (§5 onward) gets re-implemented natively.
 
 ---
 
