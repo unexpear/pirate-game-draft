@@ -3,8 +3,9 @@
 Master list. Per-mode subsets live inline in [game-a-pirate-sandbox.md](game-a-pirate-sandbox.md) (Sail) and [game-b-shipbuilding-sim.md](game-b-shipbuilding-sim.md) (Build). Resolved items move to [decisions.md](decisions.md).
 
 ## Tech foundation
-- Engine vs. engineless final decision (gates everything else — see [tech-stack.md](tech-stack.md))
-- Graphics API, language, physics library picks (if engineless)
+- **Final-game** engine vs. engineless decision (slice uses an existing engine, lean Unreal — see [vertical-slice.md §3](vertical-slice.md); final game still open)
+- Prototype engine pick: Unreal vs. Unity (slice plan leans Unreal but not locked)
+- Graphics API, language, physics library picks (if engineless for the final game)
 - Single executable with internal mode switching, or two executables under one Steam app ID (per-EXE launch options) — affects mode-switching feel and patching workflow
 
 ## Sail mode
