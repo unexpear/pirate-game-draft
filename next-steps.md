@@ -4,7 +4,7 @@ A web-runnable prototype of the slice landed at [prototype/](prototype/) coverin
 
 ## Immediate
 
-- [ ] Play through the web prototype end-to-end and confirm the slice's pass criteria (slice §19) hold in the simplified 2D form
+- [ ] Play through the web prototype end-to-end and confirm the slice's pass criteria (slice §19) hold in the simplified 3D browser form
 - [ ] Capture lessons / surprises from the web prototype before starting the engine version
 - [ ] Lock engine pick: Unreal vs. Unity (lean Unreal)
 - [ ] Begin Phase 0 of the engine prototype: project setup, menu, two empty scenes, debug overlay shell
