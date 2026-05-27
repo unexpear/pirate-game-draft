@@ -1,10 +1,10 @@
 # Sea Trial Prototype — Disposable Web Spike
 
-> **The Three.js browser spike proved the vertical-slice loop. It is not the production path. The final game target is an engineless native C++ game using selected libraries — see [../tech-stack.md](../tech-stack.md).**
+> **The Three.js browser spike proved the vertical-slice loop. It is not the production path. The final game target is an engineless native C++ game using selected libraries — see [../../tech-stack.md](../../tech-stack.md).**
 
 A single-file React + Three.js spike of the vertical slice. Implements the slice's core loop in the browser as a real 3D scene: build a ship → validate → save → load in Sail → float on Gerstner waves → cargo / damage → sink or recover. Plus an 11-check self-test panel that exercises the model spine without WebGL.
 
-This is **disposable proof**. The real game gets built natively in C++ per [../vertical-slice.md §3](../vertical-slice.md). Keep this around as reference for the math, the JSON schema, and the test cases — do not extend it as if it were the production app.
+This is **disposable proof**. The real game gets built natively in C++ per [../../vertical-slice.md §3](../../vertical-slice.md). Keep this around as reference for the math, the JSON schema, and the test cases — do not extend it as if it were the production app.
 
 ## Files
 
@@ -27,7 +27,7 @@ python -m http.server 8080
 
 ## What it implements
 
-Mapped to [../vertical-slice.md](../vertical-slice.md):
+Mapped to [../../vertical-slice.md](../../vertical-slice.md):
 
 - Main menu (§5)
 - Build Test scene (§6) — generated pieces, editable hull dims, materials, systems toggles, live 3D dry-dock preview
@@ -43,7 +43,7 @@ Mapped to [../vertical-slice.md](../vertical-slice.md):
 
 - Networking — single-player only (slice §14).
 - Multiplayer determinism scaffolding is in place (seeded waves, serializable state) but no actual sync.
-- Engine integration — this is a browser prototype, not the Unreal target.
+- Engine integration — this is a browser spike, not the engineless C++ target.
 - Real board bending, real sailing aerodynamics, real Workshop, real Steam Cloud (all in slice §20 "What to fake").
 
 ## Source

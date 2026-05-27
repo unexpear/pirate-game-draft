@@ -1,6 +1,6 @@
 # Next steps
 
-The Three.js browser spike at [prototype/](prototype/) proved the vertical-slice loop. **It is not the production path.** The final game target is an **engineless native C++ game using selected libraries** — see [tech-stack.md](tech-stack.md). The next build target is a custom C++ vertical slice.
+The Three.js browser spike at [spikes/threejs-sea-trial/](spikes/threejs-sea-trial/) proved the vertical-slice loop. **It is not the production path.** The final game target is an **engineless native C++ game using selected libraries** — see [tech-stack.md](tech-stack.md). The next build target is a custom C++ vertical slice.
 
 ## Immediate
 
@@ -17,7 +17,7 @@ The Three.js browser spike at [prototype/](prototype/) proved the vertical-slice
 ## Done
 
 - [x] Slice scope defined ([vertical-slice.md](vertical-slice.md))
-- [x] Web spike (React + Three.js) with Gerstner waves, Tier 2 sampling, ship JSON, validation, cargo/damage/sinking ([prototype/](prototype/))
+- [x] Web spike (React + Three.js) with Gerstner waves, Tier 2 sampling, ship JSON, validation, cargo/damage/sinking ([spikes/threejs-sea-trial/](spikes/threejs-sea-trial/))
 - [x] 11/11 self-tests passing in the web spike — model-spine regression gate
 - [x] Engine direction locked: engineless C++ stack ([tech-stack.md](tech-stack.md))
 - [x] Version control (this repo)

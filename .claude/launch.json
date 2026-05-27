@@ -4,7 +4,7 @@
     {
       "name": "prototype",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "8080", "--directory", "pirate-games/prototype"],
+      "runtimeArgs": ["-m", "http.server", "8080", "--directory", "pirate-games/spikes/threejs-sea-trial"],
       "port": 8080
     }
   ]

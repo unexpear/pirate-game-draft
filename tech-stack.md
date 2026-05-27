@@ -39,7 +39,7 @@ The final game target is an **engineless native C++ game using selected librarie
 
 ### What the web spike was for
 
-The Three.js browser spike at [prototype/](prototype/) proved the vertical-slice loop (build → ship data → validation → Sail → buoyancy → damage/cargo, plus 11/11 model-spine self-tests). **It is not the production path.** Keep it around as reference for the math, JSON schema, and test cases. Do not extend it as if it were the production app.
+The Three.js browser spike at [spikes/threejs-sea-trial/](spikes/threejs-sea-trial/) proved the vertical-slice loop (build → ship data → validation → Sail → buoyancy → damage/cargo, plus 11/11 model-spine self-tests). **It is not the production path.** Keep it around as reference for the math, JSON schema, and test cases. Do not extend it as if it were the production app.
 
 ## Status
 

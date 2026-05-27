@@ -1,6 +1,6 @@
 # Vertical Slice Plan — Sea Trial Prototype
 
-> **Status:** the Three.js browser spike at [prototype/](prototype/) proved the vertical-slice loop. **It is not the production path.** The final game target is an engineless native C++ game using selected libraries — see [tech-stack.md](tech-stack.md). The next build target is a native C++ vertical slice, starting with the first-milestone scope in §3.
+> **Status:** the Three.js browser spike at [spikes/threejs-sea-trial/](spikes/threejs-sea-trial/) proved the vertical-slice loop. **It is not the production path.** The final game target is an engineless native C++ game using selected libraries — see [tech-stack.md](tech-stack.md). The next build target is a native C++ vertical slice, starting with the first-milestone scope in §3.
 
 ## Purpose
 
@@ -74,7 +74,7 @@ The water design already chose multi-frequency Gerstner waves, score-based buoya
 
 The production target is an **engineless native C++ game using selected libraries**. Not Unreal, not Unity, not Godot. Not HTML.
 
-The Three.js browser spike at [prototype/](prototype/) already proved the loop end-to-end (build → ship data → validation → Sail → buoyancy → damage/cargo, plus 11/11 model-spine self-tests). That spike was disposable proof. The real slice gets built natively in C++.
+The Three.js browser spike at [spikes/threejs-sea-trial/](spikes/threejs-sea-trial/) already proved the loop end-to-end (build → ship data → validation → Sail → buoyancy → damage/cargo, plus 11/11 model-spine self-tests). That spike was disposable proof. The real slice gets built natively in C++.
 
 ### Stack
 
