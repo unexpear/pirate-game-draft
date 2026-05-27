@@ -1,0 +1,964 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import * as THREE from "three";
+
+const SAVE_KEY = "pirate-3d-sea-trial-ship-v1";
+const WATER_DENSITY = 1000;
+
+const MATERIALS = {
+  pine: { label: "Pine", density: 430, color: 0xb7791f },
+  oak: { label: "Oak", density: 700, color: 0x8b4513 },
+  teak: { label: "Teak", density: 650, color: 0x9a5b22 },
+};
+
+const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const fmt = (v, d = 1) => (Number.isFinite(v) ? v.toFixed(d) : "0.0");
+
+function seededHash(seed) {
+  let h = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function makeWaveField(seed = "sea-trial-3d") {
+  const base = seededHash(seed);
+  const rand = (n) => {
+    const x = Math.sin(base + n * 999.331) * 10000;
+    return x - Math.floor(x);
+  };
+  return [
+    { direction: 0.15 + rand(1) * 0.5, amplitude: 0.55, wavelength: 15, speed: 1.4, phase: rand(2) * Math.PI * 2 },
+    { direction: 1.25 + rand(3) * 0.6, amplitude: 0.28, wavelength: 8, speed: 2.0, phase: rand(4) * Math.PI * 2 },
+    { direction: 2.6 + rand(5) * 0.5, amplitude: 0.14, wavelength: 5, speed: 2.7, phase: rand(6) * Math.PI * 2 },
+  ];
+}
+
+function sampleWater(waves, x, z, t) {
+  let height = 0;
+  let dx = 0;
+  let dz = 0;
+
+  for (const w of waves) {
+    const dirX = Math.cos(w.direction);
+    const dirZ = Math.sin(w.direction);
+    const k = (Math.PI * 2) / w.wavelength;
+    const f = k * (dirX * x + dirZ * z) + w.phase + t * w.speed;
+    const s = Math.sin(f);
+    const c = Math.cos(f);
+    height += w.amplitude * s;
+    dx += w.amplitude * k * dirX * c;
+    dz += w.amplitude * k * dirZ * c;
+  }
+
+  return { height, slopeX: dx, slopeZ: dz };
+}
+
+function makeShipFromConfig(config, previousPieces = []) {
+  const mat = MATERIALS[config.material] || MATERIALS.oak;
+  const pieces = [];
+  const length = Number(config.length);
+  const width = Number(config.width);
+  const depth = Number(config.depth);
+  const plankCount = Math.max(10, Math.round(length * 1.35));
+  const ribCount = Math.max(5, Math.round(length / 1.4));
+
+  const addPiece = (piece) => {
+    const old = previousPieces.find((p) => p.id === piece.id);
+    pieces.push({ ...piece, damage: old?.damage ?? 0 });
+  };
+
+  addPiece({
+    id: "keel_001",
+    type: "keel",
+    material: config.material,
+    volume: length * 0.14 * 0.18,
+    mass: length * 0.14 * 0.18 * mat.density,
+    position: [0, -depth * 0.55, 0],
+    rotation: [0, 0, 0],
+    bounds: [0.18, 0.18, length],
+  });
+
+  for (let i = 0; i < ribCount; i++) {
+    const z = lerp(-length / 2, length / 2, i / Math.max(1, ribCount - 1));
+    const curve = Math.sin((i / Math.max(1, ribCount - 1)) * Math.PI);
+    const ribWidth = width * (0.55 + curve * 0.36);
+    const volume = ribWidth * depth * 0.014;
+    addPiece({
+      id: `rib_${String(i + 1).padStart(3, "0")}`,
+      type: "rib",
+      material: config.material,
+      volume,
+      mass: volume * mat.density,
+      position: [0, -depth * 0.16, z],
+      rotation: [0, 0, 0],
+      bounds: [ribWidth, depth * 0.75, 0.07],
+    });
+  }
+
+  for (let side = -1; side <= 1; side += 2) {
+    for (let i = 0; i < plankCount; i++) {
+      const z = lerp(-length / 2, length / 2, i / Math.max(1, plankCount - 1));
+      const curve = Math.sin((i / Math.max(1, plankCount - 1)) * Math.PI);
+      const x = side * (width * 0.32 + curve * width * 0.12);
+      const y = -depth * 0.25 + curve * depth * 0.18;
+      const volume = (length / plankCount) * depth * 0.04;
+      addPiece({
+        id: `plank_${side > 0 ? "starboard" : "port"}_${String(i + 1).padStart(3, "0")}`,
+        type: "plank",
+        material: config.material,
+        volume,
+        mass: volume * mat.density,
+        position: [x, y, z],
+        rotation: [0, side * 0.18, side * 0.16],
+        bounds: [0.12, depth * 0.58, length / plankCount],
+      });
+    }
+  }
+
+  const deckVolume = length * width * 0.026;
+  addPiece({
+    id: "deck_001",
+    type: "deck",
+    material: config.material,
+    volume: deckVolume,
+    mass: deckVolume * mat.density,
+    position: [0, depth * 0.03, 0],
+    rotation: [0, 0, 0],
+    bounds: [width * 0.78, 0.08, length * 0.82],
+  });
+
+  return {
+    schema_version: 1,
+    ship_id: "test_sloop_001",
+    display_name: config.name || "Test Sloop",
+    created_by: "local",
+    build_version: "3d-prototype",
+    bounds: { length, width, depth, height: depth + 5.4 },
+    runtime: {
+      buoyancy_tier: 2,
+      sample_grid: { type: "rectangular", rows: 3, columns: 3 },
+      collision_asset: "generated",
+      visual_asset: "generated",
+    },
+    systems: {
+      helm_count: config.hasHelm ? 1 : 0,
+      sail_count: config.hasSail ? 1 : 0,
+      mast_count: config.hasSail ? 1 : 0,
+      cannon_count: Number(config.cannonCount),
+      cargo_mass: Number(config.cargoMass),
+    },
+    pieces,
+  };
+}
+
+function configFromShip(ship) {
+  return {
+    name: ship?.display_name || "Test Sloop",
+    length: ship?.bounds?.length || 12,
+    width: ship?.bounds?.width || 4,
+    depth: ship?.bounds?.depth || 2.8,
+    material: ship?.pieces?.[0]?.material || "oak",
+    hasHelm: (ship?.systems?.helm_count || 0) > 0,
+    hasSail: (ship?.systems?.sail_count || 0) > 0,
+    cannonCount: ship?.systems?.cannon_count ?? 2,
+    cargoMass: ship?.systems?.cargo_mass ?? 0,
+  };
+}
+
+function getShipStats(ship) {
+  const pieces = ship?.pieces || [];
+  const activeVolume = pieces.reduce((s, p) => s + Math.max(0, p.volume || 0) * (1 - clamp(p.damage ?? 0, 0, 1)), 0);
+  const maxVolume = pieces.reduce((s, p) => s + Math.max(0, p.volume || 0), 0);
+  const hullMass = pieces.reduce((s, p) => s + Math.max(0, p.mass || 0), 0);
+  const cargoMass = ship?.systems?.cargo_mass || 0;
+  const cannonMass = (ship?.systems?.cannon_count || 0) * 360;
+  const rigMass = (ship?.systems?.sail_count || 0) * 160 + (ship?.systems?.mast_count || 0) * 220 + (ship?.systems?.helm_count || 0) * 45;
+  const crewMass = 240;
+  const mass = hullMass + cargoMass + cannonMass + rigMass + crewMass;
+  const buoyancyScore = activeVolume * WATER_DENSITY;
+  const floatMargin = buoyancyScore - mass;
+  return {
+    pieceCount: pieces.length,
+    healthyPieces: pieces.filter((p) => (p.damage ?? 0) < 1).length,
+    activeVolume,
+    maxVolume,
+    hullMass,
+    cargoMass,
+    cannonMass,
+    rigMass,
+    crewMass,
+    mass,
+    buoyancyScore,
+    floatMargin,
+    damageRatio: maxVolume > 0 ? 1 - activeVolume / maxVolume : 1,
+    submergedRatio: buoyancyScore > 0 ? clamp(mass / buoyancyScore, 0, 1.5) : 1.5,
+    sinking: floatMargin < 0,
+  };
+}
+
+function validateShip(ship) {
+  const errors = [];
+  const warnings = [];
+  const stats = getShipStats(ship);
+  const b = ship?.bounds || {};
+
+  if (!ship || typeof ship !== "object") errors.push(["NO_SHIP", "No ship data exists."]);
+  if (ship?.schema_version !== 1) errors.push(["BAD_SCHEMA", "schema_version must be 1."]);
+  if (!Array.isArray(ship?.pieces) || ship.pieces.length === 0) errors.push(["NO_PIECES", "Ship must contain pieces."]);
+  if ((ship?.systems?.helm_count || 0) < 1) errors.push(["MISSING_HELM", "Ship needs a helm."]);
+  if ((ship?.systems?.sail_count || 0) < 1) errors.push(["MISSING_SAIL", "Ship needs a sail."]);
+  if (stats.mass <= 0) errors.push(["BAD_MASS", "Ship mass must be positive."]);
+  if (stats.maxVolume <= 0) errors.push(["BAD_VOLUME", "Ship volume must be positive."]);
+  if (stats.floatMargin <= 0) errors.push(["DOES_NOT_FLOAT", "Ship must float when loaded."]);
+  if (stats.pieceCount > 220) errors.push(["PIECE_CAP", "Prototype piece cap is 220."]);
+  if ((b.length || 0) > 26 || (b.width || 0) > 9 || (b.height || 0) > 10) errors.push(["BOUNDS_CAP", "Prototype ship is too large."]);
+
+  for (const p of ship?.pieces || []) {
+    if (!p.id) errors.push(["BAD_ID", "Every piece needs an id."]);
+    if (!Number.isFinite(p.volume) || p.volume <= 0) errors.push(["BAD_VOLUME", `${p.id || "piece"} has invalid volume.`]);
+    if (!Number.isFinite(p.mass) || p.mass <= 0) errors.push(["BAD_MASS", `${p.id || "piece"} has invalid mass.`]);
+  }
+
+  if (stats.floatMargin > 0 && stats.floatMargin < stats.mass * 0.18) warnings.push(["LOW_FLOAT_MARGIN", "Ship floats, but spare buoyancy is low."]);
+  if ((b.width || 1) / Math.max(1, b.length || 1) < 0.24) warnings.push(["NARROW_HULL", "Narrow hull may be unstable."]);
+  if (stats.damageRatio > 0.3) warnings.push(["HIGH_DAMAGE", "Damage has removed major buoyancy."]);
+
+  return {
+    valid: errors.length === 0,
+    errors: errors.map(([code, message]) => ({ code, message })),
+    warnings: warnings.map(([code, message]) => ({ code, message })),
+    stats,
+  };
+}
+
+function disposeObject(obj) {
+  obj.traverse((child) => {
+    if (child.geometry) child.geometry.dispose();
+    if (child.material) {
+      if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose());
+      else child.material.dispose();
+    }
+  });
+}
+
+function makeMat(color, roughness = 0.75, metalness = 0.02) {
+  return new THREE.MeshStandardMaterial({ color, roughness, metalness });
+}
+
+function boxMesh(piece, material) {
+  const [sx, sy, sz] = piece.bounds;
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), material);
+  mesh.position.set(piece.position[0], piece.position[1], piece.position[2]);
+  mesh.rotation.set(piece.rotation[0] || 0, piece.rotation[1] || 0, piece.rotation[2] || 0);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+function createShipGroup(ship, opts = {}) {
+  const group = new THREE.Group();
+  group.name = "GeneratedShip";
+  const materialKey = ship?.pieces?.[0]?.material || "oak";
+  const base = MATERIALS[materialKey]?.color || MATERIALS.oak.color;
+  const wood = makeMat(base);
+  const darkWood = makeMat(0x4a250b);
+  const damaged = makeMat(0x7f1d1d);
+  const destroyed = makeMat(0x111827);
+  const metal = makeMat(0x334155, 0.45, 0.45);
+  const sailMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.9, side: THREE.DoubleSide });
+
+  for (const piece of ship.pieces) {
+    const dmg = clamp(piece.damage ?? 0, 0, 1);
+    const mat = dmg >= 1 ? destroyed : dmg > 0.05 ? damaged : piece.type === "rib" || piece.type === "keel" ? darkWood : wood;
+    const mesh = boxMesh(piece, mat);
+    if (dmg >= 1) mesh.visible = opts.showDestroyed ?? true;
+    group.add(mesh);
+  }
+
+  if (ship.systems.cannon_count > 0) {
+    const n = ship.systems.cannon_count;
+    for (let i = 0; i < n; i++) {
+      const side = i % 2 === 0 ? -1 : 1;
+      const row = Math.floor(i / 2);
+      const z = -ship.bounds.length * 0.25 + row * 1.2;
+      const cannon = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 0.8, 16), metal);
+      cannon.rotation.z = Math.PI / 2;
+      cannon.position.set(side * ship.bounds.width * 0.42, 0.28, z);
+      cannon.castShadow = true;
+      group.add(cannon);
+    }
+  }
+
+  if (ship.systems.sail_count > 0) {
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.1, ship.bounds.depth + 4.2, 16), darkWood);
+    mast.position.set(0, ship.bounds.depth * 0.4 + 1.9, -ship.bounds.length * 0.05);
+    mast.castShadow = true;
+    group.add(mast);
+
+    const sailShape = new THREE.Shape();
+    sailShape.moveTo(0, 0);
+    sailShape.lineTo(ship.bounds.width * 0.75, ship.bounds.depth * 0.95 + 2.2);
+    sailShape.lineTo(0, ship.bounds.depth * 1.45 + 3.2);
+    sailShape.lineTo(0, 0);
+    const sail = new THREE.Mesh(new THREE.ShapeGeometry(sailShape), sailMat);
+    sail.position.set(0.05, ship.bounds.depth * 0.55, -ship.bounds.length * 0.05);
+    sail.rotation.y = -Math.PI / 2;
+    sail.castShadow = true;
+    group.add(sail);
+  }
+
+  if (ship.systems.helm_count > 0) {
+    const helm = new THREE.Mesh(new THREE.TorusGeometry(0.23, 0.025, 8, 24), darkWood);
+    helm.position.set(0, 0.65, ship.bounds.length * 0.36);
+    helm.rotation.x = Math.PI / 2;
+    group.add(helm);
+  }
+
+  const bow = new THREE.Mesh(new THREE.ConeGeometry(ship.bounds.width * 0.22, 0.75, 4), darkWood);
+  bow.position.set(0, -0.05, -ship.bounds.length * 0.54);
+  bow.rotation.x = Math.PI / 2;
+  bow.scale.y = 0.55;
+  group.add(bow);
+
+  group.userData.stats = getShipStats(ship);
+  return group;
+}
+
+function createWaterMesh(size = 120, segments = 90) {
+  const geo = new THREE.PlaneGeometry(size, size, segments, segments);
+  geo.rotateX(-Math.PI / 2);
+  const mat = new THREE.MeshStandardMaterial({ color: 0x0f766e, roughness: 0.62, metalness: 0.05, transparent: true, opacity: 0.86, side: THREE.DoubleSide });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+function updateWaterMesh(mesh, waves, t, offsetX = 0, offsetZ = 0) {
+  const pos = mesh.geometry.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i) + offsetX;
+    const z = pos.getZ(i) + offsetZ;
+    pos.setY(i, sampleWater(waves, x, z, t).height);
+  }
+  pos.needsUpdate = true;
+  mesh.geometry.computeVertexNormals();
+}
+
+function getSamplePoints(ship, heading = 0) {
+  const points = [];
+  const rows = [-1, 0, 1];
+  const cols = [-1, 0, 1];
+  const halfW = ship.bounds.width * 0.38;
+  const halfL = ship.bounds.length * 0.42;
+  const c = Math.cos(heading);
+  const s = Math.sin(heading);
+  for (const xMul of rows) {
+    for (const zMul of cols) {
+      const lx = xMul * halfW;
+      const lz = zMul * halfL;
+      points.push({ localX: lx, localZ: lz, wx: lx * c - lz * s, wz: lx * s + lz * c });
+    }
+  }
+  return points;
+}
+
+function updateRuntime(rt, dt, waves) {
+  const stats = getShipStats(rt.ship);
+  rt.time += dt;
+
+  if (rt.keys.has("w")) rt.sailTrim = clamp(rt.sailTrim + dt * 0.7, 0, 1);
+  if (rt.keys.has("s")) rt.sailTrim = clamp(rt.sailTrim - dt * 0.8, 0, 1);
+  rt.rudder = 0;
+  if (rt.keys.has("a")) rt.rudder -= 1;
+  if (rt.keys.has("d")) rt.rudder += 1;
+
+  const windFacing = Math.abs(Math.cos(rt.heading - rt.windDirection));
+  const thrust = Math.max(0.12, windFacing) * rt.sailTrim * 4.4;
+  const drag = rt.speed * Math.abs(rt.speed) * 0.085;
+  const sinkPenalty = stats.sinking ? 0.2 : 1;
+  rt.speed += (thrust * sinkPenalty - drag) * dt;
+  rt.speed = clamp(rt.speed, -1, stats.sinking ? 1.4 : 8);
+  rt.heading += rt.rudder * rt.speed * 0.18 * dt;
+  rt.x += Math.sin(rt.heading) * rt.speed * dt;
+  rt.z += Math.cos(rt.heading) * rt.speed * dt;
+
+  const points = getSamplePoints(rt.ship, rt.heading);
+  let sum = 0, front = 0, rear = 0, left = 0, right = 0, fc = 0, rc = 0, lc = 0, rcc = 0;
+  for (const p of points) {
+    const h = sampleWater(waves, rt.x + p.wx, rt.z + p.wz, rt.time).height;
+    sum += h;
+    if (p.localZ > 0) { front += h; fc++; }
+    if (p.localZ < 0) { rear += h; rc++; }
+    if (p.localX < 0) { left += h; lc++; }
+    if (p.localX > 0) { right += h; rcc++; }
+  }
+
+  rt.waterHeight = sum / points.length;
+  const targetPitch = Math.atan2(front / Math.max(1, fc) - rear / Math.max(1, rc), Math.max(1, rt.ship.bounds.length));
+  const targetHeel = Math.atan2(right / Math.max(1, rcc) - left / Math.max(1, lc), Math.max(1, rt.ship.bounds.width));
+  rt.pitch = lerp(rt.pitch, targetPitch, clamp(dt * 3.5, 0, 1));
+  rt.heel = lerp(rt.heel, targetHeel, clamp(dt * 3.5, 0, 1));
+
+  if (stats.sinking) rt.sinkDepth += dt * clamp(Math.abs(stats.floatMargin) / 1100, 0.25, 2.8);
+  else rt.sinkDepth = Math.max(0, rt.sinkDepth - dt * 2.5);
+
+  const ride = (stats.submergedRatio - 0.52) * 0.85;
+  rt.y = rt.waterHeight - ride - rt.sinkDepth;
+}
+
+function ThreeBuildPreview({ ship }) {
+  const hostRef = useRef(null);
+  const shipRef = useRef(null);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xe2e8f0);
+
+    const camera = new THREE.PerspectiveCamera(52, host.clientWidth / Math.max(1, host.clientHeight), 0.1, 1000);
+    camera.position.set(10, 7, 13);
+    camera.lookAt(0, 0, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    renderer.setSize(host.clientWidth, host.clientHeight);
+    renderer.shadowMap.enabled = true;
+    host.appendChild(renderer.domElement);
+
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x334155, 1.35);
+    scene.add(hemi);
+    const sun = new THREE.DirectionalLight(0xffffff, 1.9);
+    sun.position.set(8, 12, 6);
+    sun.castShadow = true;
+    scene.add(sun);
+
+    const grid = new THREE.GridHelper(32, 32, 0x64748b, 0xcbd5e1);
+    scene.add(grid);
+
+    const dock = new THREE.Mesh(new THREE.BoxGeometry(18, 0.25, 28), makeMat(0x94a3b8));
+    dock.position.y = -1.35;
+    dock.receiveShadow = true;
+    scene.add(dock);
+
+    const animate = () => {
+      if (shipRef.current) shipRef.current.rotation.y += 0.004;
+      renderer.render(scene, camera);
+      frame = requestAnimationFrame(animate);
+    };
+
+    const resize = () => {
+      camera.aspect = host.clientWidth / Math.max(1, host.clientHeight);
+      camera.updateProjectionMatrix();
+      renderer.setSize(host.clientWidth, host.clientHeight);
+    };
+
+    window.addEventListener("resize", resize);
+    let frame = requestAnimationFrame(animate);
+
+    host.__scene = scene;
+    host.__renderer = renderer;
+    host.__camera = camera;
+
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("resize", resize);
+      if (shipRef.current) disposeObject(shipRef.current);
+      scene.traverse((obj) => {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material && obj.type !== "Mesh") obj.material.dispose?.();
+      });
+      renderer.dispose();
+      host.removeChild(renderer.domElement);
+    };
+  }, []);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host?.__scene) return;
+    if (shipRef.current) {
+      host.__scene.remove(shipRef.current);
+      disposeObject(shipRef.current);
+    }
+    const group = createShipGroup(ship);
+    group.position.y = 0;
+    group.rotation.y = -0.35;
+    shipRef.current = group;
+    host.__scene.add(group);
+  }, [ship]);
+
+  return <div ref={hostRef} style={{ height: 520 }} className="w-full overflow-hidden rounded-3xl border border-slate-200 bg-slate-200 shadow-inner" />;
+}
+
+function ThreeSailScene({ ship, runtime, waves, showDebug }) {
+  const hostRef = useRef(null);
+  const shipGroupRef = useRef(null);
+  const waterRef = useRef(null);
+  const sampleRef = useRef([]);
+  const shipDataRef = useRef(ship);
+  shipDataRef.current = ship;
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xbfe7ff);
+    scene.fog = new THREE.Fog(0xbfe7ff, 75, 190);
+
+    const camera = new THREE.PerspectiveCamera(58, host.clientWidth / Math.max(1, host.clientHeight), 0.1, 1000);
+    camera.position.set(0, 9, 18);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    renderer.setSize(host.clientWidth, host.clientHeight);
+    renderer.shadowMap.enabled = true;
+    host.appendChild(renderer.domElement);
+
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x0f172a, 1.3));
+    const sun = new THREE.DirectionalLight(0xffffff, 2.1);
+    sun.position.set(20, 30, 10);
+    sun.castShadow = true;
+    scene.add(sun);
+
+    const water = createWaterMesh(150, 90);
+    waterRef.current = water;
+    scene.add(water);
+
+    const grid = new THREE.GridHelper(150, 30, 0xffffff, 0xffffff);
+    grid.material.opacity = 0.08;
+    grid.material.transparent = true;
+    grid.position.y = 0.03;
+    scene.add(grid);
+
+    const sampleMat = makeMat(0xfacc15);
+    const sampleMeshes = [];
+    for (let i = 0; i < 9; i++) {
+      const m = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 12), sampleMat);
+      m.visible = showDebug;
+      scene.add(m);
+      sampleMeshes.push(m);
+    }
+    sampleRef.current = sampleMeshes;
+
+    const arrow = new THREE.ArrowHelper(new THREE.Vector3(Math.sin(runtime.current.windDirection), 0, Math.cos(runtime.current.windDirection)), new THREE.Vector3(-7, 4, -7), 4, 0xffffff);
+    scene.add(arrow);
+
+    let last = performance.now();
+    let waterUpdateAccum = 0;
+    let frame = 0;
+
+    const animate = (now) => {
+      const dt = clamp((now - last) / 1000, 0, 0.05);
+      last = now;
+      runtime.current.ship = shipDataRef.current;
+      updateRuntime(runtime.current, dt, waves);
+      const rt = runtime.current;
+
+      if (shipGroupRef.current) {
+        shipGroupRef.current.position.set(rt.x, rt.y, rt.z);
+        shipGroupRef.current.rotation.set(rt.pitch, rt.heading, -rt.heel);
+      }
+
+      water.position.set(rt.x, 0, rt.z);
+      waterUpdateAccum += dt;
+      if (waterUpdateAccum > 0.06) {
+        waterUpdateAccum = 0;
+        updateWaterMesh(water, waves, rt.time, rt.x, rt.z);
+      }
+
+      const points = getSamplePoints(rt.ship, rt.heading);
+      for (let i = 0; i < sampleMeshes.length; i++) {
+        const p = points[i];
+        const wx = rt.x + p.wx;
+        const wz = rt.z + p.wz;
+        const h = sampleWater(waves, wx, wz, rt.time).height + 0.18;
+        sampleMeshes[i].position.set(wx, h, wz);
+        sampleMeshes[i].visible = showDebug;
+      }
+
+      const follow = new THREE.Vector3(rt.x - Math.sin(rt.heading) * 11, rt.y + 7.5, rt.z - Math.cos(rt.heading) * 14);
+      camera.position.lerp(follow, 0.06);
+      camera.lookAt(rt.x, rt.y + 1.2, rt.z);
+
+      renderer.render(scene, camera);
+      frame = requestAnimationFrame(animate);
+    };
+
+    const resize = () => {
+      camera.aspect = host.clientWidth / Math.max(1, host.clientHeight);
+      camera.updateProjectionMatrix();
+      renderer.setSize(host.clientWidth, host.clientHeight);
+    };
+    window.addEventListener("resize", resize);
+    frame = requestAnimationFrame(animate);
+
+    host.__scene = scene;
+    host.__renderer = renderer;
+
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("resize", resize);
+      if (shipGroupRef.current) disposeObject(shipGroupRef.current);
+      if (waterRef.current) disposeObject(waterRef.current);
+      for (const m of sampleMeshes) disposeObject(m);
+      renderer.dispose();
+      host.removeChild(renderer.domElement);
+    };
+  }, []);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host?.__scene) return;
+    if (shipGroupRef.current) {
+      host.__scene.remove(shipGroupRef.current);
+      disposeObject(shipGroupRef.current);
+    }
+    const group = createShipGroup(ship);
+    shipGroupRef.current = group;
+    host.__scene.add(group);
+  }, [ship]);
+
+  return <div ref={hostRef} style={{ height: 620 }} className="w-full overflow-hidden rounded-3xl border border-slate-200 bg-sky-100 shadow-inner" />;
+}
+
+function Button({ children, onClick, active = false, disabled = false, small = false }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`${small ? "px-3 py-1 text-xs" : "px-4 py-2 text-sm"} rounded-2xl border font-semibold shadow-sm transition ${active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 bg-white text-slate-900 hover:bg-slate-50"} ${disabled ? "cursor-not-allowed opacity-40" : ""}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Stat({ label, value, bad = false, good = false }) {
+  return (
+    <div className="flex items-center justify-between gap-4 border-b border-slate-100 py-1 text-sm">
+      <span className="text-slate-500">{label}</span>
+      <span className={`font-mono ${bad ? "text-red-700" : good ? "text-emerald-700" : "text-slate-900"}`}>{value}</span>
+    </div>
+  );
+}
+
+function Range({ label, value, min, max, step, suffix = "", onChange }) {
+  return (
+    <label className="block rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+      <div className="mb-2 flex justify-between text-sm">
+        <span className="font-medium text-slate-700">{label}</span>
+        <span className="font-mono text-slate-900">{value}{suffix}</span>
+      </div>
+      <input className="w-full" type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} />
+    </label>
+  );
+}
+
+function ValidationPanel({ report }) {
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="font-semibold">Validation</h3>
+        <span className={`rounded-full px-3 py-1 text-xs font-bold ${report.valid ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>{report.valid ? "VALID" : "BLOCKED"}</span>
+      </div>
+      <div className="space-y-2">
+        {report.errors.map((e, i) => <div key={i} className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-800"><b>{e.code}</b>: {e.message}</div>)}
+        {report.warnings.map((w, i) => <div key={i} className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800"><b>{w.code}</b>: {w.message}</div>)}
+        {report.errors.length === 0 && report.warnings.length === 0 && <div className="rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-800">Ship passes prototype validation.</div>}
+      </div>
+    </div>
+  );
+}
+
+function BuildMode({ ship, setShip, setMode }) {
+  const [config, setConfig] = useState(() => configFromShip(ship));
+  const previewShip = useMemo(() => makeShipFromConfig(config, ship.pieces), [config, ship.pieces]);
+  const report = useMemo(() => validateShip(previewShip), [previewShip]);
+  const stats = report.stats;
+  const update = (patch) => setConfig((c) => ({ ...c, ...patch }));
+
+  const saveShip = () => {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(previewShip, null, 2));
+    setShip(previewShip);
+  };
+
+  const loadShip = () => {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return;
+    try {
+      const loaded = JSON.parse(raw);
+      setShip(loaded);
+      setConfig(configFromShip(loaded));
+    } catch {
+      alert("Saved ship JSON is malformed.");
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-100 p-4 text-slate-900">
+      <div className="mx-auto max-w-7xl space-y-4">
+        <header className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div>
+            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">3D Build Test</div>
+            <h1 className="text-2xl font-black">Dry Dock Ship Builder</h1>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => setMode("menu")}>Menu</Button>
+            <Button onClick={loadShip}>Load Saved</Button>
+            <Button onClick={() => setShip(previewShip)}>Apply Preview</Button>
+            <Button onClick={saveShip} active disabled={!report.valid}>Save Valid Ship</Button>
+            <Button onClick={() => { setShip(previewShip); setMode("sail"); }} disabled={!report.valid}>Launch 3D Sail</Button>
+          </div>
+        </header>
+
+        <div className="grid gap-4 lg:grid-cols-[360px_1fr_340px]">
+          <section className="space-y-3">
+            <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+              <h2 className="mb-3 font-semibold">Hull Controls</h2>
+              <label className="mb-3 block text-sm font-semibold text-slate-700">Ship name<input value={config.name} onChange={(e) => update({ name: e.target.value })} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2" /></label>
+              <div className="space-y-3">
+                <Range label="Length" value={config.length} min={8} max={26} step={0.5} suffix=" m" onChange={(v) => update({ length: v })} />
+                <Range label="Width" value={config.width} min={2.4} max={8.5} step={0.1} suffix=" m" onChange={(v) => update({ width: v })} />
+                <Range label="Hull depth" value={config.depth} min={1.6} max={5} step={0.1} suffix=" m" onChange={(v) => update({ depth: v })} />
+                <Range label="Cannons" value={config.cannonCount} min={0} max={8} step={1} onChange={(v) => update({ cannonCount: v })} />
+                <Range label="Cargo" value={config.cargoMass} min={0} max={3200} step={50} suffix=" kg" onChange={(v) => update({ cargoMass: v })} />
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+              <h2 className="mb-3 font-semibold">Ship Systems</h2>
+              <div className="mb-3 grid grid-cols-3 gap-2">
+                {Object.entries(MATERIALS).map(([key, mat]) => <Button key={key} small active={config.material === key} onClick={() => update({ material: key })}>{mat.label}</Button>)}
+              </div>
+              <label className="mb-2 flex items-center gap-2 text-sm"><input type="checkbox" checked={config.hasHelm} onChange={(e) => update({ hasHelm: e.target.checked })} /> Helm installed</label>
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={config.hasSail} onChange={(e) => update({ hasSail: e.target.checked })} /> Sail installed</label>
+            </div>
+          </section>
+
+          <main className="space-y-4">
+            <ThreeBuildPreview ship={previewShip} />
+            <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+              <h2 className="mb-2 font-semibold">Generated ship JSON</h2>
+              <pre className="max-h-56 overflow-auto rounded-2xl bg-slate-950 p-3 text-xs text-slate-100">{JSON.stringify(previewShip, null, 2)}</pre>
+            </div>
+          </main>
+
+          <aside className="space-y-4">
+            <ValidationPanel report={report} />
+            <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+              <h3 className="mb-2 font-semibold">Stats</h3>
+              <Stat label="Pieces" value={stats.pieceCount} />
+              <Stat label="Mass" value={`${fmt(stats.mass, 0)} kg`} />
+              <Stat label="Buoyancy" value={`${fmt(stats.buoyancyScore, 0)} kg-eq`} />
+              <Stat label="Float margin" value={`${fmt(stats.floatMargin, 0)} kg`} bad={stats.floatMargin <= 0} good={stats.floatMargin > 0} />
+              <Stat label="Cargo" value={`${fmt(stats.cargoMass, 0)} kg`} />
+              <Stat label="Damage" value={`${fmt(stats.damageRatio * 100, 0)}%`} />
+            </div>
+          </aside>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SailMode({ ship, setShip, setMode }) {
+  const waves = useMemo(() => makeWaveField("sea-trial-3d-v1"), []);
+  const runtime = useRef({
+    ship,
+    keys: new Set(),
+    time: 0,
+    x: 0,
+    y: 0,
+    z: 0,
+    heading: 0,
+    speed: 0,
+    pitch: 0,
+    heel: 0,
+    waterHeight: 0,
+    windDirection: Math.PI / 4,
+    sailTrim: 0.45,
+    rudder: 0,
+    sinkDepth: 0,
+  });
+  const [showDebug, setShowDebug] = useState(true);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => { runtime.current.ship = ship; }, [ship]);
+
+  useEffect(() => {
+    const down = (e) => {
+      const k = e.key.toLowerCase();
+      runtime.current.keys.add(k);
+      if (["w", "a", "s", "d"].includes(k)) e.preventDefault();
+      if (k === "f1") { e.preventDefault(); setShowDebug((v) => !v); }
+      if (k === "r") resetRuntime();
+      if (k === "c") addCargo(150);
+      if (k === "v") addCargo(-150);
+      if (k === "x") damageRandomPiece();
+      if (k === "z") repairAll();
+      if (k === "l") loadSaved();
+    };
+    const up = (e) => runtime.current.keys.delete(e.key.toLowerCase());
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+    };
+  }, []);
+
+  useEffect(() => {
+    let frame = 0;
+    const pulse = () => {
+      setTick((n) => (n + 1) % 1000000);
+      frame = requestAnimationFrame(pulse);
+    };
+    frame = requestAnimationFrame(pulse);
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  const resetRuntime = () => {
+    Object.assign(runtime.current, { time: 0, x: 0, y: 0, z: 0, heading: 0, speed: 0, pitch: 0, heel: 0, waterHeight: 0, sailTrim: 0.45, rudder: 0, sinkDepth: 0 });
+  };
+
+  const addCargo = (amount) => setShip((s) => ({ ...s, systems: { ...s.systems, cargo_mass: clamp((s.systems.cargo_mass || 0) + amount, 0, 5000) } }));
+
+  const damageRandomPiece = () => {
+    setShip((s) => {
+      const candidates = s.pieces.map((p, idx) => ({ p, idx })).filter(({ p }) => ["plank", "rib", "keel"].includes(p.type) && (p.damage ?? 0) < 1);
+      if (!candidates.length) return s;
+      const pick = candidates[Math.floor(Math.abs(Math.sin(runtime.current.time * 19.331 + candidates.length)) * candidates.length) % candidates.length];
+      return { ...s, pieces: s.pieces.map((p, i) => i === pick.idx ? { ...p, damage: clamp((p.damage ?? 0) + 0.25, 0, 1) } : p) };
+    });
+  };
+
+  const repairAll = () => setShip((s) => ({ ...s, pieces: s.pieces.map((p) => ({ ...p, damage: 0 })) }));
+
+  const saveCurrent = () => localStorage.setItem(SAVE_KEY, JSON.stringify(ship, null, 2));
+
+  const loadSaved = () => {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return;
+    try { setShip(JSON.parse(raw)); resetRuntime(); } catch { alert("Saved ship JSON is malformed."); }
+  };
+
+  const stats = getShipStats(ship);
+  const report = validateShip(ship);
+  const rt = runtime.current;
+
+  return (
+    <div className="min-h-screen bg-slate-100 p-4 text-slate-900">
+      <div className="mx-auto max-w-7xl space-y-4">
+        <header className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div>
+            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">3D Sail Test</div>
+            <h1 className="text-2xl font-black">Sea Trial Arena</h1>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => setMode("menu")}>Menu</Button>
+            <Button onClick={() => setMode("build")}>Build Test</Button>
+            <Button onClick={resetRuntime}>Reset</Button>
+            <Button onClick={loadSaved}>Reload</Button>
+            <Button onClick={saveCurrent}>Save Current</Button>
+            <Button active={showDebug} onClick={() => setShowDebug((v) => !v)}>Debug F1</Button>
+          </div>
+        </header>
+
+        <div className="grid gap-4 lg:grid-cols-[1fr_340px]">
+          <main className="space-y-4">
+            <ThreeSailScene ship={ship} runtime={runtime} waves={waves} showDebug={showDebug} />
+            <div className="grid gap-3 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-4">
+              <Button onClick={() => { runtime.current.sailTrim = clamp(runtime.current.sailTrim + 0.15, 0, 1); }}>More Sail / W</Button>
+              <Button onClick={() => { runtime.current.sailTrim = clamp(runtime.current.sailTrim - 0.15, 0, 1); }}>Less Sail / S</Button>
+              <Button onClick={() => addCargo(250)}>Add Cargo / C</Button>
+              <Button onClick={() => addCargo(-250)}>Remove Cargo / V</Button>
+              <Button onClick={damageRandomPiece}>Damage / X</Button>
+              <Button onClick={repairAll}>Repair / Z</Button>
+              <Button onClick={() => { runtime.current.heading -= 0.25; }}>Turn Port</Button>
+              <Button onClick={() => { runtime.current.heading += 0.25; }}>Turn Starboard</Button>
+            </div>
+            <div className="rounded-3xl border border-slate-200 bg-white p-4 text-sm text-slate-600 shadow-sm">
+              Controls: W/S sail, A/D rudder, C/V cargo, X damage, Z repair, R reset, L reload, F1 sample markers. This is a real 3D Three.js scene, not a 2D canvas drawing.
+            </div>
+          </main>
+
+          <aside className="space-y-4">
+            <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="font-semibold">Runtime</h3>
+                <span className={`rounded-full px-3 py-1 text-xs font-bold ${stats.sinking ? "bg-red-100 text-red-800" : "bg-emerald-100 text-emerald-800"}`}>{stats.sinking ? "SINKING" : "FLOATING"}</span>
+              </div>
+              <Stat label="Mass" value={`${fmt(stats.mass, 0)} kg`} />
+              <Stat label="Buoyancy" value={`${fmt(stats.buoyancyScore, 0)} kg-eq`} />
+              <Stat label="Float margin" value={`${fmt(stats.floatMargin, 0)} kg`} bad={stats.floatMargin <= 0} good={stats.floatMargin > 0} />
+              <Stat label="Submerged" value={`${fmt(stats.submergedRatio * 100, 0)}%`} bad={stats.submergedRatio > 100} />
+              <Stat label="Cargo" value={`${fmt(stats.cargoMass, 0)} kg`} />
+              <Stat label="Damage" value={`${fmt(stats.damageRatio * 100, 0)}%`} bad={stats.damageRatio > 35} />
+              <Stat label="Speed" value={`${fmt(rt.speed)} m/s`} />
+              <Stat label="Pitch" value={`${fmt((rt.pitch * 180) / Math.PI, 2)}°`} />
+              <Stat label="Heel" value={`${fmt((rt.heel * 180) / Math.PI, 2)}°`} />
+              <Stat label="Sample tier" value="2 / 3×3" />
+              <Stat label="Wave seed" value="sea-trial-3d-v1" />
+            </div>
+            <ValidationPanel report={report} />
+            <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+              <h3 className="mb-2 font-semibold">Loaded ship</h3>
+              <Stat label="Name" value={ship.display_name} />
+              <Stat label="Length" value={`${fmt(ship.bounds.length)} m`} />
+              <Stat label="Width" value={`${fmt(ship.bounds.width)} m`} />
+              <Stat label="Pieces" value={stats.pieceCount} />
+              <Stat label="Healthy" value={stats.healthyPieces} />
+            </div>
+          </aside>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MainMenu({ setMode, ship }) {
+  const report = validateShip(ship);
+  return (
+    <div className="min-h-screen bg-slate-950 p-6 text-white">
+      <div className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-5xl flex-col justify-center gap-6">
+        <div className="rounded-[2rem] border border-white/10 bg-white/10 p-8 shadow-2xl backdrop-blur">
+          <div className="mb-2 text-xs font-bold uppercase tracking-[0.35em] text-cyan-200">3D Playable Vertical Slice</div>
+          <h1 className="mb-3 text-5xl font-black tracking-tight">Sea Trial Prototype</h1>
+          <p className="max-w-3xl text-lg text-slate-200">Build a generated 3D ship, validate it, save it, load it into a 3D ocean arena, sail it, overload it, damage it, and sink or recover it.</p>
+          <div className="mt-8 flex flex-wrap gap-3">
+            <button onClick={() => setMode("build")} className="rounded-2xl bg-white px-5 py-3 font-semibold text-slate-950 shadow-lg hover:bg-slate-100">3D Build Test</button>
+            <button onClick={() => setMode("sail")} className="rounded-2xl border border-white/30 px-5 py-3 font-semibold text-white shadow-lg hover:bg-white/10">3D Sail Test</button>
+          </div>
+        </div>
+        <div className="grid gap-4 md:grid-cols-3">
+          <div className="rounded-3xl border border-white/10 bg-white/10 p-5"><h2 className="mb-2 font-bold">3D Build</h2><p className="text-sm text-slate-300">Generated planks, ribs, keel, deck, mast, sail, cannons, and helm as 3D objects.</p></div>
+          <div className="rounded-3xl border border-white/10 bg-white/10 p-5"><h2 className="mb-2 font-bold">3D Water</h2><p className="text-sm text-slate-300">Animated mesh ocean using deterministic Gerstner-style wave sampling.</p></div>
+          <div className="rounded-3xl border border-white/10 bg-white/10 p-5"><h2 className="mb-2 font-bold">3D Buoyancy</h2><p className="text-sm text-slate-300">Tier 2 sample markers, pitch, heel, cargo mass, damage, and sinking.</p></div>
+        </div>
+        <div className="rounded-3xl border border-white/10 bg-white/10 p-5 text-sm text-slate-300">Current ship: <span className="font-semibold text-white">{ship.display_name}</span> · Validation: <span className={report.valid ? "text-emerald-300" : "text-red-300"}>{report.valid ? "valid" : "blocked"}</span></div>
+      </div>
+    </div>
+  );
+}
+
+export default function SeaTrialVerticalSlicePrototype3D() {
+  const defaultConfig = { name: "Test Sloop", length: 12, width: 4, depth: 2.8, material: "oak", hasHelm: true, hasSail: true, cannonCount: 2, cargoMass: 0 };
+  const [ship, setShip] = useState(() => {
+    if (typeof window !== "undefined") {
+      const raw = localStorage.getItem(SAVE_KEY);
+      if (raw) {
+        try { return JSON.parse(raw); } catch { /* ignore */ }
+      }
+    }
+    return makeShipFromConfig(defaultConfig);
+  });
+  const [mode, setMode] = useState("menu");
+
+  if (mode === "build") return <BuildMode ship={ship} setShip={setShip} setMode={setMode} />;
+  if (mode === "sail") return <SailMode ship={ship} setShip={setShip} setMode={setMode} />;
+  return <MainMenu setMode={setMode} ship={ship} />;
+}

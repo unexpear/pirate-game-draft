@@ -1,5 +1,7 @@
 # Vertical Slice Plan — Sea Trial Prototype
 
+> **Status:** initial web implementation lives at [prototype/](prototype/) — covers Phases 0–6 in browser-runnable form (single-player, real 3D Three.js scene with mesh ocean + WebGL ship). The engine-based prototype this plan ultimately calls for (lean Unreal, §3) is still ahead.
+
 ## Purpose
 
 This vertical slice proves the shared spine of the pirate game before building the full game.

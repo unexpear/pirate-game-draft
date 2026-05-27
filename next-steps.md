@@ -1,20 +1,22 @@
 # Next steps
 
-The vertical slice plan ([vertical-slice.md](vertical-slice.md)) supersedes most of what used to live here:
-
-- Engine direction (for prototype): existing engine, lean Unreal
-- Starting mode: both — the slice spans Sail and Build by design
-- MVP scope: defined (Build → save → load in Sail → float → damage → sink)
-- Project structure: outlined in slice §17
-- Version control: done (this repo)
+A web-runnable prototype of the slice landed at [prototype/](prototype/) covering Phases 0–6 in browser form. The full slice plan ([vertical-slice.md](vertical-slice.md)) still calls for an engine-based prototype (lean Unreal) — that's the next major step.
 
 ## Immediate
 
-- [ ] Lock engine pick: Unreal vs. Unity (lean Unreal — see [vertical-slice.md §3](vertical-slice.md))
-- [ ] Execute Phase 0 of the slice: project setup, menu, two empty scenes, debug overlay shell
-- [ ] Begin Phase 1 (ship schema) once Phase 0 passes
+- [ ] Play through the web prototype end-to-end and confirm the slice's pass criteria (slice §19) hold in the simplified 2D form
+- [ ] Capture lessons / surprises from the web prototype before starting the engine version
+- [ ] Lock engine pick: Unreal vs. Unity (lean Unreal)
+- [ ] Begin Phase 0 of the engine prototype: project setup, menu, two empty scenes, debug overlay shell
 
-## Later (after the slice)
+## Done (initial pass)
+
+- [x] Slice scope defined ([vertical-slice.md](vertical-slice.md))
+- [x] Web prototype with Gerstner waves, Tier 2 sampling, ship JSON, validation, cargo/damage/sinking ([prototype/](prototype/))
+- [x] Version control (this repo)
+- [x] Project structure outlined (slice §17)
+
+## Later (after the engine slice)
 
 - Final-game engine decision (engineless still open in [tech-stack.md](tech-stack.md))
 - Open-world content (islands, quests, etc. — explicitly held back per slice §25)
