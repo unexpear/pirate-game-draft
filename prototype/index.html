@@ -252,6 +252,62 @@ function validateShip(ship) {
   };
 }
 
+function runSelfTest() {
+  const results = [];
+  const eq = (a, b, tol = 1e-6) => Math.abs(a - b) < tol;
+  const push = (name, pass, details = "") => results.push({ name, pass, details });
+
+  const baseConfig = { name: "SelfTest", length: 12, width: 4, depth: 2.8, material: "oak", hasHelm: true, hasSail: true, cannonCount: 2, cargoMass: 0 };
+  const base = makeShipFromConfig(baseConfig);
+  const baseReport = validateShip(base);
+  push("Base ship validates", baseReport.valid, baseReport.valid ? "" : baseReport.errors.map((e) => e.code).join(", "));
+  const baseStats = baseReport.stats;
+
+  const cargoLoaded = { ...base, systems: { ...base.systems, cargo_mass: 500 } };
+  const cargoStats = getShipStats(cargoLoaded);
+  push("Cargo increases mass", cargoStats.mass > baseStats.mass, `${baseStats.mass.toFixed(0)} -> ${cargoStats.mass.toFixed(0)}`);
+
+  const cargoRemoved = { ...cargoLoaded, systems: { ...cargoLoaded.systems, cargo_mass: 0 } };
+  const restoredStats = getShipStats(cargoRemoved);
+  push("Removing cargo restores mass", eq(restoredStats.mass, baseStats.mass), `${baseStats.mass.toFixed(3)} vs ${restoredStats.mass.toFixed(3)}`);
+
+  const plankIdx = base.pieces.findIndex((p) => p.type === "plank");
+  const damaged = { ...base, pieces: base.pieces.map((p, i) => i === plankIdx ? { ...p, damage: 0.5 } : p) };
+  const damagedStats = getShipStats(damaged);
+  push("Damage lowers buoyancy", damagedStats.buoyancyScore < baseStats.buoyancyScore, `${baseStats.buoyancyScore.toFixed(0)} -> ${damagedStats.buoyancyScore.toFixed(0)}`);
+
+  const repaired = { ...damaged, pieces: damaged.pieces.map((p) => ({ ...p, damage: 0 })) };
+  const repairedStats = getShipStats(repaired);
+  push("Repair restores buoyancy", eq(repairedStats.buoyancyScore, baseStats.buoyancyScore), `${baseStats.buoyancyScore.toFixed(3)} vs ${repairedStats.buoyancyScore.toFixed(3)}`);
+
+  push("Added cargo lowers float margin", cargoStats.floatMargin < baseStats.floatMargin, `${baseStats.floatMargin.toFixed(0)} -> ${cargoStats.floatMargin.toFixed(0)}`);
+
+  push("Damage lowers float margin", damagedStats.floatMargin < baseStats.floatMargin, `${baseStats.floatMargin.toFixed(0)} -> ${damagedStats.floatMargin.toFixed(0)}`);
+
+  const noHelm = makeShipFromConfig({ ...baseConfig, hasHelm: false });
+  const noHelmReport = validateShip(noHelm);
+  const helmFlagged = !noHelmReport.valid && noHelmReport.errors.some((e) => e.code === "MISSING_HELM");
+  push("No-helm ship fails validation", helmFlagged, helmFlagged ? "" : "MISSING_HELM not flagged");
+
+  const noSail = makeShipFromConfig({ ...baseConfig, hasSail: false });
+  const noSailReport = validateShip(noSail);
+  const sailFlagged = !noSailReport.valid && noSailReport.errors.some((e) => e.code === "MISSING_SAIL");
+  push("No-sail ship fails validation", sailFlagged, sailFlagged ? "" : "MISSING_SAIL not flagged");
+
+  const waves = makeWaveField("self-test-deterministic");
+  const s1 = sampleWater(waves, 12.3, -4.5, 9.1);
+  const s2 = sampleWater(waves, 12.3, -4.5, 9.1);
+  const det = eq(s1.height, s2.height) && eq(s1.slopeX, s2.slopeX) && eq(s1.slopeZ, s2.slopeZ);
+  push("Water sampling is deterministic for same seed/time/position", det, det ? "" : `h: ${s1.height} vs ${s2.height}`);
+
+  const json = JSON.stringify(base);
+  const restored = JSON.parse(json);
+  const roundTripped = JSON.stringify(restored);
+  push("Ship JSON round-trips without data loss", json === roundTripped, json === roundTripped ? "" : "JSON differs after round-trip");
+
+  return results;
+}
+
 function disposeObject(obj) {
   obj.traverse((child) => {
     if (child.geometry) child.geometry.dispose();
@@ -938,6 +994,35 @@ function SailMode({ ship, setShip, setMode }) {
   );
 }
 
+function SelfTestPanel() {
+  const [results, setResults] = useState(null);
+  const passing = results ? results.filter((r) => r.pass).length : 0;
+  const total = results ? results.length : 0;
+  const allPass = total > 0 && passing === total;
+  return (
+    <div className="rounded-3xl border border-white/10 bg-white/10 p-5">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="font-bold">Self-Test</h2>
+        <div className="flex items-center gap-3">
+          {results && <span className={`font-mono text-sm ${allPass ? "text-emerald-300" : "text-red-300"}`}>{passing} / {total} passing</span>}
+          <button onClick={() => setResults(runSelfTest())} className="rounded-xl bg-white/20 px-3 py-1 text-sm font-semibold text-white hover:bg-white/30">Run Self-Test</button>
+        </div>
+      </div>
+      {results ? (
+        <div className="space-y-1">
+          {results.map((r, i) => (
+            <div key={i} className={`rounded-lg px-3 py-1.5 text-xs font-mono ${r.pass ? "bg-emerald-500/15 text-emerald-200" : "bg-red-500/15 text-red-200"}`}>
+              <span className="font-bold">{r.pass ? "PASS" : "FAIL"}</span>: {r.name}{!r.pass && r.details ? ` — ${r.details}` : ""}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="text-xs text-slate-300">Run to verify the core model spine (validation, mass/buoyancy/float margin chain, water determinism, JSON round-trip).</div>
+      )}
+    </div>
+  );
+}
+
 function MainMenu({ setMode, ship }) {
   const report = validateShip(ship);
   return (
@@ -957,6 +1042,7 @@ function MainMenu({ setMode, ship }) {
           <div className="rounded-3xl border border-white/10 bg-white/10 p-5"><h2 className="mb-2 font-bold">3D Water</h2><p className="text-sm text-slate-300">Animated mesh ocean using deterministic Gerstner-style wave sampling.</p></div>
           <div className="rounded-3xl border border-white/10 bg-white/10 p-5"><h2 className="mb-2 font-bold">3D Buoyancy</h2><p className="text-sm text-slate-300">Tier 2 sample markers, pitch, heel, cargo mass, damage, and sinking.</p></div>
         </div>
+        <SelfTestPanel />
         <div className="rounded-3xl border border-white/10 bg-white/10 p-5 text-sm text-slate-300">Current ship: <span className="font-semibold text-white">{ship.display_name}</span> · Validation: <span className={report.valid ? "text-emerald-300" : "text-red-300"}>{report.valid ? "valid" : "blocked"}</span></div>
       </div>
     </div>
