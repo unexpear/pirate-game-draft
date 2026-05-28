@@ -3,7 +3,7 @@
 Master list. Per-mode subsets live inline in [game-a-pirate-sandbox.md](game-a-pirate-sandbox.md) (Sail) and [game-b-shipbuilding-sim.md](game-b-shipbuilding-sim.md) (Build). Resolved items move to [decisions.md](decisions.md).
 
 ## Tech foundation
-- Native C++ prototype scope — first C++ milestone, exact pass/fail criteria, and what remains delegated to the Three.js spike history
+- Native Milestone 0 pass criteria — exact build/run/test bar for the first C++ scaffold before ship rendering, water rendering, Jolt, or Steamworks (see [native-bootstrap-plan.md](native-bootstrap-plan.md) for the baseline; details still firming up)
 - Rendering backend details under bgfx — DirectX 11/12 vs Vulkan backend priority, shader pipeline, material format
 - SDL3 platform layer boundaries — windowing, input, controller support, file paths
 - Jolt integration boundaries — rigid bodies vs score-based buoyancy, where ship physics hands off to Jolt
@@ -19,7 +19,7 @@ Master list. Per-mode subsets live inline in [game-a-pirate-sandbox.md](game-a-p
 - Which Sea of Thieves design tricks to adopt for world-feel (voyage events, leaderboards, crossover encounters)
 
 ## Build mode
-- Physics fidelity beyond v1 score-based model (distributed physics if rocking/heeling needs more)
+- Physics fidelity beyond v1 — current model is weight-vs-buoyancy scoring + Tier 2 sample points for waterline/pitch/heel; upgrade to distributed buoyancy or Jolt-assisted rigid-body interaction if that ever feels fake
 - Mod support
 - Tutorial / onboarding path — steep learning curve
 - Collaborative-building UX inside a P2P session
