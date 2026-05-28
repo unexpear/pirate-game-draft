@@ -73,6 +73,27 @@ Native equivalents of the 11 model-spine tests from the [Three.js browser spike]
 - render backend initialization is hidden behind placeholder code
 - CMake requires manual local paths not documented in the repo
 
+## Dependency acquisition policy
+
+Milestone 0 should use pinned, reproducible dependencies.
+
+Preferred:
+
+- CMake project at repo root or `native/`
+- pinned dependency versions
+- no manual local paths required
+- no global machine setup hidden from the repo
+
+Candidate approaches:
+
+- git submodules for bgfx / bx / bimg / imgui / SDL where needed
+- vcpkg manifest if all required packages behave cleanly
+- FetchContent only if build times and repo cleanliness stay acceptable
+
+Decision still open:
+
+- exact dependency strategy for SDL3 + bgfx + Dear ImGui
+
 ## After Milestone 0
 
 Once the foundation boots cleanly, the slice plan ([vertical-slice.md](vertical-slice.md)) resumes: generated ship rendering, Gerstner water mesh, buoyancy on a real ship, then the full Build → Sail loop. Jolt and Steamworks come in after that.
