@@ -93,16 +93,16 @@ Locked in [tech-stack.md](tech-stack.md):
 
 ### First native milestone
 
-Before resuming the full Build → Sail loop in native code, hit a smaller bootstrap milestone:
+Milestone 0 is narrower than originally drafted here: prove the app foundation boots cleanly before any rendering. Authoritative spec lives in [native-bootstrap-plan.md](native-bootstrap-plan.md):
 
-- Open a native window
-- Render a 3D grid
-- Render a generated ship mesh
-- Render a Gerstner water mesh
-- Run the same 11 self-tests in C++
-- Show a Dear ImGui debug panel
+- SDL3 native window opens
+- bgfx clears the screen
+- Dear ImGui debug panel renders
+- 11 model-spine self-tests pass
+- App builds from a clean checkout, exits cleanly
+- No ship rendering, no water rendering, no Jolt, no Steamworks
 
-No sailing yet. That's the bridge from the browser spike to the engineless game. Once it passes, the rest of the slice (§5 onward) gets re-implemented natively.
+Once Milestone 0 passes, the rest of the slice (§5 onward) — ship rendering, Gerstner water mesh, buoyancy on a real ship — gets implemented natively. Jolt and Steamworks come in after that.
 
 ---
 

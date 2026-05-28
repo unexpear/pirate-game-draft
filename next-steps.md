@@ -4,15 +4,14 @@ The Three.js browser spike at [spikes/threejs-sea-trial/](spikes/threejs-sea-tri
 
 ## Immediate
 
-- [ ] Bootstrap a native C++ project (CMake + SDL3 + bgfx + Jolt + Dear ImGui + miniaudio) — compiles + runs an empty window, no game logic yet
-- [ ] Hit the first native milestone (per [vertical-slice.md §3](vertical-slice.md)):
-  - Open native window
-  - Render 3D grid
-  - Render generated ship mesh
-  - Render Gerstner water mesh
-  - Run the same 11 self-tests in C++
-  - Show ImGui debug panel
-- [ ] Resume the full Build → Sail loop in native code after the milestone passes
+- [ ] Hit Milestone 0 per [native-bootstrap-plan.md](native-bootstrap-plan.md):
+  - SDL3 native window opens
+  - bgfx clears the screen
+  - Dear ImGui debug panel renders
+  - 11 native self-tests pass
+  - App builds from a clean checkout and exits cleanly
+  - No ship rendering, no water rendering, no Jolt, no Steamworks
+- [ ] After Milestone 0: add ship rendering, Gerstner water mesh, Jolt, then resume the full Build → Sail loop per [vertical-slice.md](vertical-slice.md)
 
 ## Done
 
