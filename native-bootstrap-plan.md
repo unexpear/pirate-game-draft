@@ -75,29 +75,26 @@ Native equivalents of the 11 model-spine tests from the [Three.js browser spike]
 
 ## Dependency acquisition policy
 
-**Decided for Milestone 0: CMake FetchContent**, pinned dependencies, no manual local paths, no hidden global machine setup.
+**Decided: no package manager.** No FetchContent, no vcpkg. The repo stays self-contained and buildable offline with no registry fetch — matching the public-domain ("do whatever you want") framing, so anyone can clone and build with zero external strings. See [decisions.md](decisions.md) and [LICENSE](LICENSE).
 
-### Per-library plan
+### Rules
 
-- **SDL3** — `FetchContent_Declare` pinned to a `release-3.x.x` tag. SDL3 ships native CMake and exposes the `SDL3::SDL3` target, so this is clean.
-- **bgfx** — via the community **bgfx.cmake** wrapper (FetchContent, pinned commit). Upstream bgfx builds with GENie/premake, not CMake, and needs its `bx` + `bimg` siblings; bgfx.cmake bundles all three and gives them CMake targets (plus a `bgfx_compile_shaders` helper for later).
-- **Dear ImGui** — `FetchContent_Declare` pinned to a tag, then a small hand-written CMake target that compiles ImGui core + the official `imgui_impl_sdl3.cpp` platform backend + a vendored bgfx renderer backend (see caveat).
+- Depend only on **permissive, no-strings libraries** (zlib / BSD / MIT / public-domain). The locked stack already qualifies: SDL3 (zlib), bgfx / bx / bimg (BSD-2), Jolt (MIT), Dear ImGui (MIT), miniaudio (public domain).
+- **Vendor** those libraries' source directly, pinned, with their license notices preserved in a `THIRD-PARTY-LICENSES` file. Nothing is pulled at configure time.
+- **Build from scratch** anything that would attach license strings or cost (e.g. FMOD / Wwise → use miniaudio or roll your own).
+- **Steamworks** is the one unavoidable proprietary piece. Isolate it as an optional module so the engine/framework builds and runs without it.
 
-### Caveats to resolve at scaffold time
+### bgfx note
 
-- **Confirm the live canonical bgfx.cmake fork.** The lineage is messy (an archived original plus several active-looking forks). Verify which fork is current and healthy before pinning — the capability is standard, the exact repo URL is not settled here.
-- **No official ImGui→bgfx renderer backend exists.** Vendor a small backend file into the repo (the community-standard "Richard Gale" implementation, ~200 lines) or write it. This is the one library source we vendor; there's no upstream to track. Independent of the FetchContent choice.
+Upstream bgfx builds with GENie/premake, not CMake, and needs its `bx` + `bimg` siblings. Vendoring means either copying a CMake-ified bgfx tree in-tree or writing the CMake for it. The community bgfx.cmake wrapper is the usual CMake face for bgfx; if used, vendor it in-tree rather than fetching it at configure time.
 
-### Why FetchContent over the alternatives (for M0)
+### Dear ImGui note
 
-- **vs. vcpkg manifest** — SDL3 is excellent in vcpkg, but the bgfx port's freshness is the shakiest link, and vcpkg doesn't solve the genuinely hard part (the ImGui→bgfx backend is hand-wired either way). Adds a toolchain-bootstrap step. Overkill for three deps.
-- **vs. git submodules** — equally reproducible, but more `.gitmodules` ceremony, and bgfx.cmake already manages its own submodules internally.
+No official ImGui→bgfx renderer backend exists anywhere. Vendor a small backend file (community-standard implementation, ~200 lines) alongside the official `imgui_impl_sdl3.cpp` platform backend, or write it.
 
-### What would flip this later
+### Open sub-question
 
-- Adding Jolt + asset importers + many transitive C++ deps → vcpkg manifest's resolution and binary cache start paying off; reconsider then.
-- Needing to patch a dependency's source → submodules (or vcpkg overlay ports).
-- CI re-download pain → add `FETCHCONTENT_BASE_DIR` caching, or move to submodules for offline determinism.
+- Exact vendoring mechanic: **in-tree source copy** (fully self-contained, larger repo) vs **git submodules pinned to commits** (lean repo, but submodule remotes must stay alive). In-tree copy is the more self-contained / no-strings choice; submodules are leaner.
 
 ## After Milestone 0
 

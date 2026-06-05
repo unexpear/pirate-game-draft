@@ -4,7 +4,8 @@ Master list. Per-mode subsets live inline in [game-a-pirate-sandbox.md](game-a-p
 
 ## Tech foundation
 - Native Milestone 0 pass criteria — exact build/run/test bar for the first C++ scaffold before ship rendering, water rendering, Jolt, or Steamworks (see [native-bootstrap-plan.md](native-bootstrap-plan.md) for the baseline; details still firming up)
-- Canonical bgfx.cmake fork to pin — lineage is messy (archived original + several active forks); confirm the live healthy one at scaffold time. Dependency *strategy* itself is decided (FetchContent — see [decisions.md](decisions.md))
+- Dependency vendoring mechanic — in-tree source copy vs pinned submodules for the permissive no-strings libs (strategy = no package manager; see [decisions.md](decisions.md) / [native-bootstrap-plan.md](native-bootstrap-plan.md))
+- bgfx CMake-ification + ImGui→bgfx renderer backend — upstream bgfx is GENie/premake so it needs a CMake face; no official ImGui→bgfx backend exists, so vendor or write one
 - Rendering backend details under bgfx — DirectX 11/12 vs Vulkan backend priority, shader pipeline, material format
 - SDL3 platform layer boundaries — windowing, input, controller support, file paths
 - Jolt integration boundaries — rigid bodies vs score-based buoyancy, where ship physics hands off to Jolt
