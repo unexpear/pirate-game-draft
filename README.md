@@ -2,6 +2,8 @@
 
 Working draft for a single Steam app with two modes inside: **Sail** (open-world pirate gameplay) and **Build** (simulator-grade shipbuilding). Players choose mode at the main menu. Ships made in Build appear in Sail.
 
+**License:** public domain — [The Unlicense](LICENSE). Do whatever you want with it. Dependencies are kept permissive/no-strings; Steamworks is an isolated optional module (see [tech-stack.md](tech-stack.md)).
+
 ## Files
 
 - [concept.md](concept.md) — project pitch and rationale for the single-product, two-mode shape
