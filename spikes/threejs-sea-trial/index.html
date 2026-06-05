@@ -479,8 +479,13 @@ function updateRuntime(rt, dt, waves) {
   if (stats.sinking) rt.sinkDepth += dt * clamp(Math.abs(stats.floatMargin) / 1100, 0.25, 2.8);
   else rt.sinkDepth = Math.max(0, rt.sinkDepth - dt * 2.5);
 
-  const ride = (stats.submergedRatio - 0.52) * 0.85;
-  rt.y = rt.waterHeight - ride - rt.sinkDepth;
+  // Visual waterline: a floating ship rides with the hull origin above the
+  // surface (freeboard), since the generated hull's origin sits near deck
+  // level. Freeboard scales with spare buoyancy and shrinks toward 0 as the
+  // ship loses margin; sinkDepth then carries it under once it's sinking.
+  const buoyantLift = clamp(stats.floatMargin / Math.max(1, stats.mass), -1, 1);
+  const freeboard = rt.ship.bounds.depth * 0.25 * (1 + buoyantLift * 3);
+  rt.y = rt.waterHeight + freeboard - rt.sinkDepth;
 }
 
 function ThreeBuildPreview({ ship }) {
