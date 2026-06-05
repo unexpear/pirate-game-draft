@@ -75,24 +75,29 @@ Native equivalents of the 11 model-spine tests from the [Three.js browser spike]
 
 ## Dependency acquisition policy
 
-Milestone 0 should use pinned, reproducible dependencies.
+**Decided for Milestone 0: CMake FetchContent**, pinned dependencies, no manual local paths, no hidden global machine setup.
 
-Preferred:
+### Per-library plan
 
-- CMake project at repo root or `native/`
-- pinned dependency versions
-- no manual local paths required
-- no global machine setup hidden from the repo
+- **SDL3** — `FetchContent_Declare` pinned to a `release-3.x.x` tag. SDL3 ships native CMake and exposes the `SDL3::SDL3` target, so this is clean.
+- **bgfx** — via the community **bgfx.cmake** wrapper (FetchContent, pinned commit). Upstream bgfx builds with GENie/premake, not CMake, and needs its `bx` + `bimg` siblings; bgfx.cmake bundles all three and gives them CMake targets (plus a `bgfx_compile_shaders` helper for later).
+- **Dear ImGui** — `FetchContent_Declare` pinned to a tag, then a small hand-written CMake target that compiles ImGui core + the official `imgui_impl_sdl3.cpp` platform backend + a vendored bgfx renderer backend (see caveat).
 
-Candidate approaches:
+### Caveats to resolve at scaffold time
 
-- git submodules for bgfx / bx / bimg / imgui / SDL where needed
-- vcpkg manifest if all required packages behave cleanly
-- FetchContent only if build times and repo cleanliness stay acceptable
+- **Confirm the live canonical bgfx.cmake fork.** The lineage is messy (an archived original plus several active-looking forks). Verify which fork is current and healthy before pinning — the capability is standard, the exact repo URL is not settled here.
+- **No official ImGui→bgfx renderer backend exists.** Vendor a small backend file into the repo (the community-standard "Richard Gale" implementation, ~200 lines) or write it. This is the one library source we vendor; there's no upstream to track. Independent of the FetchContent choice.
 
-Decision still open:
+### Why FetchContent over the alternatives (for M0)
 
-- exact dependency strategy for SDL3 + bgfx + Dear ImGui
+- **vs. vcpkg manifest** — SDL3 is excellent in vcpkg, but the bgfx port's freshness is the shakiest link, and vcpkg doesn't solve the genuinely hard part (the ImGui→bgfx backend is hand-wired either way). Adds a toolchain-bootstrap step. Overkill for three deps.
+- **vs. git submodules** — equally reproducible, but more `.gitmodules` ceremony, and bgfx.cmake already manages its own submodules internally.
+
+### What would flip this later
+
+- Adding Jolt + asset importers + many transitive C++ deps → vcpkg manifest's resolution and binary cache start paying off; reconsider then.
+- Needing to patch a dependency's source → submodules (or vcpkg overlay ports).
+- CI re-download pain → add `FETCHCONTENT_BASE_DIR` caching, or move to submodules for offline determinism.
 
 ## After Milestone 0
 
