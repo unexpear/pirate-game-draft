@@ -26,4 +26,3 @@ The Three.js browser spike at [spikes/threejs-sea-trial/](spikes/threejs-sea-tri
 - Open-world content (islands, quests, etc. — explicitly held back per slice §25)
 - Real Steam Workshop integration (web spike used local `/user_ships/` as stand-in)
 - Multiplayer beyond the slice's optional Phase 8 mini-test
-- Filename cleanup (`game-a-pirate-sandbox.md` → `sail-mode.md`, etc.)

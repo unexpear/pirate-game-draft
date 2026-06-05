@@ -47,7 +47,7 @@ A multiplayer open-ocean pirate game where players sail, fight, dive, dredge, an
 - Bioluminescence in caves and deep zones
 - Post-process tint and refraction at the surface
 
-See also [water-tech.md](water-tech.md) — the rendering pipeline is shared with Game B's sea trials.
+See also [water-tech.md](water-tech.md) — the rendering pipeline is shared with Build mode's sea trials.
 
 ### Dredging
 - Seafloor terrain deformation

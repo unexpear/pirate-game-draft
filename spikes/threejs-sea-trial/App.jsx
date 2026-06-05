@@ -516,8 +516,6 @@ function ThreeBuildPreview({ ship }) {
     let frame = requestAnimationFrame(animate);
 
     host.__scene = scene;
-    host.__renderer = renderer;
-    host.__camera = camera;
 
     return () => {
       cancelAnimationFrame(frame);
@@ -553,7 +551,6 @@ function ThreeSailScene({ ship, runtime, waves, showDebug }) {
   const hostRef = useRef(null);
   const shipGroupRef = useRef(null);
   const waterRef = useRef(null);
-  const sampleRef = useRef([]);
   const shipDataRef = useRef(ship);
   shipDataRef.current = ship;
 
@@ -598,7 +595,6 @@ function ThreeSailScene({ ship, runtime, waves, showDebug }) {
       scene.add(m);
       sampleMeshes.push(m);
     }
-    sampleRef.current = sampleMeshes;
 
     const arrow = new THREE.ArrowHelper(new THREE.Vector3(Math.sin(runtime.current.windDirection), 0, Math.cos(runtime.current.windDirection)), new THREE.Vector3(-7, 4, -7), 4, 0xffffff);
     scene.add(arrow);
@@ -653,7 +649,6 @@ function ThreeSailScene({ ship, runtime, waves, showDebug }) {
     frame = requestAnimationFrame(animate);
 
     host.__scene = scene;
-    host.__renderer = renderer;
 
     return () => {
       cancelAnimationFrame(frame);

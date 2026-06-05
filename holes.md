@@ -1,6 +1,6 @@
 # Open questions
 
-Master list. Per-mode subsets live inline in [game-a-pirate-sandbox.md](game-a-pirate-sandbox.md) (Sail) and [game-b-shipbuilding-sim.md](game-b-shipbuilding-sim.md) (Build). Resolved items move to [decisions.md](decisions.md).
+Master list. Per-mode subsets live inline in [sail-mode.md](sail-mode.md) (Sail) and [build-mode.md](build-mode.md) (Build). Resolved items move to [decisions.md](decisions.md).
 
 ## Tech foundation
 - Native Milestone 0 pass criteria — exact build/run/test bar for the first C++ scaffold before ship rendering, water rendering, Jolt, or Steamworks (see [native-bootstrap-plan.md](native-bootstrap-plan.md) for the baseline; details still firming up)
@@ -55,7 +55,7 @@ Master list. Per-mode subsets live inline in [game-a-pirate-sandbox.md](game-a-p
 - NPC ship cap — separate budget from player ships; Tier 0/1
 - Host migration behavior — seamless with brief-pause UX
 - Steam Workshop confirmed in v1 with upload + download validation
-- Reverse interop (Game A → Game B export) — moot now (same product)
+- Reverse interop (Sail → Build export) — moot now (same product)
 - Buoyancy model — weight vs. score, not distributed physics
 - Boards are data, not per-frame physics samples
 - Sample-point tiers (Tier 2 default, rectangular grid)

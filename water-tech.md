@@ -1,6 +1,6 @@
 # Water + buoyancy + physics
 
-Shared subsystem. Game A's combat/diving and Game B's sea trials both sit on top of it. Originally the project's biggest technical risk — see [risks.md](risks.md). The weight-vs-score buoyancy decision and the 2016 perf target tame most of it.
+Shared subsystem. Sail mode's combat/diving and Build mode's sea trials both sit on top of it. Originally the project's biggest technical risk — see [risks.md](risks.md). The weight-vs-score buoyancy decision and the 2016 perf target tame most of it.
 
 ---
 
@@ -159,7 +159,7 @@ Target: 2016 mid-range PC (i5-6500, GTX 970/1060, 8GB, 1080p). Reference: Sea of
 ## Open questions
 
 - Piece-data schema (volume, mass, material, damage state) — drives both buoyancy and damage modeling
-- Tier sampler grid placement on irregular Game B hulls (bounding box / principal axes / designer hint)
+- Tier sampler grid placement on irregular Build-mode hulls (bounding box / principal axes / designer hint)
 - Diving entity tier — players at Tier 0 underwater, or upgrade for swimmer pitch/roll?
 - Where swimmer-scale and ship-scale buoyancy code cleanly diverge (shared model + API done; abstractions TBD)
 
