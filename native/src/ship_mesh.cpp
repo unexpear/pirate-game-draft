@@ -82,7 +82,8 @@ void shutdown() {
     s_vbh = BGFX_INVALID_HANDLE;
 }
 
-void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose, float heading) {
+void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
+            float heading, float windDir) {
     // Ship root: yaw (heading) + heave + pitch + heel, above each piece's local
     // transform.
     float shipRoot[16];
@@ -110,6 +111,48 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose, 
         bgfx::setIndexBuffer(s_ibh);
         bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z
                        | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW | BGFX_STATE_MSAA);
+        bgfx::submit(viewId, s_prog);
+    }
+
+    // Mast + sail (data-driven), composed under the same ship root.
+    const uint64_t baseState = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z
+                             | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_MSAA;
+    const float depth = float(ship.bounds.depth);
+    const float len = float(ship.bounds.length);
+    const float wid = float(ship.bounds.width);
+
+    if (ship.systems.mast_count > 0) {
+        float local[16];
+        bx::mtxSRT(local, 0.16f, depth * 0.9f + 4.6f, 0.16f, 0.0f, 0.0f, 0.0f,
+                   0.0f, depth * 0.45f + 2.1f, -len * 0.05f);
+        float model[16];
+        bx::mtxMul(model, local, shipRoot);
+        const float mastCol[4] = { 0.29f, 0.17f, 0.09f, 1.0f };
+        bgfx::setUniform(u_color, mastCol);
+        bgfx::setTransform(model);
+        bgfx::setVertexBuffer(0, s_vbh);
+        bgfx::setIndexBuffer(s_ibh);
+        bgfx::setState(baseState | BGFX_STATE_CULL_CW);
+        bgfx::submit(viewId, s_prog);
+    }
+
+    if (ship.systems.sail_count > 0) {
+        // The sail yaws partway toward the wind (trim).
+        float rel = windDir - heading;
+        while (rel > 3.14159265f) rel -= 6.28318531f;
+        while (rel < -3.14159265f) rel += 6.28318531f;
+        const float trim = rel * 0.4f;
+        float local[16];
+        bx::mtxSRT(local, wid * 1.35f, depth * 0.75f + 2.6f, 0.06f, 0.0f, trim, 0.0f,
+                   0.0f, depth * 0.5f + 2.5f, -len * 0.05f);
+        float model[16];
+        bx::mtxMul(model, local, shipRoot);
+        const float sailCol[4] = { 0.90f, 0.87f, 0.80f, 1.0f };
+        bgfx::setUniform(u_color, sailCol);
+        bgfx::setTransform(model);
+        bgfx::setVertexBuffer(0, s_vbh);
+        bgfx::setIndexBuffer(s_ibh);
+        bgfx::setState(baseState); // no cull: sail visible from both sides
         bgfx::submit(viewId, s_prog);
     }
 }

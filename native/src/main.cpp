@@ -104,6 +104,7 @@ int main(int argc, char** argv) {
     float sinkDepth = 0.0f;
     int sailTier = 0;                 // 0 anchored, 1 half sail, 2 full sail
     float speed = 0.0f, heading = 0.0f, worldX = 0.0f, worldZ = 0.0f;
+    float windDir = 2.1f;             // wind blows toward this heading (radians); drifts
 
     auto clampf = [](float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); };
     auto isHull = [](const sea::Piece& p) { return p.type == "plank" || p.type == "rib" || p.type == "keel"; };
@@ -186,7 +187,14 @@ int main(int argc, char** argv) {
             if (keys[SDL_SCANCODE_A]) steer -= 1.0f;
         }
         const float kFullSpeed = 11.0f;
-        const float targetSpeed = sailTier == 0 ? 0.0f : (sailTier == 1 ? kFullSpeed * 0.5f : kFullSpeed);
+        // Wind (Black Flag): drifts slowly; you make best speed running with it
+        // (downwind) and least when beating into it (upwind).
+        windDir += 0.06f * dt;
+        if (windDir > 6.28318531f) windDir -= 6.28318531f;
+        const float align = std::cos(heading - windDir);            // +1 downwind, -1 upwind
+        const float windFactor = 0.55f + 0.45f * (align * 0.5f + 0.5f); // 1.0 .. 0.55
+        const float tierSpeed = sailTier == 0 ? 0.0f : (sailTier == 1 ? kFullSpeed * 0.5f : kFullSpeed);
+        const float targetSpeed = tierSpeed * windFactor;
         speed += (targetSpeed - speed) * clampf(dt * 1.2f, 0.0f, 1.0f);
         const float speedFrac = speed / kFullSpeed;
         heading += steer * (1.1f - 0.5f * speedFrac) * dt; // agile slow, sluggish fast
@@ -225,6 +233,8 @@ int main(int argc, char** argv) {
             ImGui::Text("Sails:   %s", tierName);
             ImGui::Text("Speed:   %.1f", speed);
             ImGui::Text("Heading: %.0f deg", heading * 57.2957795f);
+            const char* pts = align > 0.5f ? "tailwind" : (align < -0.5f ? "headwind" : "crosswind");
+            ImGui::Text("Wind:    %.0f deg (%s, %.0f%% drive)", windDir * 57.2957795f, pts, windFactor * 100.0f);
         }
         ImGui::Separator();
         ImGui::TextColored(passing == total ? kGreen : kRed, "Model self-tests: %d / %d passing", passing, total);
@@ -252,7 +262,7 @@ int main(int argc, char** argv) {
         ImGui::End();
 
         // 3D scene (water + ship) on the clear view, ImGui overlay on top.
-        ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, width, height);
+        ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, width, height);
         imgui_bgfx::endFrame(kImGuiView);
         bgfx::frame();
 
