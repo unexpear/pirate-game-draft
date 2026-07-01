@@ -4,16 +4,19 @@ The production path for the pirate game: an engineless native C++ app assembled
 from permissive libraries. See [../tech-stack.md](../tech-stack.md) and
 [../native-bootstrap-plan.md](../native-bootstrap-plan.md).
 
-## Status — Milestone 0 (part 1 of 2)
+## Status — Milestone 0
 
-- [x] Model spine ported to C++ + **11 self-tests passing** (this directory)
+- [x] Model spine ported to C++ + **11 self-tests passing** (`sea_trial_selftest`)
 - [x] Builds from a clean checkout, exits cleanly, `ctest`-wired
-- [ ] SDL3 window + bgfx clear + Dear ImGui panel
+- [x] SDL3 window (`sea_trial`) — opens, runs the self-tests, clean exit
+- [x] bgfx clears the screen (Direct3D 11; debug-text overlay)
+- [ ] Dear ImGui debug panel
 
-The self-test runner is pure C++17 with **no external dependencies** — it
-compiles with just a compiler + CMake. The window/graphics step adds SDL3,
-bgfx, and Dear ImGui, vendored as pinned source (no package manager — see
-[../native-bootstrap-plan.md](../native-bootstrap-plan.md)).
+The self-test runner is pure C++17 with **no external dependencies**. The
+`sea_trial` app adds SDL3 and bgfx, vendored as **pinned submodules** under
+`extern/` (SDL @ release-3.4.10; bgfx via the bgfx.cmake wrapper, which
+carries bgfx/bx/bimg). No package manager — see
+[../native-bootstrap-plan.md](../native-bootstrap-plan.md). Dear ImGui is next.
 
 ## Layout
 

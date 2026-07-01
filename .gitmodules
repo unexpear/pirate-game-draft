@@ -1,3 +1,6 @@
 [submodule "native/extern/SDL"]
 	path = native/extern/SDL
 	url = https://github.com/libsdl-org/SDL.git
+[submodule "native/extern/bgfx.cmake"]
+	path = native/extern/bgfx.cmake
+	url = https://github.com/bkaradzic/bgfx.cmake.git

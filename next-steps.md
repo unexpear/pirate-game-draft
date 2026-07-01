@@ -9,7 +9,7 @@ Milestone 0 is underway in [native/](native/):
 - [x] 11 native self-tests pass — pure C++17, no deps; verified on g++ (MSYS2 UCRT64) and MSVC 2022
 - [x] Builds from a clean checkout, exits cleanly, `ctest`-wired
 - [x] SDL3 native window opens (release-3.4.10, static submodule) — opens, runs the self-tests, clean exit
-- [ ] bgfx clears the screen
+- [x] bgfx clears the screen (Direct3D 11 auto-selected; debug-text overlay shows the self-test count)
 - [ ] Dear ImGui debug panel renders
 - [ ] (still no ship/water rendering, no Jolt, no Steamworks — per [native-bootstrap-plan.md](native-bootstrap-plan.md))
 

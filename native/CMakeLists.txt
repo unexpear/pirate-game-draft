@@ -31,9 +31,17 @@ set(SDL_SHARED OFF CACHE BOOL "" FORCE)
 set(SDL_STATIC ON CACHE BOOL "" FORCE)
 add_subdirectory(extern/SDL EXCLUDE_FROM_ALL)
 
+# bgfx (with bx + bimg) is vendored via the bgfx.cmake wrapper submodule.
+# Library only — no examples, no tools/shaderc (a clear + debug text needs
+# neither). Upstream bgfx builds with GENie/premake; the wrapper gives it CMake.
+set(BGFX_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(BGFX_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(BGFX_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory(extern/bgfx.cmake EXCLUDE_FROM_ALL)
+
 add_executable(sea_trial
     src/main.cpp
     src/ship_model.cpp
 )
 target_include_directories(sea_trial PRIVATE src)
-target_link_libraries(sea_trial PRIVATE SDL3::SDL3-static)
+target_link_libraries(sea_trial PRIVATE SDL3::SDL3-static bgfx)
