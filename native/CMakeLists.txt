@@ -49,14 +49,28 @@ set(BGFX_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory(extern/bgfx.cmake EXCLUDE_FROM_ALL)
 
 # Dear ImGui (stock v1.92.8 submodule) + a self-contained bgfx renderer.
+# 3D ship rendered via bgfx's debugdraw (precompiled lit shaders — no shaderc
+# pipeline needed yet). debugdraw.cpp only *includes* bgfx_utils.h/packrect.h
+# (no calls), so we compile it directly with the right include dirs.
+set(BGFX_SRC ${CMAKE_CURRENT_SOURCE_DIR}/extern/bgfx.cmake/bgfx)
+set(BGFX_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/extern/bgfx.cmake)
 add_executable(sea_trial
     src/main.cpp
     src/ship_model.cpp
+    src/ship_view.cpp
     src/imgui/imgui_bgfx.cpp
+    ${BGFX_SRC}/examples/common/debugdraw/debugdraw.cpp
     extern/imgui/imgui.cpp
     extern/imgui/imgui_draw.cpp
     extern/imgui/imgui_tables.cpp
     extern/imgui/imgui_widgets.cpp
 )
-target_include_directories(sea_trial PRIVATE src src/imgui extern/imgui)
+target_include_directories(sea_trial PRIVATE
+    src
+    src/imgui
+    extern/imgui
+    ${BGFX_SRC}/examples/common   # debugdraw/debugdraw.h, bgfx_utils.h, packrect.h
+    ${BGFX_SRC}/3rdparty          # tinystl (pulled by bgfx_utils.h)
+    ${BGFX_ROOT}/bimg/include     # bimg (pulled by bgfx_utils.h)
+)
 target_link_libraries(sea_trial PRIVATE SDL3::SDL3-static bgfx bx)

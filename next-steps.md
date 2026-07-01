@@ -15,9 +15,10 @@ The Three.js browser spike at [spikes/threejs-sea-trial/](spikes/threejs-sea-tri
 
 ## Next (post-Milestone 0)
 
-- [ ] Ship rendering — generate the Test Sloop mesh in bgfx (the model + JSON already exist)
+- [x] Ship rendering — the Test Sloop draws as 3D oriented boxes (one per hull piece) via bgfx debugdraw, orbit camera, colored by type/damage. No custom shaders yet (debugdraw ships precompiled ones).
+- [ ] Real shader pipeline (shaderc + `bgfx_compile_shaders`) — needed for water; will also let ship rendering move off debugdraw to lit meshes
 - [ ] Gerstner water mesh (deterministic, matching the model's `sampleWater`)
-- [ ] Buoyancy on a real floating ship, then the full Build → Sail loop per [vertical-slice.md](vertical-slice.md)
+- [ ] Buoyancy on a real floating ship — ride height from the model's float margin, then the full Build → Sail loop per [vertical-slice.md](vertical-slice.md)
 - [ ] Jolt (collisions) and Steamworks come after that
 
 ## Done

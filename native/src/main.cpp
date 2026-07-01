@@ -14,6 +14,7 @@
 
 #include <imgui.h>
 #include "imgui/imgui_bgfx.h"
+#include "ship_view.h"
 
 #include "ship_model.hpp"
 
@@ -82,7 +83,10 @@ int main(int argc, char** argv) {
     const int total = (int)results.size();
     sea::ShipConfig cfg;
     cfg.name = "Test Sloop";
-    const sea::Stats stats = sea::getShipStats(sea::makeShipFromConfig(cfg));
+    const sea::Ship ship = sea::makeShipFromConfig(cfg);
+    const sea::Stats stats = sea::getShipStats(ship);
+
+    ship_view::init();
 
     std::printf("self-tests: %d / %d passing\n", passing, total);
     std::printf("renderer: %s\n", bgfx::getRendererName(bgfx::getRendererType()));
@@ -95,6 +99,7 @@ int main(int argc, char** argv) {
     uint8_t mouseButtons = 0;
     float wheel = 0.0f;
     uint64_t last = SDL_GetTicks();
+    float timeSec = 0.0f;
 
     bool running = true;
     int frame = 0;
@@ -136,6 +141,7 @@ int main(int argc, char** argv) {
         const uint64_t now = SDL_GetTicks();
         const float dt = (now - last) / 1000.0f;
         last = now;
+        timeSec += dt;
 
         imgui_bgfx::beginFrame(width, height, dt, mouseX, mouseY, mouseButtons, wheel);
 
@@ -159,17 +165,18 @@ int main(int argc, char** argv) {
         }
         ImGui::Separator();
         ImGui::Text("Frame %d   %.1f FPS", frame, ImGui::GetIO().Framerate);
-        ImGui::TextDisabled("Esc to quit");
+        ImGui::TextDisabled("Orbit camera - Esc to quit");
         ImGui::End();
 
-        bgfx::setViewRect(kClearView, 0, 0, (uint16_t)width, (uint16_t)height);
-        bgfx::touch(kClearView);
+        // 3D ship on the clear view, ImGui overlay on top.
+        ship_view::render(kClearView, ship, timeSec, width, height);
         imgui_bgfx::endFrame(kImGuiView);
         bgfx::frame();
 
         if (maxFrames >= 0 && ++frame >= maxFrames) running = false;
     }
 
+    ship_view::shutdown();
     imgui_bgfx::shutdown();
     bgfx::shutdown();
     SDL_DestroyWindow(window);
