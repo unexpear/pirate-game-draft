@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(sea_trial_native LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20) # bgfx/bx headers use C++20 features (designated initializers)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -39,9 +39,15 @@ set(BGFX_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
 set(BGFX_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory(extern/bgfx.cmake EXCLUDE_FROM_ALL)
 
+# Dear ImGui (stock v1.92.8 submodule) + a self-contained bgfx renderer.
 add_executable(sea_trial
     src/main.cpp
     src/ship_model.cpp
+    src/imgui/imgui_bgfx.cpp
+    extern/imgui/imgui.cpp
+    extern/imgui/imgui_draw.cpp
+    extern/imgui/imgui_tables.cpp
+    extern/imgui/imgui_widgets.cpp
 )
-target_include_directories(sea_trial PRIVATE src)
-target_link_libraries(sea_trial PRIVATE SDL3::SDL3-static bgfx)
+target_include_directories(sea_trial PRIVATE src src/imgui extern/imgui)
+target_link_libraries(sea_trial PRIVATE SDL3::SDL3-static bgfx bx)

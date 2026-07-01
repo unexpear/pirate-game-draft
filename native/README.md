@@ -4,19 +4,33 @@ The production path for the pirate game: an engineless native C++ app assembled
 from permissive libraries. See [../tech-stack.md](../tech-stack.md) and
 [../native-bootstrap-plan.md](../native-bootstrap-plan.md).
 
-## Status — Milestone 0
+## Status — Milestone 0 ✅ complete
 
 - [x] Model spine ported to C++ + **11 self-tests passing** (`sea_trial_selftest`)
 - [x] Builds from a clean checkout, exits cleanly, `ctest`-wired
-- [x] SDL3 window (`sea_trial`) — opens, runs the self-tests, clean exit
-- [x] bgfx clears the screen (Direct3D 11; debug-text overlay)
-- [ ] Dear ImGui debug panel
+- [x] SDL3 window (`sea_trial`)
+- [x] bgfx clears the screen (Direct3D 11)
+- [x] Dear ImGui debug panel — the 11 self-tests + Test Sloop stats, live
 
-The self-test runner is pure C++17 with **no external dependencies**. The
-`sea_trial` app adds SDL3 and bgfx, vendored as **pinned submodules** under
-`extern/` (SDL @ release-3.4.10; bgfx via the bgfx.cmake wrapper, which
-carries bgfx/bx/bimg). No package manager — see
-[../native-bootstrap-plan.md](../native-bootstrap-plan.md). Dear ImGui is next.
+The self-test runner is pure C++ with **no external dependencies**. The
+`sea_trial` app adds SDL3, bgfx, and Dear ImGui, vendored as **pinned git
+submodules** under `extern/` (no package manager — see
+[../native-bootstrap-plan.md](../native-bootstrap-plan.md)):
+
+| Dep | Pin | Notes |
+|---|---|---|
+| SDL3 | `release-3.4.10` | window + input; built static |
+| bgfx (+ bx, bimg) | via `bgfx.cmake` wrapper | renderer; upstream is GENie/premake, wrapper gives CMake |
+| Dear ImGui | `v1.92.8` | debug UI |
+
+The Dear ImGui → bgfx renderer is a small self-contained backend
+(`src/imgui/imgui_bgfx.*`) — there's no official ImGui-bgfx backend, so it's
+adapted from bgfx's own example backend (same imgui version) and decoupled
+from bgfx's example framework. Uses bgfx's precompiled ImGui shaders (the two
+vendored `*_ocornut_imgui.bin.h`), feeds ImGui input from SDL3 directly.
+
+Next: ship + water rendering, then the full Build → Sail loop (see
+[../vertical-slice.md](../vertical-slice.md)).
 
 ## Layout
 

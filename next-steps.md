@@ -4,17 +4,21 @@ The Three.js browser spike at [spikes/threejs-sea-trial/](spikes/threejs-sea-tri
 
 ## Immediate
 
-Milestone 0 is underway in [native/](native/):
+**Milestone 0 is complete** ✅ — [native/](native/):
 
-- [x] 11 native self-tests pass — pure C++17, no deps; verified on g++ (MSYS2 UCRT64) and MSVC 2022
+- [x] 11 native self-tests pass — pure C++, verified on g++ (MSYS2 UCRT64) and MSVC 2022
 - [x] Builds from a clean checkout, exits cleanly, `ctest`-wired
-- [x] SDL3 native window opens (release-3.4.10, static submodule) — opens, runs the self-tests, clean exit
-- [x] bgfx clears the screen (Direct3D 11 auto-selected; debug-text overlay shows the self-test count)
-- [ ] Dear ImGui debug panel renders
-- [ ] (still no ship/water rendering, no Jolt, no Steamworks — per [native-bootstrap-plan.md](native-bootstrap-plan.md))
+- [x] SDL3 native window opens (release-3.4.10, static submodule)
+- [x] bgfx clears the screen (Direct3D 11 auto-selected)
+- [x] Dear ImGui debug panel renders (v1.92.8, self-contained bgfx renderer) — shows the 11 self-tests + Test Sloop stats, visually verified
+- [x] Vendoring mechanic resolved: **pinned git submodules** under `extern/` (SDL, bgfx.cmake, imgui)
 
-- [ ] Resolve the vendoring mechanic (in-tree source copy vs pinned submodules) before pulling SDL3/bgfx/ImGui in
-- [ ] After Milestone 0: add ship rendering, Gerstner water mesh, Jolt, then resume the full Build → Sail loop per [vertical-slice.md](vertical-slice.md)
+## Next (post-Milestone 0)
+
+- [ ] Ship rendering — generate the Test Sloop mesh in bgfx (the model + JSON already exist)
+- [ ] Gerstner water mesh (deterministic, matching the model's `sampleWater`)
+- [ ] Buoyancy on a real floating ship, then the full Build → Sail loop per [vertical-slice.md](vertical-slice.md)
+- [ ] Jolt (collisions) and Steamworks come after that
 
 ## Done
 

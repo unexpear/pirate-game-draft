@@ -1,15 +1,19 @@
-// Sea Trial — native app window (Milestone 0, part 2b). Public domain (Unlicense).
+// Sea Trial — native app window (Milestone 0, complete). Public domain (Unlicense).
 //
-// Opens an SDL3 window, initializes bgfx on it, and clears the screen every
-// frame with a debug-text overlay showing the self-test result. Dear ImGui
-// panel is next (part 2c). Run with `--frames N` to auto-exit after N frames
-// (handy for scripted/headless verification); otherwise runs until the window
-// is closed or Escape is pressed.
+// SDL3 window + bgfx clear + a Dear ImGui debug panel showing the model
+// self-tests and Test Sloop stats. This is the full Milestone 0 target; ship
+// rendering, water, Jolt, and Steamworks all come later.
+//
+// Run with `--frames N` to auto-exit after N frames (scripted verification);
+// otherwise runs until the window is closed or Escape is pressed.
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL.h>
-#include <SDL3/SDL_main.h> // for SDL_SetMainReady (main is ours; not hijacked)
+#include <SDL3/SDL_main.h> // SDL_SetMainReady (main is ours; not hijacked)
 
-#include <bgfx/bgfx.h> // PlatformData / setPlatformData / renderFrame live here now
+#include <bgfx/bgfx.h>
+
+#include <imgui.h>
+#include "imgui/imgui_bgfx.h"
 
 #include "ship_model.hpp"
 
@@ -18,6 +22,9 @@
 #include <cstring>
 
 namespace {
+
+constexpr uint16_t kClearView = 0;
+constexpr uint16_t kImGuiView = 200;
 
 void* nativeWindowHandle(SDL_Window* w) {
 #if defined(_WIN32)
@@ -32,11 +39,9 @@ void* nativeWindowHandle(SDL_Window* w) {
 } // namespace
 
 int main(int argc, char** argv) {
-    int maxFrames = -1; // <0 => run until the window is closed
-    for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc)
-            maxFrames = std::atoi(argv[++i]);
-    }
+    int maxFrames = -1;
+    for (int i = 1; i < argc; ++i)
+        if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) maxFrames = std::atoi(argv[++i]);
 
     SDL_SetMainReady();
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -52,14 +57,12 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Single-threaded bgfx: calling renderFrame() before init() disables the
-    // separate render thread, which keeps a simple app straightforward.
-    bgfx::renderFrame();
+    bgfx::renderFrame(); // single-threaded
 
     bgfx::Init init;
-    init.type = bgfx::RendererType::Count; // auto-pick (D3D / Vulkan / etc.)
-    init.resolution.width = static_cast<uint32_t>(width);
-    init.resolution.height = static_cast<uint32_t>(height);
+    init.type = bgfx::RendererType::Count;
+    init.resolution.width = (uint32_t)width;
+    init.resolution.height = (uint32_t)height;
     init.resolution.reset = BGFX_RESET_VSYNC;
     init.platformData.nwh = nativeWindowHandle(window);
     if (!bgfx::init(init)) {
@@ -68,44 +71,106 @@ int main(int argc, char** argv) {
         SDL_Quit();
         return 1;
     }
+    bgfx::setViewClear(kClearView, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x1e2a3aff, 1.0f, 0);
 
-    bgfx::setDebug(BGFX_DEBUG_TEXT);
-    bgfx::setViewClear(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x1e2a3aff, 1.0f, 0);
+    imgui_bgfx::init();
 
-    // Run the self-tests once and surface them in the debug overlay.
+    // Model data for the panel (computed once).
     const auto results = sea::runSelfTest();
     int passing = 0;
     for (const auto& r : results) if (r.pass) ++passing;
-    const int total = static_cast<int>(results.size());
+    const int total = (int)results.size();
+    sea::ShipConfig cfg;
+    cfg.name = "Test Sloop";
+    const sea::Stats stats = sea::getShipStats(sea::makeShipFromConfig(cfg));
+
     std::printf("self-tests: %d / %d passing\n", passing, total);
     std::printf("renderer: %s\n", bgfx::getRendererName(bgfx::getRendererType()));
     std::fflush(stdout);
 
+    const ImVec4 kGreen(0.55f, 0.95f, 0.60f, 1.0f);
+    const ImVec4 kRed(1.0f, 0.55f, 0.55f, 1.0f);
+
+    int mouseX = 0, mouseY = 0;
+    uint8_t mouseButtons = 0;
+    float wheel = 0.0f;
+    uint64_t last = SDL_GetTicks();
+
     bool running = true;
     int frame = 0;
     while (running) {
+        wheel = 0.0f;
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_EVENT_QUIT) running = false;
-            else if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE) running = false;
-            else if (e.type == SDL_EVENT_WINDOW_RESIZED) {
+            switch (e.type) {
+            case SDL_EVENT_QUIT: running = false; break;
+            case SDL_EVENT_KEY_DOWN:
+                if (e.key.key == SDLK_ESCAPE) running = false;
+                break;
+            case SDL_EVENT_WINDOW_RESIZED:
                 width = e.window.data1;
                 height = e.window.data2;
-                bgfx::reset(static_cast<uint32_t>(width), static_cast<uint32_t>(height), BGFX_RESET_VSYNC);
+                bgfx::reset((uint32_t)width, (uint32_t)height, BGFX_RESET_VSYNC);
+                break;
+            case SDL_EVENT_MOUSE_MOTION:
+                mouseX = (int)e.motion.x;
+                mouseY = (int)e.motion.y;
+                break;
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            case SDL_EVENT_MOUSE_BUTTON_UP: {
+                const bool down = (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
+                uint8_t bit = 0;
+                if (e.button.button == SDL_BUTTON_LEFT) bit = 0x01;
+                else if (e.button.button == SDL_BUTTON_RIGHT) bit = 0x02;
+                else if (e.button.button == SDL_BUTTON_MIDDLE) bit = 0x04;
+                if (down) mouseButtons |= bit; else mouseButtons &= ~bit;
+                break;
+            }
+            case SDL_EVENT_MOUSE_WHEEL:
+                wheel += e.wheel.y;
+                break;
+            default: break;
             }
         }
 
-        bgfx::setViewRect(0, 0, 0, static_cast<uint16_t>(width), static_cast<uint16_t>(height));
-        bgfx::touch(0);
-        bgfx::dbgTextClear();
-        bgfx::dbgTextPrintf(2, 1, 0x0f, "Sea Trial - Milestone 0 (bgfx clear)");
-        bgfx::dbgTextPrintf(2, 2, passing == total ? 0x0a : 0x0c, "model self-tests: %d / %d passing", passing, total);
-        bgfx::dbgTextPrintf(2, 3, 0x08, "renderer: %s   -   Esc to quit", bgfx::getRendererName(bgfx::getRendererType()));
+        const uint64_t now = SDL_GetTicks();
+        const float dt = (now - last) / 1000.0f;
+        last = now;
+
+        imgui_bgfx::beginFrame(width, height, dt, mouseX, mouseY, mouseButtons, wheel);
+
+        ImGui::SetNextWindowPos(ImVec2(24, 24), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(440, 460), ImGuiCond_FirstUseEver);
+        ImGui::Begin("Sea Trial - Milestone 0"); // ASCII: default ImGui font has no em-dash glyph
+        ImGui::TextUnformatted("Engineless native C++ build");
+        ImGui::Text("Renderer: %s", bgfx::getRendererName(bgfx::getRendererType()));
+        ImGui::Separator();
+        ImGui::TextColored(passing == total ? kGreen : kRed, "Model self-tests: %d / %d passing", passing, total);
+        if (ImGui::CollapsingHeader("Self-tests", ImGuiTreeNodeFlags_DefaultOpen)) {
+            for (const auto& r : results)
+                ImGui::TextColored(r.pass ? kGreen : kRed, "%s  %s", r.pass ? "PASS" : "FAIL", r.name.c_str());
+        }
+        ImGui::Separator();
+        if (ImGui::CollapsingHeader("Test Sloop - stats", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Text("Pieces:       %d", stats.pieceCount);
+            ImGui::Text("Mass:         %.0f kg", stats.mass);
+            ImGui::Text("Buoyancy:     %.0f kg-eq", stats.buoyancyScore);
+            ImGui::TextColored(stats.floatMargin > 0 ? kGreen : kRed, "Float margin: %.0f kg", stats.floatMargin);
+        }
+        ImGui::Separator();
+        ImGui::Text("Frame %d   %.1f FPS", frame, ImGui::GetIO().Framerate);
+        ImGui::TextDisabled("Esc to quit");
+        ImGui::End();
+
+        bgfx::setViewRect(kClearView, 0, 0, (uint16_t)width, (uint16_t)height);
+        bgfx::touch(kClearView);
+        imgui_bgfx::endFrame(kImGuiView);
         bgfx::frame();
 
         if (maxFrames >= 0 && ++frame >= maxFrames) running = false;
     }
 
+    imgui_bgfx::shutdown();
     bgfx::shutdown();
     SDL_DestroyWindow(window);
     SDL_Quit();
