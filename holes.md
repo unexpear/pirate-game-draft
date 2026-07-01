@@ -15,8 +15,11 @@ Master list. Per-mode subsets live inline in [sail-mode.md](sail-mode.md) (Sail)
 
 ## Sail mode
 - Within-session persistence — Steam Cloud covers player profile; world/run state TBD
-- World generation (procedural / handcrafted / hybrid)
-- Progression design
+- World generation (procedural / handcrafted / hybrid) — also sets discovery-content density (coves, sunken wrecks, dive sites), which Black Flag showed drives the loop; see [references/black-flag.md](references/black-flag.md)
+- Progression design — plunder → upgrade is proven, but keep the late game from flattening into grind (a recurring Black Flag / open-world complaint); needs encounter + target variety
+- Boarding depth — the disable → board → on-deck melee loop is decided as *central* ([decisions.md](decisions.md)); open: melee fidelity, crew / boarding-party combat AI, boarding objectives beyond a kill quota
+- Seamless world vs P2P session boundaries — the no-loading transition rule ([decisions.md](decisions.md)) must reconcile with session-based multiplayer (streaming, instancing, world size)
+- Atmosphere / audio — sea shanties + crew chatter are cheap, high-impact immersion (miniaudio can carry a first pass); scope + when TBD
 - PvP framing
 - Which Sea of Thieves design tricks to adopt for world-feel (voyage events, leaderboards, crossover encounters)
 
