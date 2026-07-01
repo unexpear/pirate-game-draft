@@ -15,11 +15,11 @@ The Three.js browser spike at [spikes/threejs-sea-trial/](spikes/threejs-sea-tri
 
 ## Next (post-Milestone 0)
 
-- [x] Ship rendering — the Test Sloop draws as 3D oriented boxes (one per hull piece) via bgfx debugdraw, orbit camera, colored by type/damage. No custom shaders yet (debugdraw ships precompiled ones).
-- [ ] Real shader pipeline (shaderc + `bgfx_compile_shaders`) — needed for water; will also let ship rendering move off debugdraw to lit meshes
-- [ ] Gerstner water mesh (deterministic, matching the model's `sampleWater`)
-- [ ] Buoyancy on a real floating ship — ride height from the model's float margin, then the full Build → Sail loop per [vertical-slice.md](vertical-slice.md)
-- [ ] Jolt (collisions) and Steamworks come after that
+- [x] Ship rendering — the Test Sloop draws as 3D oriented boxes (one per hull piece) via bgfx debugdraw, orbit camera, colored by type/damage.
+- [x] Gerstner water — animated wireframe ocean grid, CPU-displaced by the model's own `sampleWater` (so it's deterministic and *exactly* matches the buoyancy math). Ship sits at the waterline.
+- [ ] Buoyancy on the floating ship — drive the ship's ride height + pitch/heel from the wave surface at its Tier-2 sample points, matching the model's float margin. This is the payoff: the ship bobs on the real waves.
+- [ ] Real shader pipeline (shaderc + `bgfx_compile_shaders`) — deferred; CPU water via debugdraw is enough for now. Needed when water goes GPU (solid lit surface / foam) or ship moves to lit meshes.
+- [ ] Then the full Build → Sail loop per [vertical-slice.md](vertical-slice.md); Jolt + Steamworks after.
 
 ## Done
 

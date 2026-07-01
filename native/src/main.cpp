@@ -85,6 +85,7 @@ int main(int argc, char** argv) {
     cfg.name = "Test Sloop";
     const sea::Ship ship = sea::makeShipFromConfig(cfg);
     const sea::Stats stats = sea::getShipStats(ship);
+    const std::vector<sea::Wave> waves = sea::makeWaveField("sea-trial-native");
 
     ship_view::init();
 
@@ -168,8 +169,8 @@ int main(int argc, char** argv) {
         ImGui::TextDisabled("Orbit camera - Esc to quit");
         ImGui::End();
 
-        // 3D ship on the clear view, ImGui overlay on top.
-        ship_view::render(kClearView, ship, timeSec, width, height);
+        // 3D scene (water + ship) on the clear view, ImGui overlay on top.
+        ship_view::render(kClearView, ship, waves, timeSec, width, height);
         imgui_bgfx::endFrame(kImGuiView);
         bgfx::frame();
 
