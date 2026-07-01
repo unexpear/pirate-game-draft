@@ -107,7 +107,8 @@ Stats getShipStats(const Ship& ship);
 ValidationResult validateShip(const Ship& ship);
 std::vector<Wave> makeWaveField(const std::string& seed);
 WaterSample sampleWater(const std::vector<Wave>& waves, double x, double z, double t);
-FloatPose computeFloatPose(const Ship& ship, const std::vector<Wave>& waves, double t);
+FloatPose computeFloatPose(const Ship& ship, const std::vector<Wave>& waves, double t,
+                           double worldX = 0.0, double worldZ = 0.0, double heading = 0.0);
 std::string serialize(const Ship& ship);
 Ship deserialize(const std::string& text);
 std::vector<TestResult> runSelfTest();

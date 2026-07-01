@@ -17,9 +17,11 @@ namespace ship_view {
 void init();
 void shutdown();
 
-// Set up the camera on `viewId`, draw the water grid, and draw the ship riding
-// the surface at `pose`. `timeSec` drives both the wave animation and the orbit.
+// Chase camera behind `heading`, scrolling ocean at the ship's virtual world
+// position (worldX/worldZ), and the ship riding the surface at `pose`, yawed to
+// `heading`. `timeSec` drives the wave animation.
 void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>& waves,
-            const sea::FloatPose& pose, float timeSec, int width, int height);
+            const sea::FloatPose& pose, float timeSec, float heading,
+            float worldX, float worldZ, int width, int height);
 
 } // namespace ship_view

@@ -230,18 +230,25 @@ WaterSample sampleWater(const std::vector<Wave>& waves, double x, double z, doub
     return { height, dx, dz };
 }
 
-FloatPose computeFloatPose(const Ship& ship, const std::vector<Wave>& waves, double t) {
-    // Tier-2 3x3 sample grid over the ship's footprint (ship at origin, no yaw).
+FloatPose computeFloatPose(const Ship& ship, const std::vector<Wave>& waves, double t,
+                           double worldX, double worldZ, double heading) {
+    // Tier-2 3x3 sample grid over the ship's footprint, placed at the ship's
+    // world position and rotated by heading so it stays consistent with the
+    // scrolling ocean as the ship sails.
     const double halfW = ship.bounds.width * 0.38;
     const double halfL = ship.bounds.length * 0.42;
     const double xs[3] = { -halfW, 0.0, halfW };
     const double zs[3] = { -halfL, 0.0, halfL };
+    const double ch = std::cos(heading);
+    const double sh = std::sin(heading);
 
     double sum = 0, front = 0, rear = 0, left = 0, right = 0;
     int fc = 0, rc = 0, lc = 0, rr = 0;
     for (double lx : xs) {
         for (double lz : zs) {
-            const double h = sampleWater(waves, lx, lz, t).height;
+            const double wx = worldX + (lx * ch - lz * sh);
+            const double wz = worldZ + (lx * sh + lz * ch);
+            const double h = sampleWater(waves, wx, wz, t).height;
             sum += h;
             if (lz > 0) { front += h; ++fc; }
             if (lz < 0) { rear += h; ++rc; }

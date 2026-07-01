@@ -82,11 +82,12 @@ void shutdown() {
     s_vbh = BGFX_INVALID_HANDLE;
 }
 
-void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose) {
-    // Ship root: heave + pitch + heel, above each piece's local transform.
+void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose, float heading) {
+    // Ship root: yaw (heading) + heave + pitch + heel, above each piece's local
+    // transform.
     float shipRoot[16];
     bx::mtxSRT(shipRoot, 1.0f, 1.0f, 1.0f,
-        float(pose.pitch), 0.0f, float(pose.heel),
+        float(pose.pitch), heading, float(pose.heel),
         0.0f, float(pose.heaveY), 0.0f);
 
     const float lightV[4] = { 0.4f, 0.85f, 0.35f, 0.0f };

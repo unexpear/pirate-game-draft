@@ -102,6 +102,8 @@ int main(int argc, char** argv) {
     uint64_t last = SDL_GetTicks();
     float timeSec = 0.0f;
     float sinkDepth = 0.0f;
+    int sailTier = 0;                 // 0 anchored, 1 half sail, 2 full sail
+    float speed = 0.0f, heading = 0.0f, worldX = 0.0f, worldZ = 0.0f;
 
     auto clampf = [](float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); };
     auto isHull = [](const sea::Piece& p) { return p.type == "plank" || p.type == "rib" || p.type == "keel"; };
@@ -115,7 +117,10 @@ int main(int argc, char** argv) {
             if (isHull(p) && p.damage < 1.0 && k++ == target) { p.damage = p.damage + 0.25 > 1.0 ? 1.0 : p.damage + 0.25; return; }
     };
     auto repairAll = [&]() { for (auto& p : ship.pieces) p.damage = 0.0; };
-    auto resetShip = [&]() { ship = sea::makeShipFromConfig(cfg); sinkDepth = 0.0f; };
+    auto resetShip = [&]() {
+        ship = sea::makeShipFromConfig(cfg);
+        sinkDepth = 0.0f; sailTier = 0; speed = 0.0f; heading = 0.0f; worldX = 0.0f; worldZ = 0.0f;
+    };
 
     bool running = true;
     int frame = 0;
@@ -134,6 +139,8 @@ int main(int argc, char** argv) {
                     case SDL_SCANCODE_X: damagePlank(); break;
                     case SDL_SCANCODE_Z: repairAll(); break;
                     case SDL_SCANCODE_R: resetShip(); break;
+                    case SDL_SCANCODE_W: sailTier = sailTier < 2 ? sailTier + 1 : 2; break;
+                    case SDL_SCANCODE_S: sailTier = sailTier > 0 ? sailTier - 1 : 0; break;
                     default: break;
                     }
                 }
@@ -168,8 +175,26 @@ int main(int argc, char** argv) {
         const float dt = (now - last) / 1000.0f;
         last = now;
         timeSec += dt;
+
+        // Sailing (Black Flag scheme): W/S step through sail tiers, A/D steer;
+        // more agile at low speed. Ship-centric — the ship stays at the origin
+        // and the ocean scrolls past via worldX/worldZ.
+        float steer = 0.0f;
+        if (!ImGui::GetIO().WantCaptureKeyboard) {
+            const bool* keys = SDL_GetKeyboardState(nullptr);
+            if (keys[SDL_SCANCODE_D]) steer += 1.0f;
+            if (keys[SDL_SCANCODE_A]) steer -= 1.0f;
+        }
+        const float kFullSpeed = 11.0f;
+        const float targetSpeed = sailTier == 0 ? 0.0f : (sailTier == 1 ? kFullSpeed * 0.5f : kFullSpeed);
+        speed += (targetSpeed - speed) * clampf(dt * 1.2f, 0.0f, 1.0f);
+        const float speedFrac = speed / kFullSpeed;
+        heading += steer * (1.1f - 0.5f * speedFrac) * dt; // agile slow, sluggish fast
+        worldX += std::sin(heading) * speed * dt;
+        worldZ += std::cos(heading) * speed * dt;
+
         const sea::Stats stats = sea::getShipStats(ship);
-        sea::FloatPose pose = sea::computeFloatPose(ship, waves, timeSec);
+        sea::FloatPose pose = sea::computeFloatPose(ship, waves, timeSec, worldX, worldZ, heading);
         // Founder: an over-margin ship sinks progressively; recovers if lightened in time.
         if (stats.sinking) sinkDepth += dt * clampf(std::fabs(float(stats.floatMargin)) / 1200.0f, 0.3f, 3.0f);
         else sinkDepth = clampf(sinkDepth - dt * 2.5f, 0.0f, 1000.0f);
@@ -193,7 +218,13 @@ int main(int argc, char** argv) {
             if (ImGui::Button("Repair")) repairAll();
             ImGui::SameLine();
             if (ImGui::Button("Reset")) resetShip();
-            ImGui::TextDisabled("Keys: C/V cargo, X damage, Z repair, R reset");
+            ImGui::TextDisabled("Keys: W/S sails, A/D steer, C/V cargo, X damage, Z repair, R reset");
+        }
+        if (ImGui::CollapsingHeader("Sailing", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const char* tierName = sailTier == 0 ? "anchored" : (sailTier == 1 ? "half sail" : "full sail");
+            ImGui::Text("Sails:   %s", tierName);
+            ImGui::Text("Speed:   %.1f", speed);
+            ImGui::Text("Heading: %.0f deg", heading * 57.2957795f);
         }
         ImGui::Separator();
         ImGui::TextColored(passing == total ? kGreen : kRed, "Model self-tests: %d / %d passing", passing, total);
@@ -221,7 +252,7 @@ int main(int argc, char** argv) {
         ImGui::End();
 
         // 3D scene (water + ship) on the clear view, ImGui overlay on top.
-        ship_view::render(kClearView, ship, waves, pose, timeSec, width, height);
+        ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, width, height);
         imgui_bgfx::endFrame(kImGuiView);
         bgfx::frame();
 

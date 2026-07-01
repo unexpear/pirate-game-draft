@@ -25,6 +25,7 @@ bgfx::ProgramHandle s_program = BGFX_INVALID_HANDLE;
 bgfx::UniformHandle u_waveA = BGFX_INVALID_HANDLE;
 bgfx::UniformHandle u_waveB = BGFX_INVALID_HANDLE;
 bgfx::UniformHandle u_waveTime = BGFX_INVALID_HANDLE;
+bgfx::UniformHandle u_waveOffset = BGFX_INVALID_HANDLE;
 bgfx::UniformHandle u_lightDir = BGFX_INVALID_HANDLE;
 bgfx::UniformHandle u_camPos = BGFX_INVALID_HANDLE;
 
@@ -70,6 +71,7 @@ void init() {
     u_waveA = bgfx::createUniform("u_waveA", bgfx::UniformType::Vec4, 3);
     u_waveB = bgfx::createUniform("u_waveB", bgfx::UniformType::Vec4, 3);
     u_waveTime = bgfx::createUniform("u_waveTime", bgfx::UniformType::Vec4);
+    u_waveOffset = bgfx::createUniform("u_waveOffset", bgfx::UniformType::Vec4);
     u_lightDir = bgfx::createUniform("u_lightDir", bgfx::UniformType::Vec4);
     u_camPos = bgfx::createUniform("u_camPos", bgfx::UniformType::Vec4);
 }
@@ -78,6 +80,7 @@ void shutdown() {
     destroyIfValid(u_waveA);
     destroyIfValid(u_waveB);
     destroyIfValid(u_waveTime);
+    destroyIfValid(u_waveOffset);
     destroyIfValid(u_lightDir);
     destroyIfValid(u_camPos);
     if (bgfx::isValid(s_program)) { bgfx::destroy(s_program); s_program = BGFX_INVALID_HANDLE; }
@@ -86,7 +89,7 @@ void shutdown() {
 }
 
 void render(uint16_t viewId, const std::vector<sea::Wave>& waves, float t,
-            float eyeX, float eyeY, float eyeZ) {
+            float eyeX, float eyeY, float eyeZ, float offsetX, float offsetZ) {
     float waveA[3][4] = {};
     float waveB[3][4] = {};
     const int n = int(waves.size() < 3 ? waves.size() : 3);
@@ -103,6 +106,8 @@ void render(uint16_t viewId, const std::vector<sea::Wave>& waves, float t,
     bgfx::setUniform(u_waveB, waveB, 3);
     const float timeV[4] = { t, 0.0f, 0.0f, 0.0f };
     bgfx::setUniform(u_waveTime, timeV);
+    const float offV[4] = { offsetX, offsetZ, 0.0f, 0.0f };
+    bgfx::setUniform(u_waveOffset, offV);
     const float lightV[4] = { 0.4f, 0.85f, 0.35f, 0.0f };
     bgfx::setUniform(u_lightDir, lightV);
     const float camV[4] = { eyeX, eyeY, eyeZ, 0.0f };
