@@ -271,6 +271,88 @@ FloatPose computeFloatPose(const Ship& ship, const std::vector<Wave>& waves, dou
     return p;
 }
 
+std::vector<Projectile> fireBroadside(const Ship& ship, int side,
+                                      double sx, double sy, double sz,
+                                      double heading, double muzzleSpeed) {
+    const int n = std::max(1, ship.systems.cannon_count);
+    const double ch = std::cos(heading), sh = std::sin(heading);
+    // Ship axes (in x,z): forward = (sin,cos), starboard = (cos,-sin).
+    const double rx = ch, rz = -sh;   // starboard unit
+    const double fx = sh, fz = ch;    // forward unit
+    const double halfW = ship.bounds.width * 0.5;
+    const double halfL = ship.bounds.length * 0.5;
+    const int s = side >= 0 ? 1 : -1;
+    std::vector<Projectile> shots;
+    shots.reserve(n);
+    for (int i = 0; i < n; ++i) {
+        // Space the guns along the hull; vary elevation a touch for scatter.
+        const double along = (n == 1) ? 0.0 : lerp(-halfL * 0.55, halfL * 0.55, i / double(n - 1));
+        const double elev = 0.14 + 0.02 * std::sin(double(i) * 1.7); // ~8 deg
+        const double ce = std::cos(elev), se = std::sin(elev);
+        Projectile p;
+        p.x = sx + rx * s * (halfW + 0.3) + fx * along;
+        p.y = sy + 1.2;
+        p.z = sz + rz * s * (halfW + 0.3) + fz * along;
+        p.vx = rx * s * muzzleSpeed * ce;
+        p.vz = rz * s * muzzleSpeed * ce;
+        p.vy = muzzleSpeed * se;
+        p.life = 4.0;
+        p.alive = true;
+        shots.push_back(p);
+    }
+    return shots;
+}
+
+void stepProjectiles(std::vector<Projectile>& shots, double dt) {
+    for (auto& p : shots) {
+        if (!p.alive) continue;
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.z += p.vz * dt;
+        p.vy -= GRAVITY * dt;
+        p.life -= dt;
+        if (p.life <= 0.0 || p.y < -2.5) p.alive = false;
+    }
+}
+
+bool pointInHull(const Ship& target, double tx, double ty, double tz, double heading,
+                 double px, double py, double pz) {
+    const double dx = px - tx, dz = pz - tz;
+    const double ch = std::cos(heading), sh = std::sin(heading);
+    const double lx = dx * ch + dz * sh;   // inverse yaw R(-heading)
+    const double lz = -dx * sh + dz * ch;
+    const double vert = std::max(2.0, target.bounds.depth);
+    return std::fabs(lx) <= target.bounds.width * 0.5
+        && std::fabs(lz) <= target.bounds.length * 0.5
+        && std::fabs(py - ty) <= vert;
+}
+
+void damageHull(Ship& ship, double amount) {
+    // Flood the least-damaged intact plank (fallback: rib), so sustained fire
+    // progressively drops buoyancy and founders the hull.
+    Piece* best = nullptr;
+    for (auto& p : ship.pieces) {
+        if (p.damage >= 1.0) continue;
+        if (p.type != "plank" && p.type != "rib") continue;
+        if (!best || p.damage < best->damage) best = &p;
+    }
+    if (best) best->damage = clampd(best->damage + amount, 0.0, 1.0);
+}
+
+int resolveHits(std::vector<Projectile>& shots, Ship& target,
+                double tx, double ty, double tz, double heading) {
+    int hits = 0;
+    for (auto& p : shots) {
+        if (!p.alive) continue;
+        if (pointInHull(target, tx, ty, tz, heading, p.x, p.y, p.z)) {
+            p.alive = false;
+            damageHull(target, 0.34);
+            ++hits;
+        }
+    }
+    return hits;
+}
+
 std::string serialize(const Ship& s) {
     std::string o;
     o += "schema_version " + std::to_string(s.schema_version) + "\n";
@@ -399,6 +481,42 @@ std::vector<TestResult> runSelfTest() {
         char d[64];
         std::snprintf(d, sizeof(d), "heave %.3f -> %.3f", basePose.heaveY, loadedPose.heaveY);
         push("Heavier ship rides lower (buoyancy pose)", loadedPose.heaveY < basePose.heaveY, d);
+    }
+
+    // --- Gunnery ---
+    {
+        auto stbd = fireBroadside(base, +1, 0, 0, 0, 0.0);
+        bool spawned = !stbd.empty();
+        for (const auto& p : stbd) spawned = spawned && p.alive;
+        push("Broadside spawns live cannonballs", spawned, num(double(stbd.size())) + " shots");
+
+        auto port = fireBroadside(base, -1, 0, 0, 0, 0.0);
+        const bool sided = !stbd.empty() && !port.empty() && stbd[0].vx > 0.0 && port[0].vx < 0.0;
+        push("Broadside fires to the correct side", sided,
+             sided ? "" : "starboard/port velocities wrong");
+
+        std::vector<Projectile> arc = { stbd[0] };
+        const double vy0 = arc[0].vy;
+        for (int i = 0; i < 120; ++i) stepProjectiles(arc, 1.0 / 60.0);
+        push("Gravity arcs the cannonball down", arc[0].vy < vy0);
+
+        Ship target = makeShipFromConfig(baseCfg);
+        const double before = getShipStats(target).damageRatio;
+        std::vector<Projectile> point = { Projectile{ 0, 0, 0, 0, 0, 0, 4.0, true } };
+        const int hit = resolveHits(point, target, 0, 0, 0, 0.0);
+        const bool hitWorks = hit == 1 && !point[0].alive && getShipStats(target).damageRatio > before;
+        push("A shot inside the hull hits and damages it", hitWorks);
+
+        std::vector<Projectile> miss = { Projectile{ 1000, 0, 1000, 0, 0, 0, 4.0, true } };
+        const int missed = resolveHits(miss, target, 0, 0, 0, 0.0);
+        push("A shot outside the hull misses", missed == 0 && miss[0].alive);
+
+        Ship victim = makeShipFromConfig(baseCfg);
+        for (int i = 0; i < 400 && !getShipStats(victim).sinking; ++i) {
+            std::vector<Projectile> volley = { Projectile{ 0, 0, 0, 0, 0, 0, 4.0, true } };
+            resolveHits(volley, victim, 0, 0, 0, 0.0);
+        }
+        push("Sustained fire founders the target", getShipStats(victim).sinking);
     }
 
     return r;

@@ -72,7 +72,8 @@ Triangulated across the Ubisoft e-manual/pro-tips, Orcz/Fandom wikis, PC & Xbox 
 - Turn rate `= 1.35·(1 − 0.62·speedFrac)` → ~77°/s pivot at a stop vs ~48°/s at travel (verified live). Stop-to-turn works.
 - The **visible sail reefs with the state** — furled to a bare mast when anchored, half-height at half sail, full canvas at full/travel — which is literally what BF's "sail states" are.
 - **Deliberate deviation:** we *keep* a wind mechanic (speed best downwind, worst upwind, with a HUD readout). Black Flag is wind-neutral, so this is an **intentional enhancement**, not fidelity — flagged so it stays a conscious choice. See [../holes.md](../holes.md).
-- Not yet mapped (deferred until there's combat/a free camera): camera-direction weapon selection, brace, spyglass, mortar, shanties.
+- **Broadside cannons** now fire (Space) at a drifting target ship — cannonballs arc under gravity and flood the target's hull until it founders (reusing the sink loop). The firing **side is auto-picked toward the target**; Black Flag's real **camera-direction** weapon selection (side = broadside, front = chain, rear = fire barrels, up = mortar) still waits on a free camera.
+- Not yet mapped: camera-direction weapon selection, brace, spyglass, mortar, shanties.
 
 ## Sources
 

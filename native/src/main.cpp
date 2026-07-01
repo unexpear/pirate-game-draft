@@ -18,10 +18,12 @@
 
 #include "ship_model.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 namespace {
 
@@ -108,6 +110,15 @@ int main(int argc, char** argv) {
     float speed = 0.0f, heading = 0.0f, worldX = 0.0f, worldZ = 0.0f;
     float windDir = 2.1f;             // wind blows toward this heading (radians); drifts
 
+    // Gunnery + a drifting target ship to broadside.
+    sea::Ship enemy = sea::makeShipFromConfig(cfg);
+    enemy.display_name = "Derelict";
+    float enemyWorldX = 6.0f, enemyWorldZ = 52.0f; // ahead and a little to starboard
+    float enemyHeading = 1.2f, enemySink = 0.0f;
+    std::vector<sea::Projectile> shots;
+    float reload = 0.0f;
+    bool wantFire = false;
+
     auto clampf = [](float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); };
     auto isHull = [](const sea::Piece& p) { return p.type == "plank" || p.type == "rib" || p.type == "keel"; };
     auto damagePlank = [&]() {
@@ -123,6 +134,8 @@ int main(int argc, char** argv) {
     auto resetShip = [&]() {
         ship = sea::makeShipFromConfig(cfg);
         sinkDepth = 0.0f; sailTier = 1; wHoldTime = 0.0f; speed = 0.0f; heading = 0.0f; worldX = 0.0f; worldZ = 0.0f;
+        enemy = sea::makeShipFromConfig(cfg); enemy.display_name = "Derelict";
+        enemyWorldX = 6.0f; enemyWorldZ = 52.0f; enemyHeading = 1.2f; enemySink = 0.0f; shots.clear();
     };
 
     bool running = true;
@@ -142,6 +155,7 @@ int main(int argc, char** argv) {
                     case SDL_SCANCODE_X: damagePlank(); break;
                     case SDL_SCANCODE_Z: repairAll(); break;
                     case SDL_SCANCODE_R: resetShip(); break;
+                    case SDL_SCANCODE_SPACE: if (!e.key.repeat) wantFire = true; break;
                     default: break; // W/S/A/D sailing is polled below (hold-aware)
                     }
                 }
@@ -234,6 +248,33 @@ int main(int argc, char** argv) {
         else sinkDepth = clampf(sinkDepth - dt * 2.5f, 0.0f, 1000.0f);
         pose.heaveY -= sinkDepth;
 
+        // Target ship: gentle drift, its own buoyancy pose + foundering.
+        enemyHeading += 0.05f * dt;
+        enemyWorldX += std::sin(enemyHeading) * 0.6f * dt;
+        enemyWorldZ += std::cos(enemyHeading) * 0.6f * dt;
+        sea::FloatPose enemyPose = sea::computeFloatPose(enemy, waves, timeSec, enemyWorldX, enemyWorldZ, enemyHeading);
+        const sea::Stats enemyStats = sea::getShipStats(enemy);
+        const bool enemyGone = enemySink > 22.0f;
+
+        // Gunnery: Space fires a broadside from whichever side faces the target.
+        reload = clampf(reload - dt, 0.0f, 10.0f);
+        if (wantFire && reload <= 0.0f) {
+            const float dxE = enemyWorldX - worldX, dzE = enemyWorldZ - worldZ;
+            const float starboardComp = dxE * std::cos(heading) - dzE * std::sin(heading);
+            const int side = starboardComp >= 0.0f ? 1 : -1;
+            auto volley = sea::fireBroadside(ship, side, worldX, pose.heaveY, worldZ, heading);
+            shots.insert(shots.end(), volley.begin(), volley.end());
+            reload = 1.2f;
+        }
+        wantFire = false;
+        sea::stepProjectiles(shots, dt);
+        if (!enemyGone)
+            sea::resolveHits(shots, enemy, enemyWorldX, enemyPose.heaveY, enemyWorldZ, enemyHeading);
+        shots.erase(std::remove_if(shots.begin(), shots.end(),
+                    [](const sea::Projectile& p) { return !p.alive; }), shots.end());
+        if (enemyStats.sinking) enemySink += dt * clampf(std::fabs(float(enemyStats.floatMargin)) / 1200.0f, 0.3f, 3.0f);
+        enemyPose.heaveY -= enemySink;
+
         imgui_bgfx::beginFrame(width, height, dt, mouseX, mouseY, mouseButtons, wheel);
 
         ImGui::SetNextWindowPos(ImVec2(24, 24), ImGuiCond_FirstUseEver);
@@ -253,7 +294,7 @@ int main(int argc, char** argv) {
             ImGui::SameLine();
             if (ImGui::Button("Reset")) resetShip();
             ImGui::TextDisabled("Keys: W raise sail (hold at full = travel), S lower, A/D steer");
-            ImGui::TextDisabled("      C/V cargo, X damage, Z repair, R reset");
+            ImGui::TextDisabled("      Space fire  ·  C/V cargo, X damage, Z repair, R reset");
         }
         if (ImGui::CollapsingHeader("Sailing", ImGuiTreeNodeFlags_DefaultOpen)) {
             const char* tierName = effTier == 0 ? "anchored"
@@ -264,6 +305,13 @@ int main(int argc, char** argv) {
             ImGui::Text("Heading: %.0f deg", heading * 57.2957795f);
             const char* pts = align > 0.5f ? "tailwind" : (align < -0.5f ? "headwind" : "crosswind");
             ImGui::Text("Wind:    %.0f deg (%s, %.0f%% drive)", windDir * 57.2957795f, pts, windFactor * 100.0f);
+        }
+        if (ImGui::CollapsingHeader("Gunnery", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const char* est = enemyGone ? "sunk" : (enemyStats.sinking ? "SINKING" : "afloat");
+            ImGui::TextColored((enemyGone || enemyStats.sinking) ? kRed : kGreen, "Target:  %s", est);
+            ImGui::Text("Damage:  %.0f%%", enemyStats.damageRatio * 100.0);
+            ImGui::Text("In flight: %d shots", int(shots.size()));
+            ImGui::TextDisabled(reload > 0.0f ? "Reloading..." : "Space: fire broadside");
         }
         ImGui::Separator();
         ImGui::TextColored(passing == total ? kGreen : kRed, "Model self-tests: %d / %d passing", passing, total);
@@ -292,6 +340,11 @@ int main(int argc, char** argv) {
 
         // 3D scene (water + ship) on the clear view, ImGui overlay on top.
         ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height);
+        if (!enemyGone)
+            ship_view::renderShip(kClearView, enemy, enemyPose, enemyHeading, windDir, 0.0f,
+                                  enemyWorldX - worldX, enemyWorldZ - worldZ);
+        for (const auto& p : shots)
+            ship_view::renderTracer(kClearView, float(p.x) - worldX, float(p.y), float(p.z) - worldZ, 0.35f);
         imgui_bgfx::endFrame(kImGuiView);
         bgfx::frame();
 

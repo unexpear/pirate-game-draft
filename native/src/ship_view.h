@@ -26,4 +26,12 @@ void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>
             float worldX, float worldZ, float windDir, float sailFullness,
             int width, int height);
 
+// Draw another ship into the same view (camera already set by render()), placed
+// at scene position (posX,posZ) relative to our ship at the origin.
+void renderShip(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
+                float heading, float windDir, float sailFullness, float posX, float posZ);
+
+// Draw a cannonball tracer at scene position (x,y,z).
+void renderTracer(uint16_t viewId, float x, float y, float z, float size);
+
 } // namespace ship_view

@@ -100,6 +100,11 @@ struct WaterSample { double height, slopeX, slopeZ; };
 // the Tier-2 sample points and the ship's float margin.
 struct FloatPose { double heaveY = 0, pitch = 0, heel = 0; };
 
+// A cannonball in flight (world space, metres / seconds).
+struct Projectile { double x = 0, y = 0, z = 0, vx = 0, vy = 0, vz = 0, life = 0; bool alive = true; };
+
+constexpr double GRAVITY = 9.8;
+
 struct TestResult { std::string name; bool pass; std::string details; };
 
 Ship makeShipFromConfig(const ShipConfig& cfg);
@@ -111,6 +116,25 @@ FloatPose computeFloatPose(const Ship& ship, const std::vector<Wave>& waves, dou
                            double worldX = 0.0, double worldZ = 0.0, double heading = 0.0);
 std::string serialize(const Ship& ship);
 Ship deserialize(const std::string& text);
+
+// --- Gunnery ---------------------------------------------------------------
+// Fire a broadside from `ship` (centred at world sx,sy,sz, yawed `heading`) out
+// the given `side` (+1 = starboard, -1 = port): one cannonball per cannon,
+// spread along the hull and lobbed slightly up. Returns the new projectiles.
+std::vector<Projectile> fireBroadside(const Ship& ship, int side,
+                                      double sx, double sy, double sz,
+                                      double heading, double muzzleSpeed = 34.0);
+// Advance projectiles under gravity; kill spent/underwater ones.
+void stepProjectiles(std::vector<Projectile>& shots, double dt);
+// Is world point (px,py,pz) inside `target`'s hull box (centre tx,ty,tz, yaw)?
+bool pointInHull(const Ship& target, double tx, double ty, double tz, double heading,
+                 double px, double py, double pz);
+// Kill each live projectile inside `target` and flood one hull piece; returns hits.
+int resolveHits(std::vector<Projectile>& shots, Ship& target,
+                double tx, double ty, double tz, double heading);
+// Flood (damage) the least-damaged intact hull plank/rib by `amount`.
+void damageHull(Ship& ship, double amount);
+
 std::vector<TestResult> runSelfTest();
 
 } // namespace sea
