@@ -16,10 +16,16 @@ The Three.js browser spike at [spikes/threejs-sea-trial/](spikes/threejs-sea-tri
 ## Next (post-Milestone 0)
 
 - [x] Ship rendering — the Test Sloop draws as 3D oriented boxes (one per hull piece) via bgfx debugdraw, orbit camera, colored by type/damage.
-- [x] Gerstner water — animated wireframe ocean grid, CPU-displaced by the model's own `sampleWater` (so it's deterministic and *exactly* matches the buoyancy math). Ship sits at the waterline.
 - [x] Buoyancy on the floating ship — `sea::computeFloatPose` derives heave + pitch + heel from the wave surface at the Tier-2 sample points, offset by float margin (heavier rides lower). The ship bobs and tilts on the real waves; live values in the panel. Covered by a self-test.
-- [ ] Real shader pipeline (shaderc + `bgfx_compile_shaders`) — deferred; CPU water via debugdraw is enough for now. Needed when water goes GPU (solid lit surface / foam) or ship moves to lit meshes.
-- [ ] Then the full Build → Sail loop per [vertical-slice.md](vertical-slice.md); Jolt + Steamworks after.
+- [x] Shader pipeline — shaderc + `bgfx_compile_shaders` (D3D11 profile), app forces the D3D11 renderer. Reusable for all future shaders.
+- [x] GPU water — solid lit ocean: a dense grid displaced in the vertex shader by the *same* wave sum as `sea::sampleWater` (params passed as uniforms, so it still matches buoyancy), with N·L shading, fresnel, and crest foam. Replaced the CPU wireframe.
+
+## Next (post-water)
+
+- [ ] Interactive cargo/damage — wire the panel controls into the live ship; watch it ride lower and founder (the spike's best demo, now native).
+- [ ] Mouse camera control (drag-orbit / scroll-zoom) instead of the auto-orbit.
+- [ ] Ship on lit meshes (off debugdraw) using the new shader pipeline.
+- [ ] The full Build → Sail loop per [vertical-slice.md](vertical-slice.md); Jolt + Steamworks after.
 
 ## Done
 

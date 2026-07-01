@@ -61,7 +61,7 @@ int main(int argc, char** argv) {
     bgfx::renderFrame(); // single-threaded
 
     bgfx::Init init;
-    init.type = bgfx::RendererType::Count;
+    init.type = bgfx::RendererType::Direct3D11; // water shaders are compiled for D3D11 (dxbc)
     init.resolution.width = (uint32_t)width;
     init.resolution.height = (uint32_t)height;
     init.resolution.reset = BGFX_RESET_VSYNC;

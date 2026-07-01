@@ -2,6 +2,7 @@
 #include "ship_view.h"
 
 #include "ship_model.hpp"
+#include "water_gpu.h"
 
 #include <bgfx/bgfx.h>
 #include <bx/math.h>
@@ -10,31 +11,6 @@
 #include <debugdraw/debugdraw.h>
 
 namespace {
-
-// --- Water grid (wireframe, CPU-displaced by Gerstner) ---
-constexpr int kCells = 52;          // grid cells per side
-constexpr float kExtent = 52.0f;    // world size of the grid
-constexpr int kVerts = kCells + 1;  // vertices per side
-
-std::vector<DdVertex> s_grid;       // kVerts * kVerts positions
-std::vector<uint16_t> s_gridLines;  // index pairs for the line segments
-
-void buildGridTopology() {
-    s_grid.resize(kVerts * kVerts);
-    s_gridLines.clear();
-    // Horizontal segments (along +x).
-    for (int r = 0; r < kVerts; ++r)
-        for (int c = 0; c < kCells; ++c) {
-            s_gridLines.push_back(uint16_t(r * kVerts + c));
-            s_gridLines.push_back(uint16_t(r * kVerts + c + 1));
-        }
-    // Vertical segments (along +z).
-    for (int c = 0; c < kVerts; ++c)
-        for (int r = 0; r < kCells; ++r) {
-            s_gridLines.push_back(uint16_t(r * kVerts + c));
-            s_gridLines.push_back(uint16_t((r + 1) * kVerts + c));
-        }
-}
 
 uint32_t abgr(uint8_t r, uint8_t g, uint8_t b, uint8_t a = 255) {
     return (uint32_t(a) << 24) | (uint32_t(b) << 16) | (uint32_t(g) << 8) | uint32_t(r);
@@ -46,20 +22,6 @@ uint32_t pieceColor(const sea::Piece& p) {
     if (p.type == "keel" || p.type == "rib") return abgr(74, 44, 22); // dark structural wood
     if (p.type == "deck") return abgr(158, 112, 64);  // lighter deck
     return abgr(139, 92, 46);                          // plank — oak
-}
-
-void drawWater(DebugDrawEncoder& dde, const std::vector<sea::Wave>& waves, float t) {
-    for (int r = 0; r < kVerts; ++r) {
-        for (int c = 0; c < kVerts; ++c) {
-            const float x = (c / float(kCells) - 0.5f) * kExtent;
-            const float z = (r / float(kCells) - 0.5f) * kExtent;
-            const float y = float(sea::sampleWater(waves, x, z, t).height);
-            s_grid[r * kVerts + c] = { x, y, z };
-        }
-    }
-    dde.setColor(abgr(60, 150, 205)); // ocean blue
-    dde.drawLineList(uint32_t(s_grid.size()), s_grid.data(),
-                     uint32_t(s_gridLines.size()), s_gridLines.data());
 }
 
 void drawShip(DebugDrawEncoder& dde, const sea::Ship& ship) {
@@ -84,12 +46,11 @@ namespace ship_view {
 
 void init() {
     ddInit();
-    buildGridTopology();
+    water_gpu::init();
 }
 
 void shutdown() {
-    s_grid.clear();
-    s_gridLines.clear();
+    water_gpu::shutdown();
     ddShutdown();
 }
 
@@ -111,12 +72,12 @@ void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>
     bgfx::setViewTransform(viewId, view, proj);
     bgfx::setViewRect(viewId, 0, 0, uint16_t(width), uint16_t(height));
 
+    // GPU water surface (uses the camera just set on this view).
+    water_gpu::render(viewId, waves, timeSec, eye.x, eye.y, eye.z);
+
+    // Ship: a root transform (heave + pitch + heel) above the per-piece boxes.
     DebugDrawEncoder dde;
     dde.begin(viewId);
-    drawWater(dde, waves, timeSec);
-
-    // The ship rides the surface: a root transform (heave + pitch + heel) sits
-    // above the per-piece transforms.
     float shipRoot[16];
     bx::mtxSRT(shipRoot, 1.0f, 1.0f, 1.0f,
         float(pose.pitch), 0.0f, float(pose.heel),
@@ -124,7 +85,6 @@ void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>
     dde.pushTransform(shipRoot);
     drawShip(dde, ship);
     dde.popTransform();
-
     dde.end();
 }
 

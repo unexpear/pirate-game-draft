@@ -41,10 +41,10 @@ set(SDL_STATIC ON CACHE BOOL "" FORCE)
 add_subdirectory(extern/SDL EXCLUDE_FROM_ALL)
 
 # bgfx (with bx + bimg) is vendored via the bgfx.cmake wrapper submodule.
-# Library only — no examples, no tools/shaderc (a clear + debug text needs
-# neither). Upstream bgfx builds with GENie/premake; the wrapper gives it CMake.
+# Tools ON: we need shaderc to compile the water shaders (bgfx_compile_shaders).
+# Upstream bgfx builds with GENie/premake; the wrapper gives it CMake.
 set(BGFX_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(BGFX_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(BGFX_BUILD_TOOLS ON CACHE BOOL "" FORCE)
 set(BGFX_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory(extern/bgfx.cmake EXCLUDE_FROM_ALL)
 
@@ -58,6 +58,7 @@ add_executable(sea_trial
     src/main.cpp
     src/ship_model.cpp
     src/ship_view.cpp
+    src/water_gpu.cpp
     src/imgui/imgui_bgfx.cpp
     ${BGFX_SRC}/examples/common/debugdraw/debugdraw.cpp
     extern/imgui/imgui.cpp
@@ -74,3 +75,30 @@ target_include_directories(sea_trial PRIVATE
     ${BGFX_ROOT}/bimg/include     # bimg (pulled by bgfx_utils.h)
 )
 target_link_libraries(sea_trial PRIVATE SDL3::SDL3-static bgfx bx)
+
+# Compile the water shaders (D3D11 / dxbc profile) into headers via shaderc.
+# The app forces the D3D11 renderer so this single profile is enough.
+include(${BGFX_ROOT}/cmake/bgfxToolUtils.cmake)
+set(SHADER_OUT ${CMAKE_CURRENT_BINARY_DIR}/shaders)
+bgfx_compile_shaders(
+    TYPE VERTEX
+    SHADERS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/vs_water.sc
+    VARYING_DEF ${CMAKE_CURRENT_SOURCE_DIR}/shaders/varying.def.sc
+    OUTPUT_DIR ${SHADER_OUT}
+    OUT_FILES_VAR WATER_VS_OUT
+    INCLUDE_DIRS ${BGFX_SRC}/src
+    PROFILES s_5_0
+    AS_HEADERS
+)
+bgfx_compile_shaders(
+    TYPE FRAGMENT
+    SHADERS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/fs_water.sc
+    VARYING_DEF ${CMAKE_CURRENT_SOURCE_DIR}/shaders/varying.def.sc
+    OUTPUT_DIR ${SHADER_OUT}
+    OUT_FILES_VAR WATER_FS_OUT
+    INCLUDE_DIRS ${BGFX_SRC}/src
+    PROFILES s_5_0
+    AS_HEADERS
+)
+target_sources(sea_trial PRIVATE ${WATER_VS_OUT} ${WATER_FS_OUT})
+target_include_directories(sea_trial PRIVATE ${SHADER_OUT})
