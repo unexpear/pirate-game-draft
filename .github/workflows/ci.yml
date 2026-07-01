@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  self-tests:
+    name: Model self-tests
+    runs-on: ubuntu-latest
+    steps:
+      # No submodules: the self-test runner is dependency-free (pure C++).
+      - uses: actions/checkout@v4
+
+      - name: Configure (self-test runner only)
+        run: cmake -S native -B native/build -DSEA_TRIAL_BUILD_APP=OFF
+
+      - name: Build
+        run: cmake --build native/build --target sea_trial_selftest
+
+      - name: Run the 11 model self-tests
+        run: ctest --test-dir native/build --output-on-failure
