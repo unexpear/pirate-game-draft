@@ -405,6 +405,17 @@ double sailPower(double windAngleOffBowDeg) {
     return tbl[n - 1].p;
 }
 
+ApparentWind apparentWind(double windDir, double trueWindSpeed,
+                          double heading, double boatSpeed) {
+    // Air velocity relative to the boat = true-wind velocity - boat velocity.
+    const double ax = trueWindSpeed * std::sin(windDir) - boatSpeed * std::sin(heading);
+    const double az = trueWindSpeed * std::cos(windDir) - boatSpeed * std::cos(heading);
+    ApparentWind a;
+    a.dir = std::atan2(ax, az);
+    a.speed = std::sqrt(ax * ax + az * az);
+    return a;
+}
+
 const char* pointOfSail(double windAngleOffBowDeg) {
     const double a = std::fabs(windAngleOffBowDeg);
     if (a < 43.0) return "in irons";
@@ -620,6 +631,17 @@ std::vector<TestResult> runSelfTest() {
                          && std::string(pointOfSail(90)) == "beam reach"
                          && std::string(pointOfSail(175)) == "running";
         push("Point-of-sail labels name the angle", labels);
+
+        // Apparent wind shifts forward and strengthens when sailing across it.
+        const double twd = PI * 0.5, tws = 12.0, hd = 0.0, bs = 8.0; // true wind abeam, making 8
+        const ApparentWind aw = apparentWind(twd, tws, hd, bs);
+        auto offBow = [&](double blowToward) {
+            const double src = blowToward + PI - hd;             // source bearing off the bow
+            return std::fabs(std::atan2(std::sin(src), std::cos(src)));
+        };
+        const bool fwd = offBow(aw.dir) < offBow(twd) && aw.speed > tws;
+        push("Apparent wind shifts forward and strengthens", fwd,
+             num(offBow(aw.dir) * 57.3) + " vs " + num(offBow(twd) * 57.3) + " deg off bow");
     }
 
     return r;

@@ -159,6 +159,16 @@ double sailPower(double windAngleOffBowDeg);
 // "close reach", "beam reach", "broad reach", "running").
 const char* pointOfSail(double windAngleOffBowDeg);
 
+// Apparent wind = what the sails actually feel: the true wind combined with the
+// headwind from the boat's own motion. Given the true wind (blowing toward
+// `windDir` at `trueWindSpeed`) and the boat (heading `heading`, speed
+// `boatSpeed`), returns the direction the apparent wind blows TOWARD and its
+// speed. Apparent wind shifts forward (toward the bow) and strengthens as you
+// sail — which is why fast boats "sail to the apparent wind".
+struct ApparentWind { double dir = 0.0, speed = 0.0; };
+ApparentWind apparentWind(double windDir, double trueWindSpeed,
+                          double heading, double boatSpeed);
+
 std::vector<TestResult> runSelfTest();
 
 } // namespace sea

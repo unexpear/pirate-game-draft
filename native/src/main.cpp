@@ -40,6 +40,80 @@ void* nativeWindowHandle(SDL_Window* w) {
 #endif
 }
 
+// A masthead wind vane HUD (top-right): bow-up compass with the no-go zone and
+// best-reach arcs, a TRUE and an APPARENT wind arrow (both pointing the way the
+// wind blows over the boat), and two telltales that stream aft when the sail is
+// drawing and flutter when it luffs. Bearings are signed radians of where the
+// wind comes FROM relative to the bow (0 = dead ahead, + = starboard).
+void drawWindVane(int width, float trueSrcRel, float appSrcRel, float awaDeg,
+                  float drive, float appSpeed, float trueSpeed,
+                  const char* pointName, bool luffing, float timeSec) {
+    const float PI = 3.14159265f;
+    const float dial = 150.0f;
+    ImGui::SetNextWindowPos(ImVec2(float(width) - dial - 40.0f, 40.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.30f);
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove
+        | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_AlwaysAutoResize
+        | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
+    ImGui::Begin("WindVane", nullptr, flags);
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(dial, dial)); // reserve the dial's space in the layout
+    const ImVec2 c = ImVec2(p0.x + dial * 0.5f, p0.y + dial * 0.5f);
+    const float R = dial * 0.42f;
+    auto pt = [&](float bearing, float rr) {
+        return ImVec2(c.x + rr * std::sin(bearing), c.y - rr * std::cos(bearing));
+    };
+    const float noGo = 43.0f * PI / 180.0f;
+
+    // No-go wedge at the bow (red), then the best-reach arcs (green).
+    { ImVec2 v[20]; int n = 0; v[n++] = c;
+      for (int i = 0; i <= 16; ++i) v[n++] = pt(-noGo + 2.0f * noGo * i / 16.0f, R);
+      dl->AddConvexPolyFilled(v, n, IM_COL32(210, 70, 55, 70)); }
+    for (int side = -1; side <= 1; side += 2) {
+        ImVec2 v[16]; int n = 0; v[n++] = c;
+        const float a0 = side * 75.0f * PI / 180.0f, a1 = side * 120.0f * PI / 180.0f;
+        for (int i = 0; i <= 12; ++i) v[n++] = pt(a0 + (a1 - a0) * i / 12.0f, R);
+        dl->AddConvexPolyFilled(v, n, IM_COL32(70, 190, 110, 45));
+    }
+    dl->AddCircle(c, R, IM_COL32(220, 225, 235, 200), 48, 1.6f);
+    dl->AddLine(pt(0, R), pt(PI, R), IM_COL32(255, 255, 255, 40), 1.0f);          // bow-stern
+    dl->AddLine(pt(PI * 0.5f, R), pt(-PI * 0.5f, R), IM_COL32(255, 255, 255, 40), 1.0f); // beam
+    dl->AddTriangleFilled(pt(0, R + 12), pt(0.14f, R + 1), pt(-0.14f, R + 1), IM_COL32(240, 240, 245, 230));
+
+    // Wind arrows, pointing inward (wind blows from the source toward the boat).
+    auto arrow = [&](float bearing, ImU32 col, float thick) {
+        const ImVec2 a = pt(bearing, R - 2.0f), b = pt(bearing, R * 0.30f);
+        dl->AddLine(a, b, col, thick);
+        dl->AddTriangleFilled(b, pt(bearing + 0.16f, R * 0.30f + 11.0f),
+                              pt(bearing - 0.16f, R * 0.30f + 11.0f), col);
+    };
+    arrow(trueSrcRel, IM_COL32(90, 160, 240, 220), 2.0f); // true wind (blue)
+    arrow(appSrcRel, IM_COL32(250, 210, 90, 240), 3.0f);  // apparent wind (amber)
+
+    // Telltales at the sail: stream aft (down) when drawing, flutter when luffing.
+    const float lift = luffing ? 1.0f : (1.0f - std::min(1.0f, drive / 0.55f));
+    for (int s = 0; s < 2; ++s) {
+        const float side = s == 0 ? -1.0f : 1.0f;
+        const ImU32 col = s == 0 ? IM_COL32(235, 90, 80, 235) : IM_COL32(90, 210, 120, 235);
+        const ImVec2 anchor(c.x + side * 6.0f, c.y - 2.0f);
+        const float d = lift * 1.5f + std::sin(timeSec * 15.0f + s * 2.0f) * lift * 0.6f;
+        const float len = 15.0f;
+        const ImVec2 mid(anchor.x + std::sin(d) * side * len * 0.5f, anchor.y + std::cos(d) * len * 0.5f);
+        const ImVec2 end(mid.x + std::sin(d * 1.4f) * side * len * 0.5f, mid.y + std::cos(d) * len * 0.5f);
+        dl->AddLine(anchor, mid, col, 2.0f);
+        dl->AddLine(mid, end, col, 2.0f);
+    }
+
+    ImGui::PushStyleColor(ImGuiCol_Text, luffing ? IM_COL32(240, 120, 110, 255) : IM_COL32(210, 230, 215, 255));
+    ImGui::Text(" %s", luffing ? "IN IRONS - bear away" : pointName);
+    ImGui::PopStyleColor();
+    ImGui::Text(" Drive %.0f%%   %.0f deg off bow", drive * 100.0f, awaDeg);
+    ImGui::Text(" App wind %.0f  (true %.0f)", appSpeed, trueSpeed);
+    ImGui::End();
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -397,6 +471,21 @@ int main(int argc, char** argv) {
         ImGui::Text("Frame %d   %.1f FPS", frame, ImGui::GetIO().Framerate);
         ImGui::TextDisabled("Orbit camera - Esc to quit");
         ImGui::End();
+
+        // Wind vane HUD (true + apparent wind, no-go zone, telltales).
+        {
+            auto norm = [](float a) {
+                while (a > 3.14159265f) a -= 6.28318531f;
+                while (a <= -3.14159265f) a += 6.28318531f;
+                return a;
+            };
+            const float kTrueWind = 12.0f;
+            const float trueSrcRel = norm((windDir + 3.14159265f) - heading);
+            const sea::ApparentWind aw = sea::apparentWind(windDir, kTrueWind, heading, speed);
+            const float appSrcRel = norm((float(aw.dir) + 3.14159265f) - heading);
+            drawWindVane(width, trueSrcRel, appSrcRel, awaDeg, windFactor, float(aw.speed),
+                         kTrueWind, sea::pointOfSail(awaDeg), windFactor < 0.08f, timeSec);
+        }
 
         // 3D scene (water + ship) on the clear view, ImGui overlay on top.
         ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height);
