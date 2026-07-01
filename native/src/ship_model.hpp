@@ -105,6 +105,13 @@ struct Projectile { double x = 0, y = 0, z = 0, vx = 0, vy = 0, vz = 0, life = 0
 
 constexpr double GRAVITY = 9.8;
 
+// What an AI captain wants to do this tick.
+struct AiOrders {
+    int steer = 0;     // -1 port, 0 hold, +1 starboard
+    int sailTier = 1;  // desired sail state 0..3
+    int fireSide = 0;  // 0 hold, +1 fire starboard, -1 fire port
+};
+
 struct TestResult { std::string name; bool pass; std::string details; };
 
 Ship makeShipFromConfig(const ShipConfig& cfg);
@@ -134,6 +141,12 @@ int resolveHits(std::vector<Projectile>& shots, Ship& target,
                 double tx, double ty, double tz, double heading);
 // Flood (damage) the least-damaged intact hull plank/rib by `amount`.
 void damageHull(Ship& ship, double amount);
+
+// Decide orders for an enemy captain at (ex,ez,eHeading) engaging a foe at
+// (ox,oz): close to `engageRange`, then turn to present a broadside and fire the
+// bearing side when roughly abeam, in range, and `reloadReady`.
+AiOrders aiCaptain(double ex, double ez, double eHeading,
+                   double ox, double oz, double engageRange, bool reloadReady);
 
 std::vector<TestResult> runSelfTest();
 

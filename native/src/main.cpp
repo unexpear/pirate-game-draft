@@ -110,12 +110,14 @@ int main(int argc, char** argv) {
     float speed = 0.0f, heading = 0.0f, worldX = 0.0f, worldZ = 0.0f;
     float windDir = 2.1f;             // wind blows toward this heading (radians); drifts
 
-    // Gunnery + a drifting target ship to broadside.
+    // Gunnery + an AI enemy warship that maneuvers for a broadside and fires back.
     sea::Ship enemy = sea::makeShipFromConfig(cfg);
-    enemy.display_name = "Derelict";
-    float enemyWorldX = 6.0f, enemyWorldZ = 52.0f; // ahead and a little to starboard
-    float enemyHeading = 1.2f, enemySink = 0.0f;
-    std::vector<sea::Projectile> shots;
+    enemy.display_name = "Man-o'-War";
+    float enemyWorldX = 10.0f, enemyWorldZ = 60.0f; // starts off the starboard bow
+    float enemyHeading = 3.0f, enemySink = 0.0f;
+    float enemySpeed = 0.0f, enemyReload = 0.0f;
+    std::vector<sea::Projectile> shots;      // ours -> hit the enemy
+    std::vector<sea::Projectile> enemyShots; // theirs -> hit us
     float reload = 0.0f;
     bool wantFire = false;
 
@@ -134,8 +136,9 @@ int main(int argc, char** argv) {
     auto resetShip = [&]() {
         ship = sea::makeShipFromConfig(cfg);
         sinkDepth = 0.0f; sailTier = 1; wHoldTime = 0.0f; speed = 0.0f; heading = 0.0f; worldX = 0.0f; worldZ = 0.0f;
-        enemy = sea::makeShipFromConfig(cfg); enemy.display_name = "Derelict";
-        enemyWorldX = 6.0f; enemyWorldZ = 52.0f; enemyHeading = 1.2f; enemySink = 0.0f; shots.clear();
+        enemy = sea::makeShipFromConfig(cfg); enemy.display_name = "Man-o'-War";
+        enemyWorldX = 10.0f; enemyWorldZ = 60.0f; enemyHeading = 3.0f; enemySink = 0.0f;
+        enemySpeed = 0.0f; enemyReload = 0.0f; shots.clear(); enemyShots.clear();
     };
 
     bool running = true;
@@ -248,15 +251,35 @@ int main(int argc, char** argv) {
         else sinkDepth = clampf(sinkDepth - dt * 2.5f, 0.0f, 1000.0f);
         pose.heaveY -= sinkDepth;
 
-        // Target ship: gentle drift, its own buoyancy pose + foundering.
-        enemyHeading += 0.05f * dt;
-        enemyWorldX += std::sin(enemyHeading) * 0.6f * dt;
-        enemyWorldZ += std::cos(enemyHeading) * 0.6f * dt;
-        sea::FloatPose enemyPose = sea::computeFloatPose(enemy, waves, timeSec, enemyWorldX, enemyWorldZ, enemyHeading);
-        const sea::Stats enemyStats = sea::getShipStats(enemy);
+        // --- Enemy warship: AI maneuver, buoyancy pose, return fire, foundering ---
         const bool enemyGone = enemySink > 22.0f;
+        enemyReload = clampf(enemyReload - dt, 0.0f, 10.0f);
+        sea::FloatPose enemyPose;
+        if (!enemyGone) {
+            const bool eReady = enemyReload <= 0.0f;
+            const sea::AiOrders ord = sea::aiCaptain(enemyWorldX, enemyWorldZ, enemyHeading,
+                                                     worldX, worldZ, 28.0, eReady);
+            const float eTarget = ord.sailTier <= 0 ? 0.0f
+                                : (ord.sailTier == 1 ? kFullSpeed * 0.5f
+                                : (ord.sailTier == 2 ? kFullSpeed : kTravelSpeed));
+            enemySpeed += (eTarget - enemySpeed) * clampf(dt * 1.0f, 0.0f, 1.0f);
+            const float eFrac = clampf(enemySpeed / kTravelSpeed, 0.0f, 1.0f);
+            enemyHeading += ord.steer * (1.2f * (1.0f - 0.55f * eFrac)) * dt;
+            enemyWorldX += std::sin(enemyHeading) * enemySpeed * dt;
+            enemyWorldZ += std::cos(enemyHeading) * enemySpeed * dt;
+            enemyPose = sea::computeFloatPose(enemy, waves, timeSec, enemyWorldX, enemyWorldZ, enemyHeading);
+            if (ord.fireSide != 0 && eReady) {
+                auto ev = sea::fireBroadside(enemy, ord.fireSide, enemyWorldX, enemyPose.heaveY, enemyWorldZ, enemyHeading);
+                enemyShots.insert(enemyShots.end(), ev.begin(), ev.end());
+                enemyReload = 1.6f;
+            }
+        } else {
+            enemySpeed = 0.0f;
+            enemyPose = sea::computeFloatPose(enemy, waves, timeSec, enemyWorldX, enemyWorldZ, enemyHeading);
+        }
+        const sea::Stats enemyStats = sea::getShipStats(enemy);
 
-        // Gunnery: Space fires a broadside from whichever side faces the target.
+        // Our broadside (Space) fires from whichever side faces the enemy.
         reload = clampf(reload - dt, 0.0f, 10.0f);
         if (wantFire && reload <= 0.0f) {
             const float dxE = enemyWorldX - worldX, dzE = enemyWorldZ - worldZ;
@@ -267,13 +290,20 @@ int main(int argc, char** argv) {
             reload = 1.2f;
         }
         wantFire = false;
+
+        // Advance both volleys; ours flood the enemy, theirs flood us.
         sea::stepProjectiles(shots, dt);
+        sea::stepProjectiles(enemyShots, dt);
         if (!enemyGone)
             sea::resolveHits(shots, enemy, enemyWorldX, enemyPose.heaveY, enemyWorldZ, enemyHeading);
-        shots.erase(std::remove_if(shots.begin(), shots.end(),
-                    [](const sea::Projectile& p) { return !p.alive; }), shots.end());
+        sea::resolveHits(enemyShots, ship, worldX, pose.heaveY, worldZ, heading);
+        auto dead = [](const sea::Projectile& p) { return !p.alive; };
+        shots.erase(std::remove_if(shots.begin(), shots.end(), dead), shots.end());
+        enemyShots.erase(std::remove_if(enemyShots.begin(), enemyShots.end(), dead), enemyShots.end());
+
         if (enemyStats.sinking) enemySink += dt * clampf(std::fabs(float(enemyStats.floatMargin)) / 1200.0f, 0.3f, 3.0f);
         enemyPose.heaveY -= enemySink;
+        const bool weSank = sinkDepth > 22.0f;
 
         imgui_bgfx::beginFrame(width, height, dt, mouseX, mouseY, mouseButtons, wheel);
 
@@ -283,6 +313,9 @@ int main(int argc, char** argv) {
         ImGui::TextUnformatted("Engineless native C++ build");
         ImGui::Text("Renderer: %s", bgfx::getRendererName(bgfx::getRendererType()));
         ImGui::TextColored(stats.sinking ? kRed : kGreen, stats.sinking ? "Status: SINKING" : "Status: afloat");
+        if (enemyGone || weSank)
+            ImGui::TextColored(enemyGone ? kGreen : kRed,
+                               enemyGone ? ">>> VICTORY - enemy sunk <<<" : ">>> DEFEAT - you sank <<<");
         ImGui::Separator();
         if (ImGui::CollapsingHeader("Controls", ImGuiTreeNodeFlags_DefaultOpen)) {
             float cargo = float(ship.systems.cargo_mass);
@@ -308,9 +341,11 @@ int main(int argc, char** argv) {
         }
         if (ImGui::CollapsingHeader("Gunnery", ImGuiTreeNodeFlags_DefaultOpen)) {
             const char* est = enemyGone ? "sunk" : (enemyStats.sinking ? "SINKING" : "afloat");
-            ImGui::TextColored((enemyGone || enemyStats.sinking) ? kRed : kGreen, "Target:  %s", est);
-            ImGui::Text("Damage:  %.0f%%", enemyStats.damageRatio * 100.0);
-            ImGui::Text("In flight: %d shots", int(shots.size()));
+            ImGui::TextColored((enemyGone || enemyStats.sinking) ? kRed : kGreen,
+                               "Enemy:   %s (dmg %.0f%%)", est, enemyStats.damageRatio * 100.0);
+            const float ex = enemyWorldX - worldX, ez = enemyWorldZ - worldZ;
+            ImGui::Text("Range:   %.0f m", std::sqrt(ex * ex + ez * ez));
+            ImGui::Text("Incoming: %d shots", int(enemyShots.size()));
             ImGui::TextDisabled(reload > 0.0f ? "Reloading..." : "Space: fire broadside");
         }
         ImGui::Separator();
@@ -341,10 +376,12 @@ int main(int argc, char** argv) {
         // 3D scene (water + ship) on the clear view, ImGui overlay on top.
         ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height);
         if (!enemyGone)
-            ship_view::renderShip(kClearView, enemy, enemyPose, enemyHeading, windDir, 0.0f,
+            ship_view::renderShip(kClearView, enemy, enemyPose, enemyHeading, windDir, 0.75f,
                                   enemyWorldX - worldX, enemyWorldZ - worldZ);
         for (const auto& p : shots)
             ship_view::renderTracer(kClearView, float(p.x) - worldX, float(p.y), float(p.z) - worldZ, 0.35f);
+        for (const auto& p : enemyShots)
+            ship_view::renderTracer(kClearView, float(p.x) - worldX, float(p.y), float(p.z) - worldZ, 0.35f, 1.0f, 0.25f, 0.2f);
         imgui_bgfx::endFrame(kImGuiView);
         bgfx::frame();
 

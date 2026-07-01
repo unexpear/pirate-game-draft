@@ -31,7 +31,8 @@ void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>
 void renderShip(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
                 float heading, float windDir, float sailFullness, float posX, float posZ);
 
-// Draw a cannonball tracer at scene position (x,y,z).
-void renderTracer(uint16_t viewId, float x, float y, float z, float size);
+// Draw a cannonball tracer at scene position (x,y,z) (defaults to our orange).
+void renderTracer(uint16_t viewId, float x, float y, float z, float size,
+                  float r = 1.0f, float g = 0.62f, float b = 0.16f);
 
 } // namespace ship_view

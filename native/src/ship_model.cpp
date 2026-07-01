@@ -353,6 +353,37 @@ int resolveHits(std::vector<Projectile>& shots, Ship& target,
     return hits;
 }
 
+AiOrders aiCaptain(double ex, double ez, double eHeading,
+                   double ox, double oz, double engageRange, bool reloadReady) {
+    AiOrders o;
+    const double dx = ox - ex, dz = oz - ez;
+    const double range = std::sqrt(dx * dx + dz * dz);
+    // Bearing to the foe relative to our heading (forward = (sin,cos)).
+    const double ch = std::cos(eHeading), sh = std::sin(eHeading);
+    const double fwd = dx * sh + dz * ch;   // ahead(+) / astern(-)
+    const double stb = dx * ch - dz * sh;   // starboard(+) / port(-)
+    const double bearing = std::atan2(stb, fwd); // 0 = dead ahead
+    const double absB = std::fabs(bearing);
+    const double beam = PI * 0.5;
+
+    // Sail: crowd on to close, ease to half sail once in the fight.
+    o.sailTier = range > engageRange * 1.6 ? 2 : 1;
+
+    if (range > engageRange) {
+        // Pursue: point the bow at the foe.
+        o.steer = bearing > 0.05 ? 1 : (bearing < -0.05 ? -1 : 0);
+    } else {
+        // In range: swing the foe onto the beam to present a broadside.
+        if (absB < beam - 0.15) o.steer = bearing > 0 ? -1 : 1;
+        else if (absB > beam + 0.15) o.steer = bearing > 0 ? 1 : -1;
+        else o.steer = 0;
+        // Fire the bearing side when roughly abeam, in range, and reloaded.
+        if (reloadReady && absB > beam - 0.5 && range < engageRange * 1.2)
+            o.fireSide = bearing > 0 ? 1 : -1;
+    }
+    return o;
+}
+
 std::string serialize(const Ship& s) {
     std::string o;
     o += "schema_version " + std::to_string(s.schema_version) + "\n";
@@ -517,6 +548,32 @@ std::vector<TestResult> runSelfTest() {
             resolveHits(volley, victim, 0, 0, 0, 0.0);
         }
         push("Sustained fire founders the target", getShipStats(victim).sinking);
+    }
+
+    // --- Enemy AI captain ---
+    {
+        const double eng = 30.0;
+        // Far foe ahead-and-starboard: crowd sail and turn toward it, hold fire.
+        AiOrders far = aiCaptain(0, 0, 0, 40, 200, eng, true);
+        push("AI crowds sail and closes when far", far.sailTier == 2 && far.steer == 1 && far.fireSide == 0);
+
+        // Foe abeam to starboard, in range, reloaded: fire starboard.
+        AiOrders stbd = aiCaptain(0, 0, 0, 25, 0, eng, true);
+        push("AI fires the starboard broadside when abeam", stbd.fireSide == 1);
+        // Foe abeam to port: fire port.
+        AiOrders port = aiCaptain(0, 0, 0, -25, 0, eng, true);
+        push("AI fires the port broadside when abeam", port.fireSide == -1);
+
+        // Foe dead ahead in range: turn to bring it onto the beam (don't just ram).
+        AiOrders ahead = aiCaptain(0, 0, 0, 0, 25, eng, true);
+        push("AI turns to present a broadside", ahead.steer != 0);
+
+        // Out of range: hold fire even if reloaded.
+        AiOrders oor = aiCaptain(0, 0, 0, 0, 200, eng, true);
+        push("AI holds fire out of range", oor.fireSide == 0);
+        // Abeam and in range but reloading: hold fire.
+        AiOrders busy = aiCaptain(0, 0, 0, 25, 0, eng, false);
+        push("AI holds fire while reloading", busy.fireSide == 0);
     }
 
     return r;

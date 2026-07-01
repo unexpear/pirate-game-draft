@@ -55,8 +55,9 @@ void renderShip(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& po
     ship_mesh::render(viewId, ship, pose, heading, windDir, sailFullness, posX, posZ);
 }
 
-void renderTracer(uint16_t viewId, float x, float y, float z, float size) {
-    ship_mesh::renderBox(viewId, x, y, z, size, 1.0f, 0.62f, 0.16f);
+void renderTracer(uint16_t viewId, float x, float y, float z, float size,
+                  float r, float g, float b) {
+    ship_mesh::renderBox(viewId, x, y, z, size, r, g, b);
 }
 
 } // namespace ship_view
