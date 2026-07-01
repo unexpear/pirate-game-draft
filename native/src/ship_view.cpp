@@ -94,7 +94,7 @@ void shutdown() {
 }
 
 void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>& waves,
-            float timeSec, int width, int height) {
+            const sea::FloatPose& pose, float timeSec, int width, int height) {
     // Slow orbit around the hull.
     const float dist = 24.0f;
     const float angle = timeSec * 0.3f;
@@ -114,7 +114,17 @@ void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>
     DebugDrawEncoder dde;
     dde.begin(viewId);
     drawWater(dde, waves, timeSec);
+
+    // The ship rides the surface: a root transform (heave + pitch + heel) sits
+    // above the per-piece transforms.
+    float shipRoot[16];
+    bx::mtxSRT(shipRoot, 1.0f, 1.0f, 1.0f,
+        float(pose.pitch), 0.0f, float(pose.heel),
+        0.0f, float(pose.heaveY), 0.0f);
+    dde.pushTransform(shipRoot);
     drawShip(dde, ship);
+    dde.popTransform();
+
     dde.end();
 }
 

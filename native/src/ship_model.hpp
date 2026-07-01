@@ -95,6 +95,11 @@ struct ValidationResult {
 struct Wave { double direction, amplitude, wavelength, speed, phase; };
 struct WaterSample { double height, slopeX, slopeZ; };
 
+// How the ship rides the water: vertical offset (heave) plus pitch (nose
+// up/down, about X) and heel (roll, about Z), derived from the wave surface at
+// the Tier-2 sample points and the ship's float margin.
+struct FloatPose { double heaveY = 0, pitch = 0, heel = 0; };
+
 struct TestResult { std::string name; bool pass; std::string details; };
 
 Ship makeShipFromConfig(const ShipConfig& cfg);
@@ -102,6 +107,7 @@ Stats getShipStats(const Ship& ship);
 ValidationResult validateShip(const Ship& ship);
 std::vector<Wave> makeWaveField(const std::string& seed);
 WaterSample sampleWater(const std::vector<Wave>& waves, double x, double z, double t);
+FloatPose computeFloatPose(const Ship& ship, const std::vector<Wave>& waves, double t);
 std::string serialize(const Ship& ship);
 Ship deserialize(const std::string& text);
 std::vector<TestResult> runSelfTest();

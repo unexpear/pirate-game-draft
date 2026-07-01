@@ -230,6 +230,40 @@ WaterSample sampleWater(const std::vector<Wave>& waves, double x, double z, doub
     return { height, dx, dz };
 }
 
+FloatPose computeFloatPose(const Ship& ship, const std::vector<Wave>& waves, double t) {
+    // Tier-2 3x3 sample grid over the ship's footprint (ship at origin, no yaw).
+    const double halfW = ship.bounds.width * 0.38;
+    const double halfL = ship.bounds.length * 0.42;
+    const double xs[3] = { -halfW, 0.0, halfW };
+    const double zs[3] = { -halfL, 0.0, halfL };
+
+    double sum = 0, front = 0, rear = 0, left = 0, right = 0;
+    int fc = 0, rc = 0, lc = 0, rr = 0;
+    for (double lx : xs) {
+        for (double lz : zs) {
+            const double h = sampleWater(waves, lx, lz, t).height;
+            sum += h;
+            if (lz > 0) { front += h; ++fc; }
+            if (lz < 0) { rear += h; ++rc; }
+            if (lx < 0) { left += h; ++lc; }
+            if (lx > 0) { right += h; ++rr; }
+        }
+    }
+    const double avg = sum / 9.0;
+
+    // Ride height: the hull origin sits above the mean surface by a freeboard
+    // that scales with spare buoyancy (heavier / more damaged => rides lower).
+    const Stats st = getShipStats(ship);
+    const double buoyantLift = clampd(st.floatMargin / std::max(1.0, st.mass), -1.0, 1.0);
+    const double freeboard = ship.bounds.depth * 0.25 * (1.0 + buoyantLift * 3.0);
+
+    FloatPose p;
+    p.heaveY = avg + freeboard;
+    p.pitch = std::atan2(front / std::max(1, fc) - rear / std::max(1, rc), std::max(1.0, ship.bounds.length));
+    p.heel = std::atan2(right / std::max(1, rr) - left / std::max(1, lc), std::max(1.0, ship.bounds.width));
+    return p;
+}
+
 std::string serialize(const Ship& s) {
     std::string o;
     o += "schema_version " + std::to_string(s.schema_version) + "\n";
@@ -347,6 +381,18 @@ std::vector<TestResult> runSelfTest() {
     const std::string roundTripped = serialize(restored);
     push("Ship round-trips through serialize/deserialize without data loss",
          ser == roundTripped, ser == roundTripped ? "" : "serialization differs after round-trip");
+
+    // Buoyancy pose: a heavier ship rides lower on the same water.
+    const auto poseWaves = makeWaveField("selftest-pose");
+    const FloatPose basePose = computeFloatPose(base, poseWaves, 3.0);
+    Ship overloaded = base;
+    overloaded.systems.cargo_mass = 4000; // well past sinking
+    const FloatPose loadedPose = computeFloatPose(overloaded, poseWaves, 3.0);
+    {
+        char d[64];
+        std::snprintf(d, sizeof(d), "heave %.3f -> %.3f", basePose.heaveY, loadedPose.heaveY);
+        push("Heavier ship rides lower (buoyancy pose)", loadedPose.heaveY < basePose.heaveY, d);
+    }
 
     return r;
 }

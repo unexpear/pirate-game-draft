@@ -10,16 +10,16 @@
 #include <cstdint>
 #include <vector>
 
-namespace sea { struct Ship; struct Wave; }
+namespace sea { struct Ship; struct Wave; struct FloatPose; }
 
 namespace ship_view {
 
 void init();
 void shutdown();
 
-// Set up the camera on `viewId`, draw the water grid and the ship. `timeSec`
-// drives both the wave animation and the orbit.
+// Set up the camera on `viewId`, draw the water grid, and draw the ship riding
+// the surface at `pose`. `timeSec` drives both the wave animation and the orbit.
 void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>& waves,
-            float timeSec, int width, int height);
+            const sea::FloatPose& pose, float timeSec, int width, int height);
 
 } // namespace ship_view

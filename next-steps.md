@@ -6,7 +6,7 @@ The Three.js browser spike at [spikes/threejs-sea-trial/](spikes/threejs-sea-tri
 
 **Milestone 0 is complete** ✅ — [native/](native/):
 
-- [x] 11 native self-tests pass — pure C++, verified on g++ (MSYS2 UCRT64) and MSVC 2022
+- [x] Native model self-tests pass — pure C++, verified on g++ (MSYS2 UCRT64) and MSVC 2022, and in CI
 - [x] Builds from a clean checkout, exits cleanly, `ctest`-wired
 - [x] SDL3 native window opens (release-3.4.10, static submodule)
 - [x] bgfx clears the screen (Direct3D 11 auto-selected)
@@ -17,7 +17,7 @@ The Three.js browser spike at [spikes/threejs-sea-trial/](spikes/threejs-sea-tri
 
 - [x] Ship rendering — the Test Sloop draws as 3D oriented boxes (one per hull piece) via bgfx debugdraw, orbit camera, colored by type/damage.
 - [x] Gerstner water — animated wireframe ocean grid, CPU-displaced by the model's own `sampleWater` (so it's deterministic and *exactly* matches the buoyancy math). Ship sits at the waterline.
-- [ ] Buoyancy on the floating ship — drive the ship's ride height + pitch/heel from the wave surface at its Tier-2 sample points, matching the model's float margin. This is the payoff: the ship bobs on the real waves.
+- [x] Buoyancy on the floating ship — `sea::computeFloatPose` derives heave + pitch + heel from the wave surface at the Tier-2 sample points, offset by float margin (heavier rides lower). The ship bobs and tilts on the real waves; live values in the panel. Covered by a self-test.
 - [ ] Real shader pipeline (shaderc + `bgfx_compile_shaders`) — deferred; CPU water via debugdraw is enough for now. Needed when water goes GPU (solid lit surface / foam) or ship moves to lit meshes.
 - [ ] Then the full Build → Sail loop per [vertical-slice.md](vertical-slice.md); Jolt + Steamworks after.
 

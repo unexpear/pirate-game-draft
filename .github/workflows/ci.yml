@@ -18,5 +18,5 @@ jobs:
       - name: Build
         run: cmake --build native/build --target sea_trial_selftest
 
-      - name: Run the 11 model self-tests
+      - name: Run the model self-tests
         run: ctest --test-dir native/build --output-on-failure

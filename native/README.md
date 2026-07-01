@@ -6,7 +6,7 @@ from permissive libraries. See [../tech-stack.md](../tech-stack.md) and
 
 ## Status — Milestone 0 ✅ complete
 
-- [x] Model spine ported to C++ + **11 self-tests passing** (`sea_trial_selftest`)
+- [x] Model spine ported to C++ + **model self-tests passing** (`sea_trial_selftest`)
 - [x] Builds from a clean checkout, exits cleanly, `ctest`-wired
 - [x] SDL3 window (`sea_trial`)
 - [x] bgfx clears the screen (Direct3D 11)

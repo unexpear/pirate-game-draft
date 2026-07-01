@@ -143,6 +143,7 @@ int main(int argc, char** argv) {
         const float dt = (now - last) / 1000.0f;
         last = now;
         timeSec += dt;
+        const sea::FloatPose pose = sea::computeFloatPose(ship, waves, timeSec);
 
         imgui_bgfx::beginFrame(width, height, dt, mouseX, mouseY, mouseButtons, wheel);
 
@@ -164,13 +165,18 @@ int main(int argc, char** argv) {
             ImGui::Text("Buoyancy:     %.0f kg-eq", stats.buoyancyScore);
             ImGui::TextColored(stats.floatMargin > 0 ? kGreen : kRed, "Float margin: %.0f kg", stats.floatMargin);
         }
+        if (ImGui::CollapsingHeader("Buoyancy (live)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Text("Heave: %+.2f m", pose.heaveY);
+            ImGui::Text("Pitch: %+.2f deg", pose.pitch * 57.2957795);
+            ImGui::Text("Heel:  %+.2f deg", pose.heel * 57.2957795);
+        }
         ImGui::Separator();
         ImGui::Text("Frame %d   %.1f FPS", frame, ImGui::GetIO().Framerate);
         ImGui::TextDisabled("Orbit camera - Esc to quit");
         ImGui::End();
 
         // 3D scene (water + ship) on the clear view, ImGui overlay on top.
-        ship_view::render(kClearView, ship, waves, timeSec, width, height);
+        ship_view::render(kClearView, ship, waves, pose, timeSec, width, height);
         imgui_bgfx::endFrame(kImGuiView);
         bgfx::frame();
 
