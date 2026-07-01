@@ -73,7 +73,8 @@ Triangulated across the Ubisoft e-manual/pro-tips, Orcz/Fandom wikis, PC & Xbox 
 - The **visible sail reefs with the state** — furled to a bare mast when anchored, half-height at half sail, full canvas at full/travel — which is literally what BF's "sail states" are.
 - **Deliberate deviation:** we *keep* a wind mechanic (speed best downwind, worst upwind, with a HUD readout). Black Flag is wind-neutral, so this is an **intentional enhancement**, not fidelity — flagged so it stays a conscious choice. See [../holes.md](../holes.md).
 - **Broadside cannons** fire (Space) in a real **two-sided duel**: the enemy is an AI warship that crowds sail to close, turns to present its broadside, and **fires back** — its shot floods *your* hull, so either ship can be sunk (win/lose). Cannonballs arc under gravity. The firing **side is auto-picked toward the enemy**; Black Flag's real **camera-direction** weapon selection (side = broadside, front = chain, rear = fire barrels, up = mortar) still waits on a free camera.
-- Not yet mapped, in the order they matter: **boarding** (the crown jewel — disable → alongside → capture, with on-deck melee), **brace** (timed damage negation vs the enemy's return fire), then camera-direction weapon selection, spyglass, mortar, shanties.
+- **Boarding** (the crown jewel) is in, abstracted: batter the enemy until she floods and **strikes her colours**, pull alongside at low speed, press **B** to **board & capture** her before she founders (a distinct outcome from sinking). The **on-deck melee** itself is still stubbed to a short beat — that real infantry fight is the next depth to add.
+- Not yet mapped, in the order they matter: **on-deck boarding melee**, **brace** (timed damage negation vs return fire), then camera-direction weapon selection, spyglass, mortar, shanties.
 
 ## Sources
 

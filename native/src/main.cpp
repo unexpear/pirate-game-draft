@@ -120,6 +120,9 @@ int main(int argc, char** argv) {
     std::vector<sea::Projectile> enemyShots; // theirs -> hit us
     float reload = 0.0f;
     bool wantFire = false;
+    bool enemyStruck = false, boarding = false, captured = false;
+    float boardTimer = 0.0f;
+    bool wantBoard = false;
 
     auto clampf = [](float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); };
     auto isHull = [](const sea::Piece& p) { return p.type == "plank" || p.type == "rib" || p.type == "keel"; };
@@ -139,6 +142,7 @@ int main(int argc, char** argv) {
         enemy = sea::makeShipFromConfig(cfg); enemy.display_name = "Man-o'-War";
         enemyWorldX = 10.0f; enemyWorldZ = 60.0f; enemyHeading = 3.0f; enemySink = 0.0f;
         enemySpeed = 0.0f; enemyReload = 0.0f; shots.clear(); enemyShots.clear();
+        enemyStruck = false; boarding = false; captured = false; boardTimer = 0.0f;
     };
 
     bool running = true;
@@ -159,6 +163,7 @@ int main(int argc, char** argv) {
                     case SDL_SCANCODE_Z: repairAll(); break;
                     case SDL_SCANCODE_R: resetShip(); break;
                     case SDL_SCANCODE_SPACE: if (!e.key.repeat) wantFire = true; break;
+                    case SDL_SCANCODE_B: if (!e.key.repeat) wantBoard = true; break;
                     default: break; // W/S/A/D sailing is polled below (hold-aware)
                     }
                 }
@@ -255,7 +260,8 @@ int main(int argc, char** argv) {
         const bool enemyGone = enemySink > 22.0f;
         enemyReload = clampf(enemyReload - dt, 0.0f, 10.0f);
         sea::FloatPose enemyPose;
-        if (!enemyGone) {
+        if (!enemyGone && !enemyStruck) {
+            // Fighting: maneuver for a broadside and fire.
             const bool eReady = enemyReload <= 0.0f;
             const sea::AiOrders ord = sea::aiCaptain(enemyWorldX, enemyWorldZ, enemyHeading,
                                                      worldX, worldZ, 28.0, eReady);
@@ -274,10 +280,14 @@ int main(int argc, char** argv) {
                 enemyReload = 1.6f;
             }
         } else {
-            enemySpeed = 0.0f;
+            // Struck / going down: dead in the water, coasting to a stop.
+            enemySpeed += (0.0f - enemySpeed) * clampf(dt * 0.8f, 0.0f, 1.0f);
+            enemyWorldX += std::sin(enemyHeading) * enemySpeed * dt;
+            enemyWorldZ += std::cos(enemyHeading) * enemySpeed * dt;
             enemyPose = sea::computeFloatPose(enemy, waves, timeSec, enemyWorldX, enemyWorldZ, enemyHeading);
         }
         const sea::Stats enemyStats = sea::getShipStats(enemy);
+        if (enemyStats.sinking) enemyStruck = true; // floods to the waterline -> strikes her colours
 
         // Our broadside (Space) fires from whichever side faces the enemy.
         reload = clampf(reload - dt, 0.0f, 10.0f);
@@ -294,15 +304,24 @@ int main(int argc, char** argv) {
         // Advance both volleys; ours flood the enemy, theirs flood us.
         sea::stepProjectiles(shots, dt);
         sea::stepProjectiles(enemyShots, dt);
-        if (!enemyGone)
+        if (!enemyGone && !enemyStruck) // a struck ship has surrendered — no more damage
             sea::resolveHits(shots, enemy, enemyWorldX, enemyPose.heaveY, enemyWorldZ, enemyHeading);
         sea::resolveHits(enemyShots, ship, worldX, pose.heaveY, worldZ, heading);
         auto dead = [](const sea::Projectile& p) { return !p.alive; };
         shots.erase(std::remove_if(shots.begin(), shots.end(), dead), shots.end());
         enemyShots.erase(std::remove_if(enemyShots.begin(), enemyShots.end(), dead), enemyShots.end());
 
-        if (enemyStats.sinking) enemySink += dt * clampf(std::fabs(float(enemyStats.floatMargin)) / 1200.0f, 0.3f, 3.0f);
+        // A captured prize stops foundering; otherwise a struck ship slowly goes down.
+        if (enemyStats.sinking && !captured) enemySink += dt * clampf(std::fabs(float(enemyStats.floatMargin)) / 1200.0f, 0.3f, 3.0f);
         enemyPose.heaveY -= enemySink;
+
+        // Boarding: pull alongside a struck (surrendered) enemy at low speed, press B.
+        const float bdx = enemyWorldX - worldX, bdz = enemyWorldZ - worldZ;
+        const float enemyRange = std::sqrt(bdx * bdx + bdz * bdz);
+        const bool boardable = enemyStruck && !captured && !enemyGone && enemyRange < 12.0f && speed < 4.5f;
+        if (wantBoard && boardable && !boarding) { boarding = true; boardTimer = 1.5f; }
+        wantBoard = false;
+        if (boarding) { boardTimer -= dt; if (boardTimer <= 0.0f) { boarding = false; captured = true; } }
         const bool weSank = sinkDepth > 22.0f;
 
         imgui_bgfx::beginFrame(width, height, dt, mouseX, mouseY, mouseButtons, wheel);
@@ -313,9 +332,9 @@ int main(int argc, char** argv) {
         ImGui::TextUnformatted("Engineless native C++ build");
         ImGui::Text("Renderer: %s", bgfx::getRendererName(bgfx::getRendererType()));
         ImGui::TextColored(stats.sinking ? kRed : kGreen, stats.sinking ? "Status: SINKING" : "Status: afloat");
-        if (enemyGone || weSank)
-            ImGui::TextColored(enemyGone ? kGreen : kRed,
-                               enemyGone ? ">>> VICTORY - enemy sunk <<<" : ">>> DEFEAT - you sank <<<");
+        if (captured)      ImGui::TextColored(kGreen, ">>> VICTORY - enemy boarded & captured <<<");
+        else if (enemyGone) ImGui::TextColored(kGreen, ">>> VICTORY - enemy sunk <<<");
+        else if (weSank)   ImGui::TextColored(kRed, ">>> DEFEAT - you sank <<<");
         ImGui::Separator();
         if (ImGui::CollapsingHeader("Controls", ImGuiTreeNodeFlags_DefaultOpen)) {
             float cargo = float(ship.systems.cargo_mass);
@@ -327,7 +346,7 @@ int main(int argc, char** argv) {
             ImGui::SameLine();
             if (ImGui::Button("Reset")) resetShip();
             ImGui::TextDisabled("Keys: W raise sail (hold at full = travel), S lower, A/D steer");
-            ImGui::TextDisabled("      Space fire  ·  C/V cargo, X damage, Z repair, R reset");
+            ImGui::TextDisabled("      Space fire, B board  ·  C/V cargo, X damage, Z repair, R reset");
         }
         if (ImGui::CollapsingHeader("Sailing", ImGuiTreeNodeFlags_DefaultOpen)) {
             const char* tierName = effTier == 0 ? "anchored"
@@ -339,14 +358,17 @@ int main(int argc, char** argv) {
             const char* pts = align > 0.5f ? "tailwind" : (align < -0.5f ? "headwind" : "crosswind");
             ImGui::Text("Wind:    %.0f deg (%s, %.0f%% drive)", windDir * 57.2957795f, pts, windFactor * 100.0f);
         }
-        if (ImGui::CollapsingHeader("Gunnery", ImGuiTreeNodeFlags_DefaultOpen)) {
-            const char* est = enemyGone ? "sunk" : (enemyStats.sinking ? "SINKING" : "afloat");
-            ImGui::TextColored((enemyGone || enemyStats.sinking) ? kRed : kGreen,
+        if (ImGui::CollapsingHeader("Gunnery & boarding", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const char* est = captured ? "captured" : (enemyGone ? "sunk"
+                            : (enemyStruck ? "STRUCK - boardable" : (enemyStats.sinking ? "SINKING" : "afloat")));
+            ImGui::TextColored(captured ? kGreen
+                               : ((enemyGone || enemyStruck || enemyStats.sinking) ? kRed : kGreen),
                                "Enemy:   %s (dmg %.0f%%)", est, enemyStats.damageRatio * 100.0);
-            const float ex = enemyWorldX - worldX, ez = enemyWorldZ - worldZ;
-            ImGui::Text("Range:   %.0f m", std::sqrt(ex * ex + ez * ez));
+            ImGui::Text("Range:   %.0f m", enemyRange);
             ImGui::Text("Incoming: %d shots", int(enemyShots.size()));
-            ImGui::TextDisabled(reload > 0.0f ? "Reloading..." : "Space: fire broadside");
+            if (boarding)       ImGui::TextColored(kGreen, "Boarding...");
+            else if (boardable) ImGui::TextColored(kGreen, "Alongside - press B to board!");
+            else                ImGui::TextDisabled(reload > 0.0f ? "Reloading..." : "Space: fire broadside");
         }
         ImGui::Separator();
         ImGui::TextColored(passing == total ? kGreen : kRed, "Model self-tests: %d / %d passing", passing, total);
@@ -376,7 +398,8 @@ int main(int argc, char** argv) {
         // 3D scene (water + ship) on the clear view, ImGui overlay on top.
         ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height);
         if (!enemyGone)
-            ship_view::renderShip(kClearView, enemy, enemyPose, enemyHeading, windDir, 0.75f,
+            ship_view::renderShip(kClearView, enemy, enemyPose, enemyHeading, windDir,
+                                  enemyStruck ? 0.0f : 0.75f, // furled sails once she strikes
                                   enemyWorldX - worldX, enemyWorldZ - worldZ);
         for (const auto& p : shots)
             ship_view::renderTracer(kClearView, float(p.x) - worldX, float(p.y), float(p.z) - worldZ, 0.35f);
