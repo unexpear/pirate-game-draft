@@ -203,6 +203,22 @@ int main(int argc, char** argv) {
     int buildTrad = 2;  // 0 Roman, 1 Viking, 2 English (Age of Sail)
     int placed = 0;     // pieces revealed so far
 
+    // A large island with a port + shipyard, moored at a fixed spot to the north.
+    const float islandX = 0.0f, islandZ = 120.0f;
+    const float kLandRadius = 56.0f;  // run aground here
+    const float kSafeRadius = 95.0f;  // combat-free harbour truce inside this ring
+    bool wasAground = false;          // edge-trigger the run-aground penalty
+    sea::Ship yardShip = sea::makeShipFromConfig(cfg); // a half-built hull on the stocks
+    {
+        const std::vector<int> ord = sea::buildOrder(yardShip, sea::BuildTradition::English);
+        sea::Ship partial = yardShip;
+        partial.pieces.clear();
+        for (int i = 0; i < 12 && i < int(ord.size()); ++i) partial.pieces.push_back(yardShip.pieces[ord[i]]);
+        partial.systems.mast_count = 0;
+        partial.systems.sail_count = 0;
+        yardShip = partial;
+    }
+
     auto clampf = [](float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); };
     auto isHull = [](const sea::Piece& p) { return p.type == "plank" || p.type == "rib" || p.type == "keel"; };
     auto damagePlank = [&]() {
@@ -327,6 +343,19 @@ int main(int argc, char** argv) {
         if (buildMode) speed = 0.0f; // frozen on the stocks while building
         worldX += std::sin(heading) * speed * dt;
         worldZ += std::cos(heading) * speed * dt;
+        // Run aground: keep the hull out of the island's shore circle.
+        {
+            double px = worldX, pz = worldZ;
+            const bool aground = sea::keepOutsideCircle(px, pz, islandX, islandZ, kLandRadius);
+            if (aground) {
+                worldX = float(px); worldZ = float(pz);
+                if (!wasAground) speed *= 0.2f; // lose way once when you first strike, not every frame
+            }
+            wasAground = aground;
+        }
+        const float islX = islandX - worldX, islZ = islandZ - worldZ; // island vs. our ship
+        const float islandDist = std::sqrt(islX * islX + islZ * islZ);
+        const bool inSafeZone = islandDist < kSafeRadius; // harbour truce - no combat
 
         // Visible canvas reflects the sail state: furled -> half -> full.
         const float sailFullness = effTier == 0 ? 0.0f : (effTier == 1 ? 0.55f : 1.0f);
@@ -342,6 +371,14 @@ int main(int argc, char** argv) {
         const bool enemyGone = enemySink > 22.0f;
         enemyReload = clampf(enemyReload - dt, 0.0f, 10.0f);
         sea::FloatPose enemyPose;
+        // Keep the enemy out of the harbour safe zone (and thus off the island) — it
+        // blockades the mouth instead of sailing through the land or camping the truce.
+        {
+            double ex = enemyWorldX, ez = enemyWorldZ;
+            if (sea::keepOutsideCircle(ex, ez, islandX, islandZ, kSafeRadius)) {
+                enemyWorldX = float(ex); enemyWorldZ = float(ez);
+            }
+        }
         if (!enemyGone && !enemyStruck && !buildMode) {
             // Fighting: maneuver for a broadside and fire.
             const bool eReady = enemyReload <= 0.0f;
@@ -356,7 +393,7 @@ int main(int argc, char** argv) {
             enemyWorldX += std::sin(enemyHeading) * enemySpeed * dt;
             enemyWorldZ += std::cos(enemyHeading) * enemySpeed * dt;
             enemyPose = sea::computeFloatPose(enemy, waves, timeSec, enemyWorldX, enemyWorldZ, enemyHeading);
-            if (ord.fireSide != 0 && eReady) {
+            if (ord.fireSide != 0 && eReady && !inSafeZone) {
                 auto ev = sea::fireBroadside(enemy, ord.fireSide, enemyWorldX, enemyPose.heaveY, enemyWorldZ, enemyHeading);
                 enemyShots.insert(enemyShots.end(), ev.begin(), ev.end());
                 enemyReload = 1.6f;
@@ -373,7 +410,7 @@ int main(int argc, char** argv) {
 
         // Our broadside (Space) fires from whichever side faces the enemy.
         reload = clampf(reload - dt, 0.0f, 10.0f);
-        if (wantFire && reload <= 0.0f && !buildMode) {
+        if (wantFire && reload <= 0.0f && !buildMode && !inSafeZone) {
             const float dxE = enemyWorldX - worldX, dzE = enemyWorldZ - worldZ;
             const float starboardComp = dxE * std::cos(heading) - dzE * std::sin(heading);
             const int side = starboardComp >= 0.0f ? 1 : -1;
@@ -386,9 +423,9 @@ int main(int argc, char** argv) {
         // Advance both volleys; ours flood the enemy, theirs flood us.
         sea::stepProjectiles(shots, dt);
         sea::stepProjectiles(enemyShots, dt);
-        if (!enemyGone && !enemyStruck) // a struck ship has surrendered — no more damage
+        if (!enemyGone && !enemyStruck) // struck/surrendered ships take no more damage; enemy is never in the zone
             sea::resolveHits(shots, enemy, enemyWorldX, enemyPose.heaveY, enemyWorldZ, enemyHeading);
-        if (!buildMode) sea::resolveHits(enemyShots, ship, worldX, pose.heaveY, worldZ, heading);
+        if (!buildMode && !inSafeZone) sea::resolveHits(enemyShots, ship, worldX, pose.heaveY, worldZ, heading);
         auto dead = [](const sea::Projectile& p) { return !p.alive; };
         shots.erase(std::remove_if(shots.begin(), shots.end(), dead), shots.end());
         enemyShots.erase(std::remove_if(enemyShots.begin(), enemyShots.end(), dead), enemyShots.end());
@@ -471,6 +508,8 @@ int main(int argc, char** argv) {
             ImGui::Text("Wind:    %.0f deg off bow  (%s)", awaDeg, sea::pointOfSail(awaDeg));
             ImGui::TextColored(windFactor < 0.08f ? kRed : kGreen, "Drive:   %.0f%%%s",
                                windFactor * 100.0f, windFactor < 0.08f ? "   in irons - bear away!" : "");
+            ImGui::Text("Port:    %.0f m", islandDist);
+            if (inSafeZone) ImGui::TextColored(kGreen, ">> SAFE ZONE - harbour truce <<");
         }
         if (ImGui::CollapsingHeader("Gunnery & boarding", ImGuiTreeNodeFlags_DefaultOpen)) {
             const char* est = captured ? "captured" : (enemyGone ? "sunk"
@@ -480,7 +519,8 @@ int main(int argc, char** argv) {
                                "Enemy:   %s (dmg %.0f%%)", est, enemyStats.damageRatio * 100.0);
             ImGui::Text("Range:   %.0f m", enemyRange);
             ImGui::Text("Incoming: %d shots", int(enemyShots.size()));
-            if (boarding)       ImGui::TextColored(kGreen, "Boarding...");
+            if (inSafeZone)     ImGui::TextColored(kGreen, "Safe zone - no combat");
+            else if (boarding)  ImGui::TextColored(kGreen, "Boarding...");
             else if (boardable) ImGui::TextColored(kGreen, "Alongside - press B to board!");
             else                ImGui::TextDisabled(reload > 0.0f ? "Reloading..." : "Space: fire broadside");
         }
@@ -545,6 +585,19 @@ int main(int argc, char** argv) {
                 ship_view::renderTracer(kClearView, float(p.x) - worldX, float(p.y), float(p.z) - worldZ, 0.35f);
             for (const auto& p : enemyShots)
                 ship_view::renderTracer(kClearView, float(p.x) - worldX, float(p.y), float(p.z) - worldZ, 0.35f, 1.0f, 0.25f, 0.2f);
+            // The island, the safe-zone buoy ring, and a half-built hull on the slipway.
+            ship_view::renderIsland(kClearView, islX, islZ);
+            const int kBuoys = 36;
+            for (int i = 0; i < kBuoys; ++i) {
+                const float a = 6.2831853f * i / kBuoys;
+                const float bxo = islandX + kSafeRadius * std::cos(a) - worldX;
+                const float bzo = islandZ + kSafeRadius * std::sin(a) - worldZ;
+                const float byo = 0.8f + 0.3f * std::sin(timeSec * 1.5f + i);
+                ship_view::renderTracer(kClearView, bxo, byo, bzo, 0.7f, 0.90f, 0.16f, 0.12f);
+            }
+            sea::FloatPose yardPose; yardPose.heaveY = 1.9f;
+            ship_view::renderShip(kClearView, yardShip, yardPose, 0.15f, windDir, 0.0f, timeSec,
+                                  islX + 24.0f, islZ - 44.0f);
         }
         imgui_bgfx::endFrame(kImGuiView);
         bgfx::frame();

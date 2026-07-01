@@ -169,6 +169,12 @@ struct ApparentWind { double dir = 0.0, speed = 0.0; };
 ApparentWind apparentWind(double windDir, double trueWindSpeed,
                           double heading, double boatSpeed);
 
+// Keep a point (px,pz) outside a circle centred (cx,cz) of `radius` — the hull
+// running aground on an island. If the point is inside, push it out to the
+// boundary along the radial and return true (a collision); otherwise leave it
+// untouched and return false.
+bool keepOutsideCircle(double& px, double& pz, double cx, double cz, double radius);
+
 // --- Build mode: how a hull goes together, per historical tradition --------
 // See references/shipbuilding-history.md. Roman & Viking build SHELL-FIRST
 // (planking shell before internal frames); English Age-of-Sail builds

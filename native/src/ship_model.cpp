@@ -464,6 +464,17 @@ std::vector<std::string> buildSequence(BuildTradition t) {
     return {};
 }
 
+bool keepOutsideCircle(double& px, double& pz, double cx, double cz, double radius) {
+    const double dx = px - cx, dz = pz - cz;
+    const double d = std::sqrt(dx * dx + dz * dz);
+    if (d >= radius) return false;      // already clear
+    if (d < 1e-9) { pz = cz + radius; return true; } // at the centre: push along +z
+    const double s = radius / d;
+    px = cx + dx * s;
+    pz = cz + dz * s;
+    return true;
+}
+
 ApparentWind apparentWind(double windDir, double trueWindSpeed,
                           double heading, double boatSpeed) {
     // Air velocity relative to the boat = true-wind velocity - boat velocity.
@@ -728,6 +739,26 @@ std::vector<TestResult> runSelfTest() {
         const std::vector<int> ord = buildOrder(base, BuildTradition::English);
         const bool ends = base.pieces[ord.front()].type == "keel" && base.pieces[ord.back()].type == "deck";
         push("Keel is laid first and the deck fitted last", ends);
+    }
+
+    // --- Island collision ---
+    {
+        // A point inside the island circle is pushed out to the shore.
+        double px = 5.0, pz = 122.0;
+        const bool hit = keepOutsideCircle(px, pz, 0.0, 120.0, 56.0);
+        const double d = std::sqrt(px * px + (pz - 120.0) * (pz - 120.0));
+        push("Collision runs the hull aground at the shore", hit && std::fabs(d - 56.0) < 1e-6);
+
+        // Open water passes untouched.
+        double ox = 0.0, oz = 0.0;
+        const bool clear = keepOutsideCircle(ox, oz, 0.0, 120.0, 56.0);
+        push("Open water passes the collision check", !clear && ox == 0.0 && oz == 0.0);
+
+        // Dead centre still resolves to the boundary (no divide-by-zero).
+        double cx = 0.0, cz = 120.0;
+        const bool cHit = keepOutsideCircle(cx, cz, 0.0, 120.0, 56.0);
+        const double cd = std::sqrt(cx * cx + (cz - 120.0) * (cz - 120.0));
+        push("Collision at the exact centre still resolves", cHit && std::fabs(cd - 56.0) < 1e-6);
     }
 
     return r;

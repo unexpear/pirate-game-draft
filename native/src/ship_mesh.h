@@ -27,4 +27,9 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
 void renderBox(uint16_t viewId, float x, float y, float z, float size,
                float r, float g, float b);
 
+// Draw a lit box with independent x/y/z dimensions at world (x,y,z) — the
+// building block for scenery (land, docks, warehouses, shipyard).
+void renderBoxSized(uint16_t viewId, float x, float y, float z,
+                    float sx, float sy, float sz, float r, float g, float b);
+
 } // namespace ship_mesh

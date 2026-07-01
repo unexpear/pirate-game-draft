@@ -36,4 +36,8 @@ void renderShip(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& po
 void renderTracer(uint16_t viewId, float x, float y, float z, float size,
                   float r = 1.0f, float g = 0.62f, float b = 0.16f);
 
+// Draw the island (land + port + large shipyard) with its centre at scene
+// offset (relX,relZ) relative to our ship at the origin.
+void renderIsland(uint16_t viewId, float relX, float relZ);
+
 } // namespace ship_view

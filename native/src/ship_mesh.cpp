@@ -172,12 +172,12 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
     }
 }
 
-void renderBox(uint16_t viewId, float x, float y, float z, float size,
-               float r, float g, float b) {
+void renderBoxSized(uint16_t viewId, float x, float y, float z,
+                    float sx, float sy, float sz, float r, float g, float b) {
     const float lightV[4] = { 0.4f, 0.85f, 0.35f, 0.0f };
     bgfx::setUniform(u_lightDir, lightV);
     float m[16];
-    bx::mtxSRT(m, size, size, size, 0.0f, 0.0f, 0.0f, x, y, z);
+    bx::mtxSRT(m, sx, sy, sz, 0.0f, 0.0f, 0.0f, x, y, z);
     const float col[4] = { r, g, b, 1.0f };
     bgfx::setUniform(u_color, col);
     bgfx::setTransform(m);
@@ -186,6 +186,11 @@ void renderBox(uint16_t viewId, float x, float y, float z, float size,
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z
                    | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW | BGFX_STATE_MSAA);
     bgfx::submit(viewId, s_prog);
+}
+
+void renderBox(uint16_t viewId, float x, float y, float z, float size,
+               float r, float g, float b) {
+    renderBoxSized(viewId, x, y, z, size, size, size, r, g, b);
 }
 
 } // namespace ship_mesh

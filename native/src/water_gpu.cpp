@@ -15,8 +15,8 @@ namespace {
 
 struct PosVertex { float x, y, z; };
 
-constexpr int kCells = 120;       // grid resolution (GPU can afford dense)
-constexpr float kExtent = 120.0f; // world size of the surface
+constexpr int kCells = 200;       // grid resolution (GPU can afford dense)
+constexpr float kExtent = 340.0f; // world size of the surface (reaches out to landfall)
 
 bgfx::VertexLayout s_layout;
 bgfx::VertexBufferHandle s_vbh = BGFX_INVALID_HANDLE;
