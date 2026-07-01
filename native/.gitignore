@@ -1,0 +1,15 @@
+# Build output
+build*/
+out/
+.vs/
+*.exe
+*.obj
+*.o
+*.pdb
+*.ilk
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake

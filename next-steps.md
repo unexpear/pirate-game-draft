@@ -4,13 +4,16 @@ The Three.js browser spike at [spikes/threejs-sea-trial/](spikes/threejs-sea-tri
 
 ## Immediate
 
-- [ ] Hit Milestone 0 per [native-bootstrap-plan.md](native-bootstrap-plan.md):
-  - SDL3 native window opens
-  - bgfx clears the screen
-  - Dear ImGui debug panel renders
-  - 11 native self-tests pass
-  - App builds from a clean checkout and exits cleanly
-  - No ship rendering, no water rendering, no Jolt, no Steamworks
+Milestone 0 is underway in [native/](native/):
+
+- [x] 11 native self-tests pass — pure C++17, no deps; verified on g++ (MSYS2 UCRT64) and MSVC 2022
+- [x] Builds from a clean checkout, exits cleanly, `ctest`-wired
+- [ ] SDL3 native window opens
+- [ ] bgfx clears the screen
+- [ ] Dear ImGui debug panel renders
+- [ ] (still no ship/water rendering, no Jolt, no Steamworks — per [native-bootstrap-plan.md](native-bootstrap-plan.md))
+
+- [ ] Resolve the vendoring mechanic (in-tree source copy vs pinned submodules) before pulling SDL3/bgfx/ImGui in
 - [ ] After Milestone 0: add ship rendering, Gerstner water mesh, Jolt, then resume the full Build → Sail loop per [vertical-slice.md](vertical-slice.md)
 
 ## Done
