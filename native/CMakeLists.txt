@@ -48,10 +48,8 @@ set(BGFX_BUILD_TOOLS ON CACHE BOOL "" FORCE)
 set(BGFX_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory(extern/bgfx.cmake EXCLUDE_FROM_ALL)
 
-# Dear ImGui (stock v1.92.8 submodule) + a self-contained bgfx renderer.
-# 3D ship rendered via bgfx's debugdraw (precompiled lit shaders — no shaderc
-# pipeline needed yet). debugdraw.cpp only *includes* bgfx_utils.h/packrect.h
-# (no calls), so we compile it directly with the right include dirs.
+# The app: SDL3 + bgfx + Dear ImGui (self-contained bgfx renderer). Water and
+# ship both render through the bgfx shader pipeline (shaders/ below).
 set(BGFX_SRC ${CMAKE_CURRENT_SOURCE_DIR}/extern/bgfx.cmake/bgfx)
 set(BGFX_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/extern/bgfx.cmake)
 add_executable(sea_trial
@@ -59,8 +57,8 @@ add_executable(sea_trial
     src/ship_model.cpp
     src/ship_view.cpp
     src/water_gpu.cpp
+    src/ship_mesh.cpp
     src/imgui/imgui_bgfx.cpp
-    ${BGFX_SRC}/examples/common/debugdraw/debugdraw.cpp
     extern/imgui/imgui.cpp
     extern/imgui/imgui_draw.cpp
     extern/imgui/imgui_tables.cpp
@@ -70,35 +68,33 @@ target_include_directories(sea_trial PRIVATE
     src
     src/imgui
     extern/imgui
-    ${BGFX_SRC}/examples/common   # debugdraw/debugdraw.h, bgfx_utils.h, packrect.h
-    ${BGFX_SRC}/3rdparty          # tinystl (pulled by bgfx_utils.h)
-    ${BGFX_ROOT}/bimg/include     # bimg (pulled by bgfx_utils.h)
 )
 target_link_libraries(sea_trial PRIVATE SDL3::SDL3-static bgfx bx)
 
-# Compile the water shaders (D3D11 / dxbc profile) into headers via shaderc.
-# The app forces the D3D11 renderer so this single profile is enough.
+# Compile shaders (D3D11 / dxbc profile) into headers via shaderc. The app
+# forces the D3D11 renderer so this single profile is enough.
 include(${BGFX_ROOT}/cmake/bgfxToolUtils.cmake)
 set(SHADER_OUT ${CMAKE_CURRENT_BINARY_DIR}/shaders)
-bgfx_compile_shaders(
-    TYPE VERTEX
-    SHADERS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/vs_water.sc
-    VARYING_DEF ${CMAKE_CURRENT_SOURCE_DIR}/shaders/varying.def.sc
-    OUTPUT_DIR ${SHADER_OUT}
-    OUT_FILES_VAR WATER_VS_OUT
-    INCLUDE_DIRS ${BGFX_SRC}/src
-    PROFILES s_5_0
-    AS_HEADERS
-)
-bgfx_compile_shaders(
-    TYPE FRAGMENT
-    SHADERS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/fs_water.sc
-    VARYING_DEF ${CMAKE_CURRENT_SOURCE_DIR}/shaders/varying.def.sc
-    OUTPUT_DIR ${SHADER_OUT}
-    OUT_FILES_VAR WATER_FS_OUT
-    INCLUDE_DIRS ${BGFX_SRC}/src
-    PROFILES s_5_0
-    AS_HEADERS
-)
-target_sources(sea_trial PRIVATE ${WATER_VS_OUT} ${WATER_FS_OUT})
+set(SHADER_SRC ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
+set(VARYING ${SHADER_SRC}/varying.def.sc)
+
+function(sea_trial_shader type file outvar)
+    bgfx_compile_shaders(
+        TYPE ${type}
+        SHADERS ${SHADER_SRC}/${file}
+        VARYING_DEF ${VARYING}
+        OUTPUT_DIR ${SHADER_OUT}
+        OUT_FILES_VAR ${outvar}
+        INCLUDE_DIRS ${BGFX_SRC}/src
+        PROFILES s_5_0
+        AS_HEADERS
+    )
+    set(${outvar} ${${outvar}} PARENT_SCOPE)
+endfunction()
+
+sea_trial_shader(VERTEX   vs_water.sc WATER_VS_OUT)
+sea_trial_shader(FRAGMENT fs_water.sc WATER_FS_OUT)
+sea_trial_shader(VERTEX   vs_mesh.sc  MESH_VS_OUT)
+sea_trial_shader(FRAGMENT fs_mesh.sc  MESH_FS_OUT)
+target_sources(sea_trial PRIVATE ${WATER_VS_OUT} ${WATER_FS_OUT} ${MESH_VS_OUT} ${MESH_FS_OUT})
 target_include_directories(sea_trial PRIVATE ${SHADER_OUT})
