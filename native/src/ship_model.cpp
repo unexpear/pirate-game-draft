@@ -405,6 +405,65 @@ double sailPower(double windAngleOffBowDeg) {
     return tbl[n - 1].p;
 }
 
+const char* traditionName(BuildTradition t) {
+    switch (t) {
+        case BuildTradition::Roman:  return "Roman (shell-first, carvel M&T)";
+        case BuildTradition::Viking: return "Viking (shell-first, clinker rivets)";
+        case BuildTradition::English: return "English Age-of-Sail (frame-first carvel)";
+    }
+    return "?";
+}
+
+bool isFrameFirst(BuildTradition t) { return t == BuildTradition::English; }
+
+std::vector<int> buildOrder(const Ship& ship, BuildTradition t) {
+    const bool frameFirst = isFrameFirst(t);
+    auto stage = [&](const std::string& type) -> int {
+        if (type == "keel") return 0;             // backbone always first
+        if (type == "deck") return 3;             // deck always last
+        const bool frame = (type == "rib");
+        // shell-first: planks(1) then frames(2). frame-first: frames(1) then planks(2).
+        if (frameFirst) return frame ? 1 : 2;
+        return frame ? 2 : 1;
+    };
+    std::vector<int> idx(ship.pieces.size());
+    for (int i = 0; i < static_cast<int>(ship.pieces.size()); ++i) idx[i] = i;
+    std::stable_sort(idx.begin(), idx.end(), [&](int a, int b) {
+        return stage(ship.pieces[a].type) < stage(ship.pieces[b].type);
+    });
+    return idx;
+}
+
+std::vector<std::string> buildSequence(BuildTradition t) {
+    switch (t) {
+        case BuildTradition::Roman: return {
+            "Lay the keel, then the stem & sternpost",
+            "Fasten the garboard strake to the keel",
+            "Build strakes up from the keel, flush (carvel)",
+            "Lock every seam with pegged mortise-and-tenon",
+            "Shell now rigid - drop in the frames",
+            "Fit the deck beams and mast step",
+        };
+        case BuildTradition::Viking: return {
+            "Lay the T-keel, scarf on stem & sternpost",
+            "Rivet the garboard strake to the keel",
+            "Rivet each strake overlapping the last (clinker)",
+            "Clench every rivet over an iron rove",
+            "Lash the ribs to cleats on the finished shell",
+            "Add crossbeams and the kerling mast-step",
+        };
+        case BuildTradition::English: return {
+            "Scarph & bolt the elm keel; rabbet its sides",
+            "Stem scarphed on; oak sternpost tenoned in",
+            "Bolt the floors, run ribbands, infill the frames",
+            "Raise futtocks & top timbers - skeleton done",
+            "Plank flush on the frames from the wales down (treenails)",
+            "Keelson, deck beams, knees; oakum the seams",
+        };
+    }
+    return {};
+}
+
 ApparentWind apparentWind(double windDir, double trueWindSpeed,
                           double heading, double boatSpeed) {
     // Air velocity relative to the boat = true-wind velocity - boat velocity.
@@ -642,6 +701,33 @@ std::vector<TestResult> runSelfTest() {
         const bool fwd = offBow(aw.dir) < offBow(twd) && aw.speed > tws;
         push("Apparent wind shifts forward and strengthens", fwd,
              num(offBow(aw.dir) * 57.3) + " vs " + num(offBow(twd) * 57.3) + " deg off bow");
+    }
+
+    // --- Build order (shell-first vs frame-first) ---
+    {
+        // Rank of each piece within a tradition's build order.
+        auto ranks = [&](BuildTradition t) {
+            const std::vector<int> ord = buildOrder(base, t);
+            std::vector<int> rank(base.pieces.size(), 0);
+            for (int i = 0; i < static_cast<int>(ord.size()); ++i) rank[ord[i]] = i;
+            return rank;
+        };
+        auto planksBeforeFrames = [&](BuildTradition t) {
+            const std::vector<int> rank = ranks(t);
+            int maxPlank = -1, minRib = 1 << 30;
+            for (int i = 0; i < static_cast<int>(base.pieces.size()); ++i) {
+                if (base.pieces[i].type == "plank") maxPlank = std::max(maxPlank, rank[i]);
+                if (base.pieces[i].type == "rib") minRib = std::min(minRib, rank[i]);
+            }
+            return maxPlank < minRib;
+        };
+        push("Shell-first (Viking) lays planks before frames", planksBeforeFrames(BuildTradition::Viking));
+        push("Shell-first (Roman) lays planks before frames", planksBeforeFrames(BuildTradition::Roman));
+        push("Frame-first (English) raises frames before planks", !planksBeforeFrames(BuildTradition::English));
+
+        const std::vector<int> ord = buildOrder(base, BuildTradition::English);
+        const bool ends = base.pieces[ord.front()].type == "keel" && base.pieces[ord.back()].type == "deck";
+        push("Keel is laid first and the deck fitted last", ends);
     }
 
     return r;

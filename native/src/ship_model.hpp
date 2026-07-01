@@ -169,6 +169,20 @@ struct ApparentWind { double dir = 0.0, speed = 0.0; };
 ApparentWind apparentWind(double windDir, double trueWindSpeed,
                           double heading, double boatSpeed);
 
+// --- Build mode: how a hull goes together, per historical tradition --------
+// See references/shipbuilding-history.md. Roman & Viking build SHELL-FIRST
+// (planking shell before internal frames); English Age-of-Sail builds
+// FRAME-FIRST (raise the skeleton, then plank it).
+enum class BuildTradition { Roman, Viking, English };
+const char* traditionName(BuildTradition t);
+bool isFrameFirst(BuildTradition t);
+// The ship's piece indices in the order they'd be placed on the stocks for `t`:
+// keel first; shell-first => planks before ribs; frame-first => ribs before
+// planks; deck last. Reveal them in order to watch the hull assemble.
+std::vector<int> buildOrder(const Ship& ship, BuildTradition t);
+// Ordered, human-readable build steps for `t` (with per-tradition joinery flavor).
+std::vector<std::string> buildSequence(BuildTradition t);
+
 std::vector<TestResult> runSelfTest();
 
 } // namespace sea

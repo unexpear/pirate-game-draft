@@ -198,6 +198,11 @@ int main(int argc, char** argv) {
     float boardTimer = 0.0f;
     bool wantBoard = false;
 
+    // Build mode: freeze and assemble the hull plank-by-plank in a tradition's order.
+    bool buildMode = false;
+    int buildTrad = 2;  // 0 Roman, 1 Viking, 2 English (Age of Sail)
+    int placed = 0;     // pieces revealed so far
+
     auto clampf = [](float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); };
     auto isHull = [](const sea::Piece& p) { return p.type == "plank" || p.type == "rib" || p.type == "keel"; };
     auto damagePlank = [&]() {
@@ -319,6 +324,7 @@ int main(int argc, char** argv) {
         const float speedFrac = clampf(speed / kTravelSpeed, 0.0f, 1.0f);
         const float turnRate = 1.35f * (1.0f - 0.62f * speedFrac);    // tight when slow, wide when fast
         heading += steer * turnRate * dt;
+        if (buildMode) speed = 0.0f; // frozen on the stocks while building
         worldX += std::sin(heading) * speed * dt;
         worldZ += std::cos(heading) * speed * dt;
 
@@ -336,7 +342,7 @@ int main(int argc, char** argv) {
         const bool enemyGone = enemySink > 22.0f;
         enemyReload = clampf(enemyReload - dt, 0.0f, 10.0f);
         sea::FloatPose enemyPose;
-        if (!enemyGone && !enemyStruck) {
+        if (!enemyGone && !enemyStruck && !buildMode) {
             // Fighting: maneuver for a broadside and fire.
             const bool eReady = enemyReload <= 0.0f;
             const sea::AiOrders ord = sea::aiCaptain(enemyWorldX, enemyWorldZ, enemyHeading,
@@ -367,7 +373,7 @@ int main(int argc, char** argv) {
 
         // Our broadside (Space) fires from whichever side faces the enemy.
         reload = clampf(reload - dt, 0.0f, 10.0f);
-        if (wantFire && reload <= 0.0f) {
+        if (wantFire && reload <= 0.0f && !buildMode) {
             const float dxE = enemyWorldX - worldX, dzE = enemyWorldZ - worldZ;
             const float starboardComp = dxE * std::cos(heading) - dzE * std::sin(heading);
             const int side = starboardComp >= 0.0f ? 1 : -1;
@@ -382,7 +388,7 @@ int main(int argc, char** argv) {
         sea::stepProjectiles(enemyShots, dt);
         if (!enemyGone && !enemyStruck) // a struck ship has surrendered — no more damage
             sea::resolveHits(shots, enemy, enemyWorldX, enemyPose.heaveY, enemyWorldZ, enemyHeading);
-        sea::resolveHits(enemyShots, ship, worldX, pose.heaveY, worldZ, heading);
+        if (!buildMode) sea::resolveHits(enemyShots, ship, worldX, pose.heaveY, worldZ, heading);
         auto dead = [](const sea::Projectile& p) { return !p.alive; };
         shots.erase(std::remove_if(shots.begin(), shots.end(), dead), shots.end());
         enemyShots.erase(std::remove_if(enemyShots.begin(), enemyShots.end(), dead), enemyShots.end());
@@ -399,6 +405,13 @@ int main(int argc, char** argv) {
         wantBoard = false;
         if (boarding) { boardTimer -= dt; if (boardTimer <= 0.0f) { boarding = false; captured = true; } }
         const bool weSank = sinkDepth > 22.0f;
+
+        // Build mode: the ship's pieces in this tradition's construction order.
+        std::vector<int> border;
+        if (buildMode) {
+            border = sea::buildOrder(ship, sea::BuildTradition(buildTrad));
+            placed = std::max(0, std::min(placed, int(border.size())));
+        }
 
         imgui_bgfx::beginFrame(width, height, dt, mouseX, mouseY, mouseButtons, wheel);
 
@@ -423,6 +436,30 @@ int main(int argc, char** argv) {
             if (ImGui::Button("Reset")) resetShip();
             ImGui::TextDisabled("Keys: W raise sail (hold at full = travel), S lower, A/D steer");
             ImGui::TextDisabled("      Space fire, B board  ·  C/V cargo, X damage, Z repair, R reset");
+        }
+        if (ImGui::CollapsingHeader("Build mode", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Checkbox("Guided assembly (freeze & build)", &buildMode);
+            const char* trads[] = { "Roman", "Viking", "English (Age of Sail)" };
+            ImGui::Combo("Tradition", &buildTrad, trads, 3);
+            ImGui::TextDisabled("%s", sea::traditionName(sea::BuildTradition(buildTrad)));
+            if (buildMode) {
+                const int total = int(border.size());
+                ImGui::Text("Placed: %d / %d pieces", placed, total);
+                if (ImGui::Button("Lay next")) placed = std::min(placed + 1, total);
+                ImGui::SameLine(); if (ImGui::Button("Strike last")) placed = std::max(placed - 1, 0);
+                ImGui::SameLine(); if (ImGui::Button("Build all")) placed = total;
+                ImGui::SameLine(); if (ImGui::Button("Clear")) placed = 0;
+                ImGui::SliderInt("Reveal", &placed, 0, total);
+                const std::vector<std::string> seq = sea::buildSequence(sea::BuildTradition(buildTrad));
+                const int step = total > 0
+                    ? std::min(int(seq.size()) - 1, placed * int(seq.size()) / total) : 0;
+                ImGui::Separator();
+                for (int i = 0; i < int(seq.size()); ++i)
+                    ImGui::TextColored(i == step ? kGreen : ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+                                       "%d. %s", i + 1, seq[i].c_str());
+            } else {
+                ImGui::TextDisabled("Enable to watch a hull assemble plank by plank.");
+            }
         }
         if (ImGui::CollapsingHeader("Sailing", ImGuiTreeNodeFlags_DefaultOpen)) {
             const char* tierName = effTier == 0 ? "anchored"
@@ -472,8 +509,8 @@ int main(int argc, char** argv) {
         ImGui::TextDisabled("Orbit camera - Esc to quit");
         ImGui::End();
 
-        // Wind vane HUD (true + apparent wind, no-go zone, telltales).
-        {
+        // Wind vane HUD (hidden while building on the stocks).
+        if (!buildMode) {
             auto norm = [](float a) {
                 while (a > 3.14159265f) a -= 6.28318531f;
                 while (a <= -3.14159265f) a += 6.28318531f;
@@ -487,16 +524,28 @@ int main(int argc, char** argv) {
                          kTrueWind, sea::pointOfSail(awaDeg), windFactor < 0.08f, timeSec);
         }
 
-        // 3D scene (water + ship) on the clear view, ImGui overlay on top.
-        ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height);
-        if (!enemyGone)
-            ship_view::renderShip(kClearView, enemy, enemyPose, enemyHeading, windDir,
-                                  enemyStruck ? 0.0f : 0.75f, timeSec, // furled sails once she strikes
-                                  enemyWorldX - worldX, enemyWorldZ - worldZ);
-        for (const auto& p : shots)
-            ship_view::renderTracer(kClearView, float(p.x) - worldX, float(p.y), float(p.z) - worldZ, 0.35f);
-        for (const auto& p : enemyShots)
-            ship_view::renderTracer(kClearView, float(p.x) - worldX, float(p.y), float(p.z) - worldZ, 0.35f, 1.0f, 0.25f, 0.2f);
+        // 3D scene. In build mode: only the pieces placed so far, on calm water,
+        // in this tradition's construction order (sailing & combat frozen).
+        if (buildMode) {
+            sea::Ship shown = ship;
+            shown.pieces.clear();
+            for (int i = 0; i < placed && i < int(border.size()); ++i)
+                shown.pieces.push_back(ship.pieces[border[i]]);
+            const bool complete = placed >= int(border.size());
+            if (!complete) { shown.systems.mast_count = 0; shown.systems.sail_count = 0; }
+            sea::FloatPose bp; bp.heaveY = 0.6; // calm, sitting on the stocks
+            ship_view::render(kClearView, shown, waves, bp, timeSec, 0.0f, worldX, worldZ, windDir, 0.0f, width, height);
+        } else {
+            ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height);
+            if (!enemyGone)
+                ship_view::renderShip(kClearView, enemy, enemyPose, enemyHeading, windDir,
+                                      enemyStruck ? 0.0f : 0.75f, timeSec, // furled sails once she strikes
+                                      enemyWorldX - worldX, enemyWorldZ - worldZ);
+            for (const auto& p : shots)
+                ship_view::renderTracer(kClearView, float(p.x) - worldX, float(p.y), float(p.z) - worldZ, 0.35f);
+            for (const auto& p : enemyShots)
+                ship_view::renderTracer(kClearView, float(p.x) - worldX, float(p.y), float(p.z) - worldZ, 0.35f, 1.0f, 0.25f, 0.2f);
+        }
         imgui_bgfx::endFrame(kImGuiView);
         bgfx::frame();
 
