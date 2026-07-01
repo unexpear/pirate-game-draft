@@ -226,12 +226,14 @@ int main(int argc, char** argv) {
         if (wHoldTime > 0.45f) sailTier = 3;
         const int effTier = sailTier;
 
-        // Wind is an arcade-liberty enhancement (Black Flag itself is wind-neutral):
-        // best speed running with it, least beating into it.
-        windDir += 0.06f * dt;
+        // Real points of sail: no drive in the no-go zone (you must tack upwind),
+        // fastest on a reach, slower dead downwind. Wind shifts slowly.
+        windDir += 0.02f * dt;
         if (windDir > 6.28318531f) windDir -= 6.28318531f;
-        const float align = std::cos(heading - windDir);              // +1 downwind, -1 upwind
-        const float windFactor = 0.55f + 0.45f * (align * 0.5f + 0.5f); // 1.0 .. 0.55
+        const float align = std::cos(heading - windDir);
+        const float awaRad = std::acos(clampf(-align, -1.0f, 1.0f)); // wind angle off the bow
+        const float awaDeg = awaRad * 57.2957795f;
+        const float windFactor = float(sea::sailPower(awaDeg));      // 0 in irons .. 1 on a reach
 
         const float kFullSpeed = 11.0f;
         const float kTravelSpeed = 16.5f;
@@ -355,8 +357,9 @@ int main(int argc, char** argv) {
             ImGui::Text("Sails:   %s", tierName);
             ImGui::Text("Speed:   %.1f", speed);
             ImGui::Text("Heading: %.0f deg", heading * 57.2957795f);
-            const char* pts = align > 0.5f ? "tailwind" : (align < -0.5f ? "headwind" : "crosswind");
-            ImGui::Text("Wind:    %.0f deg (%s, %.0f%% drive)", windDir * 57.2957795f, pts, windFactor * 100.0f);
+            ImGui::Text("Wind:    %.0f deg off bow  (%s)", awaDeg, sea::pointOfSail(awaDeg));
+            ImGui::TextColored(windFactor < 0.08f ? kRed : kGreen, "Drive:   %.0f%%%s",
+                               windFactor * 100.0f, windFactor < 0.08f ? "   in irons - bear away!" : "");
         }
         if (ImGui::CollapsingHeader("Gunnery & boarding", ImGuiTreeNodeFlags_DefaultOpen)) {
             const char* est = captured ? "captured" : (enemyGone ? "sunk"
@@ -399,7 +402,7 @@ int main(int argc, char** argv) {
         ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height);
         if (!enemyGone)
             ship_view::renderShip(kClearView, enemy, enemyPose, enemyHeading, windDir,
-                                  enemyStruck ? 0.0f : 0.75f, // furled sails once she strikes
+                                  enemyStruck ? 0.0f : 0.75f, timeSec, // furled sails once she strikes
                                   enemyWorldX - worldX, enemyWorldZ - worldZ);
         for (const auto& p : shots)
             ship_view::renderTracer(kClearView, float(p.x) - worldX, float(p.y), float(p.z) - worldZ, 0.35f);

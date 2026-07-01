@@ -15,11 +15,12 @@ void init();
 void shutdown();
 
 // Draw the ship on `viewId` (camera already set), riding at `pose`, yawed to
-// `heading` (radians). The sail trims toward `windDir` (radians) and is reefed to
-// `sailFullness` (0 = furled to the yard .. 1 = full canvas). `posX`/`posZ` place
-// the hull in the scene (0,0 = our ship at the scrolling-ocean origin).
+// `heading` (radians). The sail trims to the wind (`windDir`), luffs in irons
+// (animated by `timeSec`), and reefs with `sailFullness` (0 = furled .. 1 = full
+// canvas); the hull heels to leeward under sail. `posX`/`posZ` place the hull in
+// the scene (0,0 = our ship at the scrolling-ocean origin).
 void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
-            float heading, float windDir, float sailFullness,
+            float heading, float windDir, float sailFullness, float timeSec,
             float posX = 0.0f, float posZ = 0.0f);
 
 // Draw a single lit unit-cube marker (e.g. a cannonball tracer) at world (x,y,z).

@@ -148,6 +148,17 @@ void damageHull(Ship& ship, double amount);
 AiOrders aiCaptain(double ex, double ez, double eHeading,
                    double ox, double oz, double engageRange, bool reloadReady);
 
+// --- Real sailing: points of sail -----------------------------------------
+// Boat-speed fraction (0..1) for `windAngleOffBowDeg`, the angle of the wind
+// SOURCE off the bow (0 = dead into the wind, 180 = dead astern). Models real
+// points of sail: a no-go zone (~<43 deg) where the sails luff and there is no
+// drive (you must tack), fastest on a reach (~90-110 deg), and slower dead
+// downwind than on a reach.
+double sailPower(double windAngleOffBowDeg);
+// Short point-of-sail name for the same angle ("in irons", "close-hauled",
+// "close reach", "beam reach", "broad reach", "running").
+const char* pointOfSail(double windAngleOffBowDeg);
+
 std::vector<TestResult> runSelfTest();
 
 } // namespace sea

@@ -6,6 +6,9 @@
 #include <bgfx/bgfx.h>
 #include <bx/math.h>
 
+#include <algorithm>
+#include <cmath>
+
 #include "dxbc/vs_mesh.sc.bin.h" // vs_mesh_dxbc[]
 #include "dxbc/fs_mesh.sc.bin.h" // fs_mesh_dxbc[]
 
@@ -83,13 +86,21 @@ void shutdown() {
 }
 
 void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
-            float heading, float windDir, float sailFullness,
+            float heading, float windDir, float sailFullness, float timeSec,
             float posX, float posZ) {
-    // Ship root: yaw (heading) + heave + pitch + heel + world position, above each
-    // piece's local transform.
+    // Real sailing visuals: the wind angle off the bow drives sail trim, luffing,
+    // and how far the hull heels to leeward under sail pressure.
+    const float align = std::cos(heading - windDir);
+    const float awa = std::acos(std::max(-1.0f, std::min(1.0f, -align))); // 0=in irons .. pi=astern
+    const float lee = (std::sin(windDir - heading) >= 0.0f) ? 1.0f : -1.0f; // leeward side
+    const float power = float(sea::sailPower(double(awa) * 57.2957795));
+    const float windHeel = lee * 0.34f * power * std::sin(awa) * sailFullness; // lean to leeward
+
+    // Ship root: yaw (heading) + heave + pitch + (wave heel + wind heel) + world
+    // position, above each piece's local transform.
     float shipRoot[16];
     bx::mtxSRT(shipRoot, 1.0f, 1.0f, 1.0f,
-        float(pose.pitch), heading, float(pose.heel),
+        float(pose.pitch), heading, float(pose.heel) + windHeel,
         posX, float(pose.heaveY), posZ);
 
     const float lightV[4] = { 0.4f, 0.85f, 0.35f, 0.0f };
@@ -138,15 +149,14 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
     }
 
     if (ship.systems.sail_count > 0 && sailFullness > 0.02f) {
-        // The sail yaws partway toward the wind (trim) and reefs with the sail
-        // state, furling up toward the yard as sailFullness -> 0.
-        float rel = windDir - heading;
-        while (rel > 3.14159265f) rel -= 6.28318531f;
-        while (rel < -3.14159265f) rel += 6.28318531f;
-        const float trim = rel * 0.4f;
+        // Trim: the sail sets from athwartships (running) toward fore-and-aft
+        // (close-hauled). In the no-go zone it luffs — shivers and goes slack.
+        const bool luffing = awa < 0.75f || power < 0.08f; // ~43 deg no-go
+        const float flap = luffing ? std::sin(timeSec * 20.0f) * 0.30f : 0.0f;
+        const float trim = lee * (1.57079633f - awa * 0.5f) + flap;
         const float fullH = depth * 0.75f + 2.6f;
         const float yardTop = depth * 0.5f + 2.5f + fullH * 0.5f; // top edge sits on the yard
-        const float h = fullH * sailFullness;
+        const float h = fullH * sailFullness * (luffing ? 0.82f : 1.0f); // slack when luffing
         float local[16];
         bx::mtxSRT(local, wid * 1.35f, h, 0.06f, 0.0f, trim, 0.0f,
                    0.0f, yardTop - h * 0.5f, -len * 0.05f);

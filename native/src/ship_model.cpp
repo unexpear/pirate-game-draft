@@ -384,6 +384,37 @@ AiOrders aiCaptain(double ex, double ez, double eHeading,
     return o;
 }
 
+double sailPower(double windAngleOffBowDeg) {
+    double a = clampd(std::fabs(windAngleOffBowDeg), 0.0, 180.0);
+    // Polar of boat-speed fraction vs wind angle off the bow. No-go zone near the
+    // wind, peak on a reach (~110 deg), tapering to a slower dead run.
+    struct Pt { double a, p; };
+    static const Pt tbl[] = {
+        { 0, 0.00 }, { 30, 0.00 }, { 43, 0.06 }, { 50, 0.42 }, { 60, 0.66 },
+        { 75, 0.85 }, { 90, 0.95 }, { 110, 1.00 }, { 130, 0.94 },
+        { 150, 0.80 }, { 170, 0.66 }, { 180, 0.62 },
+    };
+    const int n = int(sizeof(tbl) / sizeof(tbl[0]));
+    if (a <= tbl[0].a) return tbl[0].p;
+    for (int i = 1; i < n; ++i) {
+        if (a <= tbl[i].a) {
+            const double f = (a - tbl[i - 1].a) / (tbl[i].a - tbl[i - 1].a);
+            return lerp(tbl[i - 1].p, tbl[i].p, f);
+        }
+    }
+    return tbl[n - 1].p;
+}
+
+const char* pointOfSail(double windAngleOffBowDeg) {
+    const double a = std::fabs(windAngleOffBowDeg);
+    if (a < 43.0) return "in irons";
+    if (a < 60.0) return "close-hauled";
+    if (a < 80.0) return "close reach";
+    if (a < 100.0) return "beam reach";
+    if (a < 150.0) return "broad reach";
+    return "running";
+}
+
 std::string serialize(const Ship& s) {
     std::string o;
     o += "schema_version " + std::to_string(s.schema_version) + "\n";
@@ -574,6 +605,21 @@ std::vector<TestResult> runSelfTest() {
         // Abeam and in range but reloading: hold fire.
         AiOrders busy = aiCaptain(0, 0, 0, 25, 0, eng, false);
         push("AI holds fire while reloading", busy.fireSide == 0);
+    }
+
+    // --- Points of sail ---
+    {
+        push("No drive in the no-go zone (can't sail into the wind)",
+             sailPower(0) == 0.0 && sailPower(30) < 0.05,
+             num(sailPower(30) * 100) + "% at 30 deg");
+        push("A reach is faster than a dead run", sailPower(95) > sailPower(180),
+             num(sailPower(95) * 100) + "% vs " + num(sailPower(180) * 100) + "%");
+        push("A reach is faster than close-hauled", sailPower(95) > sailPower(50),
+             num(sailPower(95) * 100) + "% vs " + num(sailPower(50) * 100) + "%");
+        const bool labels = std::string(pointOfSail(20)) == "in irons"
+                         && std::string(pointOfSail(90)) == "beam reach"
+                         && std::string(pointOfSail(175)) == "running";
+        push("Point-of-sail labels name the angle", labels);
     }
 
     return r;
