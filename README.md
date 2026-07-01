@@ -23,3 +23,4 @@ Working draft for a single Steam app with two modes inside: **Sail** (open-world
 - [next-steps.md](next-steps.md) — immediate actions
 - [decisions.md](decisions.md) — log of decisions made
 - [holes.md](holes.md) — open questions master list
+- [references/black-flag.md](references/black-flag.md) — design reference: how Black Flag's naval worked, what players liked/disliked, and the Skull and Bones "sailing-only" cautionary tale
