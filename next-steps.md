@@ -23,7 +23,7 @@ The Three.js browser spike at [spikes/threejs-sea-trial/](spikes/threejs-sea-tri
 ## Next (post-water)
 
 - [x] Ship on lit meshes — each hull piece is a lit box (per-face N·L + ambient) on the shader pipeline; debugdraw removed entirely (water + ship are both GPU now). `src/ship_mesh.*`, `shaders/{vs,fs}_mesh.sc`.
-- [ ] Interactive cargo/damage — wire the panel controls into the live ship; watch it ride lower and founder (the spike's best demo, now native).
+- [x] Interactive cargo/damage — the ship is live: a cargo slider + Damage/Repair/Reset buttons + keys (C/V/X/Z/R) feed straight into buoyancy. Overloading or breaking planks drops the float margin, the ship rides lower, then **founders and sinks beneath the waves** (progressive sink accumulation); lighten it or repair in time and it recovers. Panel shows live status (afloat / SINKING), cargo, damage, float margin.
 - [ ] Mouse camera control (drag-orbit / scroll-zoom) instead of the auto-orbit.
 - [ ] The full Build → Sail loop per [vertical-slice.md](vertical-slice.md); Jolt + Steamworks after.
 

@@ -18,6 +18,7 @@
 
 #include "ship_model.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -83,8 +84,7 @@ int main(int argc, char** argv) {
     const int total = (int)results.size();
     sea::ShipConfig cfg;
     cfg.name = "Test Sloop";
-    const sea::Ship ship = sea::makeShipFromConfig(cfg);
-    const sea::Stats stats = sea::getShipStats(ship);
+    sea::Ship ship = sea::makeShipFromConfig(cfg); // mutable: cargo/damage are live
     const std::vector<sea::Wave> waves = sea::makeWaveField("sea-trial-native");
 
     ship_view::init();
@@ -101,6 +101,21 @@ int main(int argc, char** argv) {
     float wheel = 0.0f;
     uint64_t last = SDL_GetTicks();
     float timeSec = 0.0f;
+    float sinkDepth = 0.0f;
+
+    auto clampf = [](float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); };
+    auto isHull = [](const sea::Piece& p) { return p.type == "plank" || p.type == "rib" || p.type == "keel"; };
+    auto damagePlank = [&]() {
+        int n = 0;
+        for (const auto& p : ship.pieces) if (isHull(p) && p.damage < 1.0) ++n;
+        if (n == 0) return;
+        const int target = int(std::fabs(std::sin(timeSec * 17.13 + n)) * n) % n;
+        int k = 0;
+        for (auto& p : ship.pieces)
+            if (isHull(p) && p.damage < 1.0 && k++ == target) { p.damage = p.damage + 0.25 > 1.0 ? 1.0 : p.damage + 0.25; return; }
+    };
+    auto repairAll = [&]() { for (auto& p : ship.pieces) p.damage = 0.0; };
+    auto resetShip = [&]() { ship = sea::makeShipFromConfig(cfg); sinkDepth = 0.0f; };
 
     bool running = true;
     int frame = 0;
@@ -112,6 +127,16 @@ int main(int argc, char** argv) {
             case SDL_EVENT_QUIT: running = false; break;
             case SDL_EVENT_KEY_DOWN:
                 if (e.key.key == SDLK_ESCAPE) running = false;
+                else if (!ImGui::GetIO().WantCaptureKeyboard) {
+                    switch (e.key.scancode) {
+                    case SDL_SCANCODE_C: ship.systems.cargo_mass = clampf(float(ship.systems.cargo_mass) + 200.0f, 0.0f, 6000.0f); break;
+                    case SDL_SCANCODE_V: ship.systems.cargo_mass = clampf(float(ship.systems.cargo_mass) - 200.0f, 0.0f, 6000.0f); break;
+                    case SDL_SCANCODE_X: damagePlank(); break;
+                    case SDL_SCANCODE_Z: repairAll(); break;
+                    case SDL_SCANCODE_R: resetShip(); break;
+                    default: break;
+                    }
+                }
                 break;
             case SDL_EVENT_WINDOW_RESIZED:
                 width = e.window.data1;
@@ -143,7 +168,12 @@ int main(int argc, char** argv) {
         const float dt = (now - last) / 1000.0f;
         last = now;
         timeSec += dt;
-        const sea::FloatPose pose = sea::computeFloatPose(ship, waves, timeSec);
+        const sea::Stats stats = sea::getShipStats(ship);
+        sea::FloatPose pose = sea::computeFloatPose(ship, waves, timeSec);
+        // Founder: an over-margin ship sinks progressively; recovers if lightened in time.
+        if (stats.sinking) sinkDepth += dt * clampf(std::fabs(float(stats.floatMargin)) / 1200.0f, 0.3f, 3.0f);
+        else sinkDepth = clampf(sinkDepth - dt * 2.5f, 0.0f, 1000.0f);
+        pose.heaveY -= sinkDepth;
 
         imgui_bgfx::beginFrame(width, height, dt, mouseX, mouseY, mouseButtons, wheel);
 
@@ -152,9 +182,22 @@ int main(int argc, char** argv) {
         ImGui::Begin("Sea Trial - Milestone 0"); // ASCII: default ImGui font has no em-dash glyph
         ImGui::TextUnformatted("Engineless native C++ build");
         ImGui::Text("Renderer: %s", bgfx::getRendererName(bgfx::getRendererType()));
+        ImGui::TextColored(stats.sinking ? kRed : kGreen, stats.sinking ? "Status: SINKING" : "Status: afloat");
+        ImGui::Separator();
+        if (ImGui::CollapsingHeader("Controls", ImGuiTreeNodeFlags_DefaultOpen)) {
+            float cargo = float(ship.systems.cargo_mass);
+            if (ImGui::SliderFloat("Cargo (kg)", &cargo, 0.0f, 3000.0f, "%.0f"))
+                ship.systems.cargo_mass = cargo;
+            if (ImGui::Button("Damage plank")) damagePlank();
+            ImGui::SameLine();
+            if (ImGui::Button("Repair")) repairAll();
+            ImGui::SameLine();
+            if (ImGui::Button("Reset")) resetShip();
+            ImGui::TextDisabled("Keys: C/V cargo, X damage, Z repair, R reset");
+        }
         ImGui::Separator();
         ImGui::TextColored(passing == total ? kGreen : kRed, "Model self-tests: %d / %d passing", passing, total);
-        if (ImGui::CollapsingHeader("Self-tests", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("Self-tests")) {
             for (const auto& r : results)
                 ImGui::TextColored(r.pass ? kGreen : kRed, "%s  %s", r.pass ? "PASS" : "FAIL", r.name.c_str());
         }
@@ -163,6 +206,8 @@ int main(int argc, char** argv) {
             ImGui::Text("Pieces:       %d", stats.pieceCount);
             ImGui::Text("Mass:         %.0f kg", stats.mass);
             ImGui::Text("Buoyancy:     %.0f kg-eq", stats.buoyancyScore);
+            ImGui::Text("Cargo:        %.0f kg", stats.cargoMass);
+            ImGui::Text("Damage:       %.0f%%", stats.damageRatio * 100.0);
             ImGui::TextColored(stats.floatMargin > 0 ? kGreen : kRed, "Float margin: %.0f kg", stats.floatMargin);
         }
         if (ImGui::CollapsingHeader("Buoyancy (live)", ImGuiTreeNodeFlags_DefaultOpen)) {
