@@ -83,7 +83,7 @@ void shutdown() {
 }
 
 void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
-            float heading, float windDir) {
+            float heading, float windDir, float sailFullness) {
     // Ship root: yaw (heading) + heave + pitch + heel, above each piece's local
     // transform.
     float shipRoot[16];
@@ -136,15 +136,19 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
         bgfx::submit(viewId, s_prog);
     }
 
-    if (ship.systems.sail_count > 0) {
-        // The sail yaws partway toward the wind (trim).
+    if (ship.systems.sail_count > 0 && sailFullness > 0.02f) {
+        // The sail yaws partway toward the wind (trim) and reefs with the sail
+        // state, furling up toward the yard as sailFullness -> 0.
         float rel = windDir - heading;
         while (rel > 3.14159265f) rel -= 6.28318531f;
         while (rel < -3.14159265f) rel += 6.28318531f;
         const float trim = rel * 0.4f;
+        const float fullH = depth * 0.75f + 2.6f;
+        const float yardTop = depth * 0.5f + 2.5f + fullH * 0.5f; // top edge sits on the yard
+        const float h = fullH * sailFullness;
         float local[16];
-        bx::mtxSRT(local, wid * 1.35f, depth * 0.75f + 2.6f, 0.06f, 0.0f, trim, 0.0f,
-                   0.0f, depth * 0.5f + 2.5f, -len * 0.05f);
+        bx::mtxSRT(local, wid * 1.35f, h, 0.06f, 0.0f, trim, 0.0f,
+                   0.0f, yardTop - h * 0.5f, -len * 0.05f);
         float model[16];
         bx::mtxMul(model, local, shipRoot);
         const float sailCol[4] = { 0.90f, 0.87f, 0.80f, 1.0f };

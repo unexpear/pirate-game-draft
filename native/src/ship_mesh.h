@@ -15,8 +15,9 @@ void init();
 void shutdown();
 
 // Draw the ship on `viewId` (camera already set), riding at `pose`, yawed to
-// `heading` (radians). The sail trims toward `windDir` (radians).
+// `heading` (radians). The sail trims toward `windDir` (radians) and is reefed to
+// `sailFullness` (0 = furled to the yard .. 1 = full canvas).
 void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
-            float heading, float windDir);
+            float heading, float windDir, float sailFullness);
 
 } // namespace ship_mesh

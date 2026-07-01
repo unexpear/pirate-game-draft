@@ -55,6 +55,25 @@ Directly bears on our decisions (see [../decisions.md](../decisions.md), [../con
 7. **Watch the grind:** plunder→upgrade is proven, but keep targets and encounters varied so the late game doesn't flatten.
 8. **Ship "weight"/handling makes sailing feel good** — this is exactly what our weighty **buoyancy + wave** work (already built in the native prototype) is for. On-theme; keep the sailing feel physical.
 
+## Sailing controls (researched, matched in the native prototype)
+
+Triangulated across the Ubisoft e-manual/pro-tips, Orcz/Fandom wikis, PC & Xbox control tables, and player forums/reviews. Black Flag's sailing is an **arcade "gearbox," not an analog throttle**:
+
+- **Four discrete sail states**, slowest→fastest: **anchored** (no sail — drift/stealth) · **half sail** (the practical cruise + combat speed) · **full sail** (fast, wide turns) · **travel speed** (open-water overdrive above full sail).
+- **W = raise sail one step, S = lower one step** (gamepad RT/LT). Reaching **travel speed** takes a **hold** of accelerate at full sail — the tap-vs-hold split is the authentic detail. **No reverse** — S only coasts the hull to a stop; to face about you steer through an arc or stop-and-pivot.
+- **Turn radius is inversely tied to speed** — *the* convention players internalize. Half sail turns tight; full/travel turn wide; a **fully stopped ship pivots fastest** (the "stop-to-turn" combat trick). Speed *is* the handling control.
+- **Weapon is chosen by camera facing**, not a weapon key: side = broadside, front = chain shot, rear = fire barrels, up = mortar. **Space = brace** (timed damage negation). *(For later, when combat lands.)*
+- **Wind is essentially irrelevant** in the real game (a common realism gripe) — it's wind-neutral arcade handling.
+
+**How our prototype maps it** (native `main.cpp` / `ship_mesh.cpp`):
+
+- Spawns at **half sail** (the cruise baseline), not a dead stop.
+- **W** taps up anchored→half→full; **holding W at full latches TRAVEL SPEED** (a distinct top gear, ~1.5× full). **S** taps down and coasts to a stop — **no reverse**.
+- Turn rate `= 1.35·(1 − 0.62·speedFrac)` → ~77°/s pivot at a stop vs ~48°/s at travel (verified live). Stop-to-turn works.
+- The **visible sail reefs with the state** — furled to a bare mast when anchored, half-height at half sail, full canvas at full/travel — which is literally what BF's "sail states" are.
+- **Deliberate deviation:** we *keep* a wind mechanic (speed best downwind, worst upwind, with a HUD readout). Black Flag is wind-neutral, so this is an **intentional enhancement**, not fidelity — flagged so it stays a conscious choice. See [../holes.md](../holes.md).
+- Not yet mapped (deferred until there's combat/a free camera): camera-direction weapon selection, brace, spyglass, mortar, shanties.
+
 ## Sources
 
 - [Black Flag — Wikipedia (reception)](https://en.wikipedia.org/wiki/Assassin's_Creed_IV:_Black_Flag)

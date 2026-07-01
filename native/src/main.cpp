@@ -102,7 +102,9 @@ int main(int argc, char** argv) {
     uint64_t last = SDL_GetTicks();
     float timeSec = 0.0f;
     float sinkDepth = 0.0f;
-    int sailTier = 0;                 // 0 anchored, 1 half sail, 2 full sail
+    int sailTier = 1;                 // 0 anchored, 1 half sail (cruise default), 2 full sail
+    float wHoldTime = 0.0f;           // time W held at full sail -> engages travel speed
+    float sailStepCooldown = 0.0f;    // debounce between sail-state steps
     float speed = 0.0f, heading = 0.0f, worldX = 0.0f, worldZ = 0.0f;
     float windDir = 2.1f;             // wind blows toward this heading (radians); drifts
 
@@ -120,7 +122,7 @@ int main(int argc, char** argv) {
     auto repairAll = [&]() { for (auto& p : ship.pieces) p.damage = 0.0; };
     auto resetShip = [&]() {
         ship = sea::makeShipFromConfig(cfg);
-        sinkDepth = 0.0f; sailTier = 0; speed = 0.0f; heading = 0.0f; worldX = 0.0f; worldZ = 0.0f;
+        sinkDepth = 0.0f; sailTier = 1; wHoldTime = 0.0f; speed = 0.0f; heading = 0.0f; worldX = 0.0f; worldZ = 0.0f;
     };
 
     bool running = true;
@@ -140,9 +142,7 @@ int main(int argc, char** argv) {
                     case SDL_SCANCODE_X: damagePlank(); break;
                     case SDL_SCANCODE_Z: repairAll(); break;
                     case SDL_SCANCODE_R: resetShip(); break;
-                    case SDL_SCANCODE_W: sailTier = sailTier < 2 ? sailTier + 1 : 2; break;
-                    case SDL_SCANCODE_S: sailTier = sailTier > 0 ? sailTier - 1 : 0; break;
-                    default: break;
+                    default: break; // W/S/A/D sailing is polled below (hold-aware)
                     }
                 }
                 break;
@@ -177,29 +177,55 @@ int main(int argc, char** argv) {
         last = now;
         timeSec += dt;
 
-        // Sailing (Black Flag scheme): W/S step through sail tiers, A/D steer;
-        // more agile at low speed. Ship-centric — the ship stays at the origin
-        // and the ocean scrolls past via worldX/worldZ.
+        // Sailing — Black Flag's stepped "gearbox" of sail states. Tap or hold W to
+        // raise sail (anchored -> half -> full), then HOLD W at full sail to reach
+        // TRAVEL SPEED, the open-water overdrive. S lowers a notch and coasts to a
+        // stop — there is NO reverse. A/D steer; turn radius is inversely tied to
+        // speed, so a near-stop pivots sharpest while full/travel turn wide (the
+        // stop-to-turn tactic). Ship-centric: the ship holds the origin, ocean scrolls.
+        const bool* keys = SDL_GetKeyboardState(nullptr);
+        const bool kbFree = !ImGui::GetIO().WantCaptureKeyboard;
         float steer = 0.0f;
-        if (!ImGui::GetIO().WantCaptureKeyboard) {
-            const bool* keys = SDL_GetKeyboardState(nullptr);
+        if (kbFree) {
             if (keys[SDL_SCANCODE_D]) steer += 1.0f;
             if (keys[SDL_SCANCODE_A]) steer -= 1.0f;
         }
-        const float kFullSpeed = 11.0f;
-        // Wind (Black Flag): drifts slowly; you make best speed running with it
-        // (downwind) and least when beating into it (upwind).
+        // Sail-state stepping (debounced), then hold-W-at-full for travel speed.
+        const bool wHeld = kbFree && keys[SDL_SCANCODE_W];
+        const bool sHeld = kbFree && keys[SDL_SCANCODE_S];
+        sailStepCooldown = clampf(sailStepCooldown - dt, 0.0f, 1.0f);
+        if (sailStepCooldown == 0.0f) {
+            if (wHeld && sailTier < 2) { sailTier++; sailStepCooldown = 0.28f; }
+            else if (sHeld && sailTier > 0) { sailTier--; sailStepCooldown = 0.28f; }
+        }
+        // Holding W at full sail latches into TRAVEL SPEED (the open-water
+        // overdrive); tap S to drop back down. No reverse — S only coasts to a stop.
+        if (wHeld && sailTier == 2) wHoldTime += dt; else wHoldTime = 0.0f;
+        if (wHoldTime > 0.45f) sailTier = 3;
+        const int effTier = sailTier;
+
+        // Wind is an arcade-liberty enhancement (Black Flag itself is wind-neutral):
+        // best speed running with it, least beating into it.
         windDir += 0.06f * dt;
         if (windDir > 6.28318531f) windDir -= 6.28318531f;
-        const float align = std::cos(heading - windDir);            // +1 downwind, -1 upwind
+        const float align = std::cos(heading - windDir);              // +1 downwind, -1 upwind
         const float windFactor = 0.55f + 0.45f * (align * 0.5f + 0.5f); // 1.0 .. 0.55
-        const float tierSpeed = sailTier == 0 ? 0.0f : (sailTier == 1 ? kFullSpeed * 0.5f : kFullSpeed);
+
+        const float kFullSpeed = 11.0f;
+        const float kTravelSpeed = 16.5f;
+        const float tierSpeed = effTier == 0 ? 0.0f
+                              : (effTier == 1 ? kFullSpeed * 0.5f
+                              : (effTier == 2 ? kFullSpeed : kTravelSpeed));
         const float targetSpeed = tierSpeed * windFactor;
         speed += (targetSpeed - speed) * clampf(dt * 1.2f, 0.0f, 1.0f);
-        const float speedFrac = speed / kFullSpeed;
-        heading += steer * (1.1f - 0.5f * speedFrac) * dt; // agile slow, sluggish fast
+        const float speedFrac = clampf(speed / kTravelSpeed, 0.0f, 1.0f);
+        const float turnRate = 1.35f * (1.0f - 0.62f * speedFrac);    // tight when slow, wide when fast
+        heading += steer * turnRate * dt;
         worldX += std::sin(heading) * speed * dt;
         worldZ += std::cos(heading) * speed * dt;
+
+        // Visible canvas reflects the sail state: furled -> half -> full.
+        const float sailFullness = effTier == 0 ? 0.0f : (effTier == 1 ? 0.55f : 1.0f);
 
         const sea::Stats stats = sea::getShipStats(ship);
         sea::FloatPose pose = sea::computeFloatPose(ship, waves, timeSec, worldX, worldZ, heading);
@@ -226,10 +252,13 @@ int main(int argc, char** argv) {
             if (ImGui::Button("Repair")) repairAll();
             ImGui::SameLine();
             if (ImGui::Button("Reset")) resetShip();
-            ImGui::TextDisabled("Keys: W/S sails, A/D steer, C/V cargo, X damage, Z repair, R reset");
+            ImGui::TextDisabled("Keys: W raise sail (hold at full = travel), S lower, A/D steer");
+            ImGui::TextDisabled("      C/V cargo, X damage, Z repair, R reset");
         }
         if (ImGui::CollapsingHeader("Sailing", ImGuiTreeNodeFlags_DefaultOpen)) {
-            const char* tierName = sailTier == 0 ? "anchored" : (sailTier == 1 ? "half sail" : "full sail");
+            const char* tierName = effTier == 0 ? "anchored"
+                                 : (effTier == 1 ? "half sail"
+                                 : (effTier == 2 ? "full sail" : "TRAVEL SPEED"));
             ImGui::Text("Sails:   %s", tierName);
             ImGui::Text("Speed:   %.1f", speed);
             ImGui::Text("Heading: %.0f deg", heading * 57.2957795f);
@@ -262,7 +291,7 @@ int main(int argc, char** argv) {
         ImGui::End();
 
         // 3D scene (water + ship) on the clear view, ImGui overlay on top.
-        ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, width, height);
+        ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height);
         imgui_bgfx::endFrame(kImGuiView);
         bgfx::frame();
 
