@@ -67,11 +67,31 @@ Open list — needs deeper discussion.
 
 Shared networking concerns in [multiplayer-infra.md](multiplayer-infra.md).
 
+## Implementation direction (native prototype)
+
+The clarified loop we're building toward, and how it maps to the native C++ prototype:
+
+**Shape it → submit for launch → bake a profile → sail it differently.**
+1. **Build** on the stocks at the shipyard: lay the **backbone** (keel → stem → sternpost → ribs — already real pieces), then **place wood** (planks) onto the frames. The player **makes the ribs / shapes the hull** freely — long & narrow, short & beamy, deep or shallow — the shape is theirs.
+2. **Submit for launch** — a short **"calculating…" load**.
+3. **Bake** the built geometry into a **`HullProfile`**: displacement, block coefficient `Cb`, waterplane, draft, **stability (GM ~ B²/T)**, and handling factors (**top speed ~ √L·fineness**, **turn ~ 1/L·√B**, drag, heel). *This is the "lots of math so the boats don't all act the same."*
+4. **Sail** — Sail mode reads the profile: fine hull = fast, wide-turning, tender; beamy hull = slow, tight-turning, stiff/stable; deeper draft bites more. Ties into the existing weight-vs-buoyancy + founder model.
+
+**Beyond the profile (big, separate increments):**
+- **Freeform placement** — click-to-place each plank/rib to shape the hull; per-tradition validation (backbone before planking; shell- vs frame-first; clinker vs carvel). Then the bake reads the *actual placed geometry*, not just L/B/T sliders.
+- **Walkable human character** — a third-person avatar you control on foot: walk the yard, walk the deck, climb aboard (Black Flag's seamless ship↔foot). New: character controller + camera + animation. Big.
+- **Pulleys & ropes** — block-and-tackle: yard **cranes/gantries** hoist timbers & masts with visible rope + sheaves; the ship's **rigging** (halyards/sheets). Rope as a simple constraint/catenary; pulley as a hoist ratio. Big.
+- **Per-section buoyancy sample points** baked from the hull → `computeFloatPose` rides/pitches per the real shape.
+
+**Status (native prototype):** the backbone pieces (keel/stem/sternpost/ribs) are real; the shipyard build berth with a stand + orbit camera is in. **Next up: the `bakeHullProfile` + launch flow + hull-shape sliders**, then freeform placement, then the character, then rigging. See [next-steps.md](next-steps.md).
+
 ## Open questions
 
 - Physics fidelity beyond v1 score-based model (distributed physics if rocking/heeling needs more)
-- Mod support
-- Tutorial path — this is a steep learning curve and onboarding matters
-- Collaborative-building UX in a P2P session model
+- Freeform placement: full plank freedom vs snap-to-frame-station (probably snap-to-station).
+- Launch gate: does the hull have to be **watertight/sealed** to pass the bake? A "seaworthiness" fail state is natural.
+- Character scope: full traversal + climbing, or deck-walking first?
+- Rope fidelity: cosmetic vs load-bearing (a snapped halyard drops the sail).
+- Mod support · tutorial/onboarding (steep curve) · collaborative-building UX in P2P.
 
 Consolidated in [holes.md](holes.md).

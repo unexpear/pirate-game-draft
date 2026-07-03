@@ -203,6 +203,12 @@ int main(int argc, char** argv) {
     int buildTrad = 2;  // 0 Roman, 1 Viking, 2 English (Age of Sail)
     int placed = 0;     // pieces revealed so far
 
+    // The hull's baked water-physics profile (Build -> Sail bridge). Sailing reads
+    // top-speed & turn from it, so the boat sails like the shape you built.
+    sea::HullProfile activeProfile = sea::bakeHullProfile(ship);
+    bool launching = false, launched = true;
+    float launchTimer = 0.0f;
+
     // A large island with a port + shipyard, moored at a fixed spot to the north.
     const float islandX = 0.0f, islandZ = 120.0f;
     const float kLandRadius = 56.0f;  // run aground here
@@ -332,13 +338,17 @@ int main(int argc, char** argv) {
 
         const float kFullSpeed = 11.0f;
         const float kTravelSpeed = 16.5f;
+        // This hull's speeds, scaled by its baked profile (long & fine sails faster).
+        const float pFull = kFullSpeed * float(activeProfile.topSpeedFactor);
+        const float pTravel = kTravelSpeed * float(activeProfile.topSpeedFactor);
         const float tierSpeed = effTier == 0 ? 0.0f
-                              : (effTier == 1 ? kFullSpeed * 0.5f
-                              : (effTier == 2 ? kFullSpeed : kTravelSpeed));
+                              : (effTier == 1 ? pFull * 0.5f
+                              : (effTier == 2 ? pFull : pTravel));
         const float targetSpeed = tierSpeed * windFactor;
         speed += (targetSpeed - speed) * clampf(dt * 1.2f, 0.0f, 1.0f);
-        const float speedFrac = clampf(speed / kTravelSpeed, 0.0f, 1.0f);
-        const float turnRate = 1.35f * (1.0f - 0.62f * speedFrac);    // tight when slow, wide when fast
+        const float speedFrac = clampf(speed / (pTravel > 0.1f ? pTravel : kTravelSpeed), 0.0f, 1.0f);
+        // Turn radius couples to speed AND the hull's agility (short & beamy turns tighter).
+        const float turnRate = 1.35f * (1.0f - 0.62f * speedFrac) * float(activeProfile.turnFactor);
         heading += steer * turnRate * dt;
         if (buildMode) speed = 0.0f; // frozen on the stocks while building
         worldX += std::sin(heading) * speed * dt;
@@ -449,6 +459,11 @@ int main(int argc, char** argv) {
             border = sea::buildOrder(ship, sea::BuildTradition(buildTrad));
             placed = std::max(0, std::min(placed, int(border.size())));
         }
+        // Launch bake: after the "calculating" beat, freeze the hull's physics profile.
+        if (launching) {
+            launchTimer -= dt;
+            if (launchTimer <= 0.0f) { launching = false; launched = true; activeProfile = sea::bakeHullProfile(ship); }
+        }
 
         imgui_bgfx::beginFrame(width, height, dt, mouseX, mouseY, mouseButtons, wheel);
 
@@ -480,6 +495,34 @@ int main(int argc, char** argv) {
             ImGui::Combo("Tradition", &buildTrad, trads, 3);
             ImGui::TextDisabled("%s", sea::traditionName(sea::BuildTradition(buildTrad)));
             if (buildMode) {
+                // Shape the hull (until freeform placement exists, drive L/B/depth).
+                bool shapeChanged = false;
+                float shL = float(cfg.length), shB = float(cfg.width), shD = float(cfg.depth);
+                if (ImGui::SliderFloat("Length (m)", &shL, 8.0f, 24.0f, "%.1f")) { cfg.length = shL; shapeChanged = true; }
+                if (ImGui::SliderFloat("Beam (m)",   &shB, 3.0f, 9.0f, "%.1f"))  { cfg.width = shB;  shapeChanged = true; }
+                if (ImGui::SliderFloat("Depth (m)",  &shD, 2.0f, 3.6f, "%.1f"))  { cfg.depth = shD;  shapeChanged = true; }
+                if (shapeChanged) { ship = sea::makeShipFromConfig(cfg); placed = 0; launched = false; }
+
+                // Submit for launch -> bake the water-physics profile.
+                if (launching) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.2f, 1.0f), "Calculating hull profile...");
+                } else if (ImGui::Button("Submit for launch (bake profile)")) {
+                    launching = true; launchTimer = 1.6f;
+                }
+                if (!launched && !launching)
+                    ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Hull changed - submit to re-bake its profile.");
+
+                // The baked profile — what the boat will sail like.
+                ImGui::Separator();
+                ImGui::Text("Hull:  %.1f x %.1f m, draft %.1f", activeProfile.length, activeProfile.beam, activeProfile.draft);
+                ImGui::Text("Displaces: %.1f t", activeProfile.displacementMass / 1000.0);
+                const char* stab = activeProfile.gm < 0.0 ? "TENDER (tippy)"
+                                 : (activeProfile.gm < 0.4 ? "lively" : (activeProfile.gm < 1.0 ? "stable" : "stiff"));
+                ImGui::Text("Stability: %s (GM %.2f)", stab, activeProfile.gm);
+                ImGui::Text("Top speed: %.0f%%   Turn: %.0f%%",
+                            activeProfile.topSpeedFactor * 100.0, activeProfile.turnFactor * 100.0);
+                ImGui::Separator();
+
                 const int total = int(border.size());
                 ImGui::Text("Placed: %d / %d pieces", placed, total);
                 if (ImGui::Button("Lay next")) placed = std::min(placed + 1, total);
@@ -573,8 +616,7 @@ int main(int argc, char** argv) {
                 shown.pieces.push_back(ship.pieces[border[i]]);
             const bool complete = placed >= int(border.size());
             if (!complete) { shown.systems.mast_count = 0; shown.systems.sail_count = 0; }
-            sea::FloatPose bp; bp.heaveY = 0.6; // calm, sitting on the stocks
-            ship_view::render(kClearView, shown, waves, bp, timeSec, 0.0f, worldX, worldZ, windDir, 0.0f, width, height);
+            ship_view::renderBuildScene(kClearView, shown, waves, timeSec, timeSec * 0.12f, width, height);
         } else {
             ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height);
             if (!enemyGone)

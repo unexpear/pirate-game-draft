@@ -40,4 +40,11 @@ void renderTracer(uint16_t viewId, float x, float y, float z, float size,
 // offset (relX,relZ) relative to our ship at the origin.
 void renderIsland(uint16_t viewId, float relX, float relZ);
 
+// Build-mode scene: the hull up on a building STAND (keel blocks + shoring) at
+// the island's shipyard, viewed by an orbit camera (`orbitAngle` radians) so you
+// can look the ship over from every side as it takes shape.
+void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
+                      const std::vector<sea::Wave>& waves, float timeSec,
+                      float orbitAngle, int width, int height);
+
 } // namespace ship_view

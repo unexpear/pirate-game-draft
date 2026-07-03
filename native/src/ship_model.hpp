@@ -175,6 +175,25 @@ ApparentWind apparentWind(double windDir, double trueWindSpeed,
 // untouched and return false.
 bool keepOutsideCircle(double& px, double& pz, double cx, double cz, double radius);
 
+// --- Build -> Sail bridge: bake a ship's shape into a water-physics profile ---
+// Hull hydrostatics + handling factors derived from the built shape. Different
+// shapes produce different profiles, so no two boats sail the same. Handling
+// factors are relative to the reference sloop (L=12, B=4), which bakes to ~1.0.
+// See build-mode.md.
+struct HullProfile {
+    double length = 0, beam = 0, draft = 0;   // hull envelope (m)
+    double lengthBeamRatio = 0;
+    double blockCoeff = 0;                     // Cb fullness (0..1)
+    double displacementVol = 0;                // m^3 of water displaced at draft
+    double displacementMass = 0;               // kg of water displaced
+    double waterplaneArea = 0;                 // m^2
+    double gm = 0;                             // metacentric-height stability proxy (higher = stiffer)
+    double topSpeedFactor = 1;                 // relative max speed (long & fine => higher)
+    double turnFactor = 1;                     // relative agility (short & beamy => higher)
+    double dragFactor = 1;                     // relative resistance
+};
+HullProfile bakeHullProfile(const Ship& ship);
+
 // --- Build mode: how a hull goes together, per historical tradition --------
 // See references/shipbuilding-history.md. Roman & Viking build SHELL-FIRST
 // (planking shell before internal frames); English Age-of-Sail builds

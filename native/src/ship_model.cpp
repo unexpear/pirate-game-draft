@@ -503,6 +503,31 @@ bool keepOutsideCircle(double& px, double& pz, double cx, double cz, double radi
     return true;
 }
 
+HullProfile bakeHullProfile(const Ship& ship) {
+    HullProfile p;
+    const double L = std::max(1.0, ship.bounds.length);
+    const double B = std::max(0.5, ship.bounds.width);
+    const double T = std::max(0.3, ship.bounds.depth * 0.55); // draft ~ submerged depth
+    p.length = L; p.beam = B; p.draft = T;
+    p.lengthBeamRatio = L / B;
+
+    p.blockCoeff = 0.50;                       // fullness (later: from the actual planking)
+    p.displacementVol = L * B * T * p.blockCoeff;
+    p.displacementMass = p.displacementVol * WATER_DENSITY;
+    p.waterplaneArea = L * B * 0.85;
+
+    // Stability proxy: metacentric height ~ Beam^2 / draft. Beamy & shallow is
+    // stiff/stable; narrow & deep is tender/tippy.
+    p.gm = 0.08 * (B * B) / T - 0.55;
+
+    // Handling, relative to the reference sloop (L=12, B=4, L/B=3 -> factors ~1).
+    const double refL = 12.0, refB = 4.0;
+    p.topSpeedFactor = std::sqrt(L / refL) * (0.70 + 0.10 * p.lengthBeamRatio);
+    p.turnFactor = (refL / L) * std::sqrt(B / refB);
+    p.dragFactor = 0.85 + 0.12 * (B / refB);
+    return p;
+}
+
 ApparentWind apparentWind(double windDir, double trueWindSpeed,
                           double heading, double boatSpeed) {
     // Air velocity relative to the boat = true-wind velocity - boat velocity.
@@ -806,6 +831,30 @@ std::vector<TestResult> runSelfTest() {
         const bool cHit = keepOutsideCircle(cx, cz, 0.0, 120.0, 56.0);
         const double cd = std::sqrt(cx * cx + (cz - 120.0) * (cz - 120.0));
         push("Collision at the exact centre still resolves", cHit && std::fabs(cd - 56.0) < 1e-6);
+    }
+
+    // --- Hull profile bake (build -> sail) ---
+    {
+        ShipConfig fineCfg;  fineCfg.length = 18; fineCfg.width = 3; fineCfg.depth = 2.8;
+        ShipConfig beamyCfg; beamyCfg.length = 10; beamyCfg.width = 6; beamyCfg.depth = 2.8;
+        const HullProfile fine  = bakeHullProfile(makeShipFromConfig(fineCfg));
+        const HullProfile beamy = bakeHullProfile(makeShipFromConfig(beamyCfg));
+
+        push("A finer hull has a higher top speed", fine.topSpeedFactor > beamy.topSpeedFactor,
+             num(fine.topSpeedFactor * 100) + "% vs " + num(beamy.topSpeedFactor * 100) + "%");
+        push("A beamy hull is more stable (higher GM)", beamy.gm > fine.gm);
+        push("A beamy hull turns tighter", beamy.turnFactor > fine.turnFactor);
+
+        ShipConfig bigCfg;   bigCfg.length = 20; bigCfg.width = 7; bigCfg.depth = 3.2;
+        ShipConfig smallCfg; smallCfg.length = 9; smallCfg.width = 3; smallCfg.depth = 2.4;
+        const bool disp = bakeHullProfile(makeShipFromConfig(bigCfg)).displacementVol
+                        > bakeHullProfile(makeShipFromConfig(smallCfg)).displacementVol;
+        push("A bigger hull displaces more water", disp);
+
+        // The reference sloop bakes to ~unit handling factors.
+        const HullProfile ref = bakeHullProfile(makeShipFromConfig(ShipConfig{}));
+        push("The reference sloop bakes to ~1.0 handling", std::fabs(ref.topSpeedFactor - 1.0) < 0.05
+             && std::fabs(ref.turnFactor - 1.0) < 0.05);
     }
 
     return r;

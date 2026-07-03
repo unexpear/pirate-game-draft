@@ -127,4 +127,73 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     B(52, 2, -14, 4, 2, 16, timber[0], timber[1], timber[2]);
 }
 
+void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
+                      const std::vector<sea::Wave>& waves, float timeSec,
+                      float orbitAngle, int width, int height) {
+    // Orbit camera around the stocks (scene origin) so the hull can be looked over
+    // from every side as it takes shape.
+    const float dist = 24.0f, camH = 12.0f;
+    const bx::Vec3 eye = { bx::sin(orbitAngle) * dist, camH, bx::cos(orbitAngle) * dist };
+    const bx::Vec3 at = { 0.0f, 3.2f, 0.0f };
+    const bx::Vec3 up = { 0.0f, 1.0f, 0.0f };
+    float view[16], proj[16];
+    bx::mtxLookAt(view, eye, at, up);
+    const bgfx::Caps* caps = bgfx::getCaps();
+    const float aspect = float(width) / float(height > 0 ? height : 1);
+    bx::mtxProj(proj, 55.0f, aspect, 0.1f, 600.0f, caps->homogeneousDepth);
+    bgfx::setViewTransform(viewId, view, proj);
+    bgfx::setViewRect(viewId, 0, 0, uint16_t(width), uint16_t(height));
+
+    auto box = [&](float x, float y, float z, float sx, float sy, float sz,
+                   float r, float g, float b) {
+        ship_mesh::renderBoxSized(viewId, x, y, z, sx, sy, sz, r, g, b);
+    };
+    const float sand[3]  = { 0.82f, 0.74f, 0.52f };
+    const float grass[3] = { 0.30f, 0.46f, 0.22f };
+    const float dark[3]  = { 0.24f, 0.16f, 0.10f };
+    const float wood[3]  = { 0.42f, 0.28f, 0.16f };
+    const float timber[3]= { 0.52f, 0.40f, 0.27f };
+    const float roof[3]  = { 0.35f, 0.20f, 0.14f };
+    const float metal[3] = { 0.25f, 0.22f, 0.20f };
+
+    // The sea, then the coastal yard: an island in the distance behind, a stone
+    // dock the stocks sit on, a great ship hall + flanking gantry cranes behind
+    // the berth (so the hull stays the clear foreground focus).
+    water_gpu::render(viewId, waves, timeSec, eye.x, eye.y, eye.z, 24.0f, 76.0f);
+    box(0.0f, 6.0f, 96.0f, 180.0f, 12.0f, 74.0f, grass[0], grass[1], grass[2]);   // island (distance)
+    box(0.0f, 0.8f, 58.0f, 200.0f, 2.0f, 20.0f, sand[0], sand[1], sand[2]);       // shore/beach
+    box(0.0f, 0.5f, 6.0f, 56.0f, 1.0f, 46.0f, sand[0], sand[1], sand[2]);         // dock ground
+    box(0.0f, 10.0f, 40.0f, 48.0f, 20.0f, 22.0f, timber[0], timber[1], timber[2]); // great ship hall
+    box(0.0f, 20.6f, 40.0f, 50.0f, 1.6f, 24.0f, roof[0], roof[1], roof[2]);
+    for (int s = -1; s <= 1; s += 2) {                                            // gantry cranes
+        box(float(s) * 15.0f, 10.0f, -2.0f, 1.8f, 20.0f, 1.8f, metal[0], metal[1], metal[2]);
+        box(float(s) * 15.0f, 19.0f, 4.0f, 1.8f, 1.8f, 22.0f, metal[0], metal[1], metal[2]);
+    }
+    box(26.0f, 2.0f, 8.0f, 4.0f, 3.0f, 16.0f, wood[0], wood[1], wood[2]);          // timber stacks
+    box(-26.0f, 2.0f, 8.0f, 4.0f, 3.0f, 16.0f, timber[0], timber[1], timber[2]);
+
+    // The building stand: two ground ways, keel blocks along the spine, and a row
+    // of shoring posts each side.
+    const float len = float(ship.bounds.length);
+    const float wid = float(ship.bounds.width);
+    box(-0.9f, 1.1f, 0.0f, 0.8f, 1.0f, len * 0.95f, wood[0], wood[1], wood[2]);
+    box( 0.9f, 1.1f, 0.0f, 0.8f, 1.0f, len * 0.95f, wood[0], wood[1], wood[2]);
+    const int nb = 6;
+    const float blockTop = 2.9f;
+    for (int i = 0; i < nb; ++i) {
+        const float z = -len * 0.42f + (len * 0.84f) * i / float(nb - 1);
+        box(0.0f, 1.9f, z, 1.6f, 2.0f, 1.0f, dark[0], dark[1], dark[2]); // keel blocks (top at 2.9)
+    }
+    for (int i = 0; i < 4; ++i) {
+        const float z = -len * 0.30f + (len * 0.60f) * i / 3.0f;
+        box(-wid * 0.64f, 2.7f, z, 0.5f, 4.6f, 0.5f, wood[0], wood[1], wood[2]);
+        box( wid * 0.64f, 2.7f, z, 0.5f, 4.6f, 0.5f, wood[0], wood[1], wood[2]);
+    }
+
+    // The hull, keel resting on the blocks.
+    sea::FloatPose bp;
+    bp.heaveY = blockTop + float(ship.bounds.depth) * 0.55; // keel local y = -depth*0.55
+    ship_mesh::render(viewId, ship, bp, 0.0f, 0.0f, 0.0f, timeSec, 0.0f, 0.0f);
+}
+
 } // namespace ship_view
