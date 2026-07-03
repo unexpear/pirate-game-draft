@@ -129,13 +129,21 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
 
 void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
                       const std::vector<sea::Wave>& waves, float timeSec,
-                      float orbitAngle, int width, int height) {
-    // Orbit camera around the stocks (scene origin) so the hull can be looked over
-    // from every side as it takes shape.
-    const float dist = 24.0f, camH = 12.0f;
-    const bx::Vec3 eye = { bx::sin(orbitAngle) * dist, camH, bx::cos(orbitAngle) * dist };
-    const bx::Vec3 at = { 0.0f, 3.2f, 0.0f };
+                      float orbitAngle, int width, int height,
+                      bool walk, float cx, float cy, float cz, float cheading, float walkPhase) {
+    // Camera: orbit the stocks to look the hull over, OR (walk mode) a third-person
+    // camera following the character on foot in the yard.
     const bx::Vec3 up = { 0.0f, 1.0f, 0.0f };
+    bx::Vec3 eye = { 0.0f, 0.0f, 0.0f }, at = { 0.0f, 0.0f, 0.0f };
+    if (walk) {
+        const float fx = bx::sin(cheading), fz = bx::cos(cheading);
+        eye = { cx - fx * 7.0f, cy + 4.2f, cz - fz * 7.0f };
+        at  = { cx + fx * 3.0f, cy + 1.4f, cz + fz * 3.0f };
+    } else {
+        const float dist = 24.0f, camH = 12.0f;
+        eye = { bx::sin(orbitAngle) * dist, camH, bx::cos(orbitAngle) * dist };
+        at  = { 0.0f, 3.2f, 0.0f };
+    }
     float view[16], proj[16];
     bx::mtxLookAt(view, eye, at, up);
     const bgfx::Caps* caps = bgfx::getCaps();
@@ -194,6 +202,8 @@ void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
     sea::FloatPose bp;
     bp.heaveY = blockTop + float(ship.bounds.depth) * 0.55; // keel local y = -depth*0.55
     ship_mesh::render(viewId, ship, bp, 0.0f, 0.0f, 0.0f, timeSec, 0.0f, 0.0f);
+
+    if (walk) ship_mesh::renderCharacter(viewId, cx, cy, cz, cheading, walkPhase);
 }
 
 } // namespace ship_view

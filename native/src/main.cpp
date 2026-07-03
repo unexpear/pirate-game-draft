@@ -209,6 +209,11 @@ int main(int argc, char** argv) {
     bool launching = false, launched = true;
     float launchTimer = 0.0f;
 
+    // On-foot character — walk the shipyard. Position is in the build-scene's local
+    // space (the ship sits on the stocks at the origin).
+    bool walkMode = false;
+    float charX = 9.0f, charY = 1.0f, charZ = -11.0f, charHeading = -0.7f, walkPhase = 0.0f;
+
     // A large island with a port + shipyard, moored at a fixed spot to the north.
     const float islandX = 0.0f, islandZ = 120.0f;
     const float kLandRadius = 56.0f;  // run aground here
@@ -464,6 +469,21 @@ int main(int argc, char** argv) {
             launchTimer -= dt;
             if (launchTimer <= 0.0f) { launching = false; launched = true; activeProfile = sea::bakeHullProfile(ship); }
         }
+        // On-foot: walk the yard (WASD move, A/D turn), kept on the dock.
+        if (buildMode && walkMode) {
+            const bool* wk = SDL_GetKeyboardState(nullptr);
+            float mv = 0.0f, tn = 0.0f;
+            if (!ImGui::GetIO().WantCaptureKeyboard) {
+                if (wk[SDL_SCANCODE_W]) mv += 1.0f;
+                if (wk[SDL_SCANCODE_S]) mv -= 1.0f;
+                if (wk[SDL_SCANCODE_D]) tn += 1.0f;
+                if (wk[SDL_SCANCODE_A]) tn -= 1.0f;
+            }
+            charHeading += tn * 2.2f * dt;
+            charX = clampf(charX + std::sin(charHeading) * mv * 3.4f * dt, -26.0f, 26.0f);
+            charZ = clampf(charZ + std::cos(charHeading) * mv * 3.4f * dt, -20.0f, 26.0f);
+            if (mv != 0.0f) walkPhase += dt * 9.0f;
+        }
 
         imgui_bgfx::beginFrame(width, height, dt, mouseX, mouseY, mouseButtons, wheel);
 
@@ -495,6 +515,9 @@ int main(int argc, char** argv) {
             ImGui::Combo("Tradition", &buildTrad, trads, 3);
             ImGui::TextDisabled("%s", sea::traditionName(sea::BuildTradition(buildTrad)));
             if (buildMode) {
+                ImGui::Checkbox("Walk the yard (on foot)", &walkMode);
+                if (walkMode) ImGui::TextColored(kGreen, "  WASD to walk, A/D to turn.");
+                ImGui::Separator();
                 // Shape the hull (until freeform placement exists, drive L/B/depth).
                 bool shapeChanged = false;
                 float shL = float(cfg.length), shB = float(cfg.width), shD = float(cfg.depth);
@@ -612,11 +635,13 @@ int main(int argc, char** argv) {
         if (buildMode) {
             sea::Ship shown = ship;
             shown.pieces.clear();
-            for (int i = 0; i < placed && i < int(border.size()); ++i)
+            const int reveal = walkMode ? int(border.size()) : placed; // full ship to walk around
+            for (int i = 0; i < reveal && i < int(border.size()); ++i)
                 shown.pieces.push_back(ship.pieces[border[i]]);
-            const bool complete = placed >= int(border.size());
+            const bool complete = reveal >= int(border.size());
             if (!complete) { shown.systems.mast_count = 0; shown.systems.sail_count = 0; }
-            ship_view::renderBuildScene(kClearView, shown, waves, timeSec, timeSec * 0.12f, width, height);
+            ship_view::renderBuildScene(kClearView, shown, waves, timeSec, timeSec * 0.12f, width, height,
+                                        walkMode, charX, charY, charZ, charHeading, walkPhase);
         } else {
             ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height);
             if (!enemyGone)

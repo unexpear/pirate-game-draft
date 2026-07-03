@@ -183,4 +183,36 @@ void renderBox(uint16_t viewId, float x, float y, float z, float size,
     renderBoxSized(viewId, x, y, z, size, size, size, r, g, b);
 }
 
+void renderCharacter(uint16_t viewId, float x, float y, float z, float heading, float walkPhase) {
+    const float lightV[4] = { 0.4f, 0.85f, 0.35f, 0.0f };
+    bgfx::setUniform(u_lightDir, lightV);
+    // Character root: stands at (x,y,z) (y = feet on the ground), faces `heading`.
+    float root[16];
+    bx::mtxSRT(root, 1.0f, 1.0f, 1.0f, 0.0f, heading, 0.0f, x, y, z);
+    auto part = [&](float lx, float ly, float lz, float sx, float sy, float sz,
+                    float r, float g, float b) {
+        float local[16];
+        bx::mtxSRT(local, sx, sy, sz, 0.0f, 0.0f, 0.0f, lx, ly, lz);
+        float model[16];
+        bx::mtxMul(model, local, root);
+        const float col[4] = { r, g, b, 1.0f };
+        bgfx::setUniform(u_color, col);
+        bgfx::setTransform(model);
+        bgfx::setVertexBuffer(0, s_vbh);
+        bgfx::setIndexBuffer(s_ibh);
+        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z
+                       | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW | BGFX_STATE_MSAA);
+        bgfx::submit(viewId, s_prog);
+    };
+    const float sw = std::sin(walkPhase) * 0.18f;             // leg/arm swing (fore-aft)
+    const float bob = std::fabs(std::sin(walkPhase)) * 0.04f; // step bob
+    const float skin = 0.80f, coatR = 0.45f, coatG = 0.28f, coatB = 0.20f;
+    part(0.0f, 1.55f + bob, 0.0f, 0.28f, 0.30f, 0.28f, skin, 0.62f, 0.48f);      // head
+    part(0.0f, 1.08f + bob, 0.0f, 0.52f, 0.66f, 0.30f, coatR, coatG, coatB);      // torso (coat)
+    part(-0.14f, 0.42f,  sw, 0.22f, 0.82f, 0.24f, 0.26f, 0.22f, 0.30f);           // left leg
+    part( 0.14f, 0.42f, -sw, 0.22f, 0.82f, 0.24f, 0.26f, 0.22f, 0.30f);           // right leg
+    part(-0.34f, 1.08f + bob, -sw, 0.16f, 0.62f, 0.20f, coatR, coatG, coatB);     // left arm
+    part( 0.34f, 1.08f + bob,  sw, 0.16f, 0.62f, 0.20f, coatR, coatG, coatB);     // right arm
+}
+
 } // namespace ship_mesh

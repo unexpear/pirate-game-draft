@@ -41,10 +41,12 @@ void renderTracer(uint16_t viewId, float x, float y, float z, float size,
 void renderIsland(uint16_t viewId, float relX, float relZ);
 
 // Build-mode scene: the hull up on a building STAND (keel blocks + shoring) at
-// the island's shipyard, viewed by an orbit camera (`orbitAngle` radians) so you
-// can look the ship over from every side as it takes shape.
+// the island's shipyard. Orbit camera (`orbitAngle`) to look the ship over, or
+// (`walk`) a third-person follow camera on a character walking the yard at
+// (cx,cy,cz) facing `cheading`, stride animated by `walkPhase`.
 void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
                       const std::vector<sea::Wave>& waves, float timeSec,
-                      float orbitAngle, int width, int height);
+                      float orbitAngle, int width, int height,
+                      bool walk, float cx, float cy, float cz, float cheading, float walkPhase);
 
 } // namespace ship_view

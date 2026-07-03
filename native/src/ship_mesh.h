@@ -32,4 +32,9 @@ void renderBox(uint16_t viewId, float x, float y, float z, float size,
 void renderBoxSized(uint16_t viewId, float x, float y, float z,
                     float sx, float sy, float sz, float r, float g, float b);
 
+// Draw a simple box-figure human standing at (x,y,z) (y = feet on the ground),
+// facing `heading` (radians); `walkPhase` animates the stride when moving.
+void renderCharacter(uint16_t viewId, float x, float y, float z,
+                     float heading, float walkPhase);
+
 } // namespace ship_mesh

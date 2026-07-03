@@ -83,7 +83,7 @@ The clarified loop we're building toward, and how it maps to the native C++ prot
 - **Pulleys & ropes** — block-and-tackle: yard **cranes/gantries** hoist timbers & masts with visible rope + sheaves; the ship's **rigging** (halyards/sheets). Rope as a simple constraint/catenary; pulley as a hoist ratio. Big.
 - **Per-section buoyancy sample points** baked from the hull → `computeFloatPose` rides/pitches per the real shape.
 
-**Status (native prototype):** the backbone pieces (keel/stem/sternpost/ribs) are real; the shipyard build berth with a stand + orbit camera is in. **Next up: the `bakeHullProfile` + launch flow + hull-shape sliders**, then freeform placement, then the character, then rigging. See [next-steps.md](next-steps.md).
+**Status (native prototype):** the whole ship is real piece-by-piece (backbone keel/stem/sternpost/ribs → planking → nails → deck → mast/bowsprit → helm/capstan → standing rigging lines); the shipyard build **berth with a stand** + orbit camera is in; the **launch → `bakeHullProfile` → sail-differently** loop is in (driven by hull-shape sliders for now); and a **walkable box-figure character (v0)** can walk the yard on foot (WASD, follow cam). **Next up: freeform plank/rib placement**, then **climbing aboard + walking the deck**, then **running rigging / pulleys & ropes**. See [next-steps.md](next-steps.md).
 
 ## Open questions
 
