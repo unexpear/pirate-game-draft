@@ -166,6 +166,50 @@ Ship makeShipFromConfig(const ShipConfig& cfg) {
         ship.pieces.push_back(p);
     }
 
+    // --- Spars, fittings, and the standing rigging (lines). Rendered from their
+    // bounds; given tiny volumes so they don't distort the crude float model
+    // (the HullProfile bake carries the real hydrostatics). ---
+    const double deckY = depth * 0.03;
+    const double mastH = depth * 0.9 + 6.0;
+    const double mastZ = -length * 0.05;
+    const double mastTopY = deckY + mastH;
+    const double gunY = deckY + 0.4;
+    auto fit = [&](const std::string& id, const std::string& type, const std::string& mat,
+                   Vec3 pos, Vec3 rot, Vec3 bnd, double vol) {
+        Piece p; p.id = id; p.type = type; p.material = mat;
+        p.volume = vol; p.mass = vol * materialDensity(mat);
+        p.position = pos; p.rotation = rot; p.bounds = bnd;
+        ship.pieces.push_back(p);
+    };
+    if (cfg.hasSail) {
+        fit("mast_001", "mast", "pine", { 0, deckY + mastH * 0.5, mastZ }, {}, { 0.32, mastH, 0.32 }, 0.06);
+        const double Lb = length * 0.42;
+        fit("bowsprit_001", "bowsprit", "pine",
+            { 0, deckY + 0.8, length * 0.5 + Lb * 0.32 }, { -0.5, 0, 0 }, { 0.26, 0.26, Lb }, 0.04);
+        // Standing rigging: shrouds (athwartships, tilt about Z) + fore/back stays
+        // (fore-aft, tilt about X). Drawn as taut straight lines.
+        {
+            const double dx = width * 0.42, dy = mastTopY - gunY;
+            const double L = std::sqrt(dx * dx + dy * dy), a = std::atan2(dx, dy);
+            fit("shroud_p", "line", "hemp", { -dx * 0.5, (gunY + mastTopY) * 0.5, mastZ }, { 0, 0, a }, { 0.06, L, 0.06 }, 0.01);
+            fit("shroud_s", "line", "hemp", {  dx * 0.5, (gunY + mastTopY) * 0.5, mastZ }, { 0, 0, -a }, { 0.06, L, 0.06 }, 0.01);
+        }
+        {
+            const double bz = length * 0.45, dz = bz - mastZ, dy = mastTopY - gunY;
+            const double L = std::sqrt(dz * dz + dy * dy), a = std::atan2(dz, dy);
+            fit("forestay", "line", "hemp", { 0, (gunY + mastTopY) * 0.5, (bz + mastZ) * 0.5 }, { a, 0, 0 }, { 0.06, L, 0.06 }, 0.01);
+        }
+        {
+            const double sz = -length * 0.5, dz = mastZ - sz, dy = mastTopY - gunY;
+            const double L = std::sqrt(dz * dz + dy * dy), a = std::atan2(dz, dy);
+            fit("backstay", "line", "hemp", { 0, (gunY + mastTopY) * 0.5, (sz + mastZ) * 0.5 }, { -a, 0, 0 }, { 0.06, L, 0.06 }, 0.01);
+        }
+    }
+    if (cfg.hasHelm) {
+        fit("helm_001", "helm", cfg.material, { 0, deckY + 0.7, -length * 0.34 }, {}, { 0.14, 1.3, 1.3 }, 0.03);
+        fit("capstan_001", "capstan", cfg.material, { 0, deckY + 0.5, -length * 0.12 }, {}, { 0.9, 1.0, 0.9 }, 0.04);
+    }
+
     return ship;
 }
 
@@ -446,9 +490,12 @@ bool isFrameFirst(BuildTradition t) { return t == BuildTradition::English; }
 std::vector<int> buildOrder(const Ship& ship, BuildTradition t) {
     const bool frameFirst = isFrameFirst(t);
     auto stage = [&](const std::string& type) -> int {
-        if (type == "keel") return 0;                         // laid first
-        if (type == "stem" || type == "sternpost") return 1;  // rest of the backbone
-        if (type == "deck") return 4;                         // deck always last
+        if (type == "keel") return 0;                          // laid first
+        if (type == "stem" || type == "sternpost") return 1;   // rest of the backbone
+        if (type == "deck") return 4;                          // deck after the hull is planked
+        if (type == "mast" || type == "bowsprit") return 5;    // step the spars
+        if (type == "helm" || type == "capstan") return 6;     // fit out
+        if (type == "line") return 7;                          // set up the standing rigging
         const bool frame = (type == "rib");
         // shell-first: planks(2) then frames(3). frame-first: frames(2) then planks(3).
         if (frameFirst) return frame ? 2 : 3;
@@ -466,27 +513,33 @@ std::vector<std::string> buildSequence(BuildTradition t) {
     switch (t) {
         case BuildTradition::Roman: return {
             "Lay the keel, then the stem & sternpost",
-            "Fasten the garboard strake to the keel",
             "Build strakes up from the keel, flush (carvel)",
-            "Lock every seam with pegged mortise-and-tenon",
+            "Lock every seam with pegged mortise-and-tenon (nails)",
             "Shell now rigid - drop in the frames",
-            "Fit the deck beams and mast step",
+            "Fit the deck beams and lay the deck",
+            "Step the mast; rig the bowsprit",
+            "Fit out (helm, capstan)",
+            "Set up the standing rigging - stays & shrouds (lines)",
         };
         case BuildTradition::Viking: return {
             "Lay the T-keel, scarf on stem & sternpost",
-            "Rivet the garboard strake to the keel",
-            "Rivet each strake overlapping the last (clinker)",
-            "Clench every rivet over an iron rove",
+            "Rivet each strake overlapping the last (clinker planking)",
+            "Clench every rivet over an iron rove (nails)",
             "Lash the ribs to cleats on the finished shell",
-            "Add crossbeams and the kerling mast-step",
+            "Add the crossbeams and lay the deck",
+            "Step the mast in the kerling; rig the bowsprit",
+            "Fit out (helm, capstan)",
+            "Set up the standing rigging - stays & shrouds (lines)",
         };
         case BuildTradition::English: return {
-            "Scarph & bolt the elm keel; rabbet its sides",
-            "Stem scarphed on; oak sternpost tenoned in",
-            "Bolt the floors, run ribbands, infill the frames",
-            "Raise futtocks & top timbers - skeleton done",
-            "Plank flush on the frames from the wales down (treenails)",
-            "Keelson, deck beams, knees; oakum the seams",
+            "Scarph the keel; step the stem & sternpost",
+            "Raise the floors, futtocks & top timbers (frames)",
+            "Plank flush on the frames, from the wales down",
+            "Drive the treenails & iron fastenings (nails)",
+            "Keelson, deck beams & knees; lay the deck",
+            "Step the mast; rig the bowsprit",
+            "Fit out (helm, capstan)",
+            "Set up the standing rigging - stays & shrouds (lines)",
         };
     }
     return {};
@@ -790,8 +843,25 @@ std::vector<TestResult> runSelfTest() {
         push("Frame-first (English) raises frames before planks", !planksBeforeFrames(BuildTradition::English));
 
         const std::vector<int> ord = buildOrder(base, BuildTradition::English);
-        const bool ends = base.pieces[ord.front()].type == "keel" && base.pieces[ord.back()].type == "deck";
-        push("Keel is laid first and the deck fitted last", ends);
+        int deckRank = -1, mastRank = -1;
+        for (int i = 0; i < static_cast<int>(ord.size()); ++i) {
+            const std::string& t = base.pieces[ord[i]].type;
+            if (t == "deck") deckRank = i;
+            if (t == "mast") mastRank = i;
+        }
+        push("Keel laid first; mast stepped after the deck",
+             base.pieces[ord.front()].type == "keel" && deckRank >= 0 && mastRank > deckRank);
+
+        int masts = 0, bows = 0, helms = 0, lines = 0;
+        for (const auto& p : base.pieces) {
+            if (p.type == "mast") ++masts;
+            if (p.type == "bowsprit") ++bows;
+            if (p.type == "helm") ++helms;
+            if (p.type == "line") ++lines;
+        }
+        push("Ship has a mast, bowsprit, helm and rigging lines",
+             masts == 1 && bows == 1 && helms == 1 && lines >= 3,
+             num(masts) + "/" + num(bows) + "/" + num(helms) + "/" + num(lines));
 
         // Backbone: a stem and a sternpost exist, laid (with the keel) before planking.
         int stems = 0, sternposts = 0;

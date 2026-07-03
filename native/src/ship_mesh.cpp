@@ -49,6 +49,9 @@ void pieceColor(const sea::Piece& p, float out[4]) {
     if (p.damage >= 1.0) set(0.11f, 0.11f, 0.13f);          // destroyed
     else if (p.damage > 0.0) set(0.67f, 0.22f, 0.18f);      // damaged
     else if (p.type == "stem" || p.type == "sternpost") set(0.36f, 0.23f, 0.12f); // backbone posts
+    else if (p.type == "mast" || p.type == "bowsprit") set(0.56f, 0.44f, 0.28f);  // pine spars
+    else if (p.type == "line") set(0.14f, 0.10f, 0.07f);    // rope / rigging
+    else if (p.type == "helm" || p.type == "capstan") set(0.34f, 0.24f, 0.14f);   // fittings
     else if (p.type == "keel" || p.type == "rib") set(0.29f, 0.17f, 0.09f); // structural
     else if (p.type == "deck") set(0.62f, 0.44f, 0.25f);    // deck
     else set(0.55f, 0.36f, 0.18f);                          // plank
@@ -127,27 +130,13 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
         bgfx::submit(viewId, s_prog);
     }
 
-    // Mast + sail (data-driven), composed under the same ship root.
+    // The sail, composed under the same ship root. (The mast, bowsprit, fittings
+    // and rigging are real hull pieces, drawn in the piece loop above.)
     const uint64_t baseState = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z
                              | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_MSAA;
     const float depth = float(ship.bounds.depth);
     const float len = float(ship.bounds.length);
     const float wid = float(ship.bounds.width);
-
-    if (ship.systems.mast_count > 0) {
-        float local[16];
-        bx::mtxSRT(local, 0.16f, depth * 0.9f + 4.6f, 0.16f, 0.0f, 0.0f, 0.0f,
-                   0.0f, depth * 0.45f + 2.1f, -len * 0.05f);
-        float model[16];
-        bx::mtxMul(model, local, shipRoot);
-        const float mastCol[4] = { 0.29f, 0.17f, 0.09f, 1.0f };
-        bgfx::setUniform(u_color, mastCol);
-        bgfx::setTransform(model);
-        bgfx::setVertexBuffer(0, s_vbh);
-        bgfx::setIndexBuffer(s_ibh);
-        bgfx::setState(baseState | BGFX_STATE_CULL_CW);
-        bgfx::submit(viewId, s_prog);
-    }
 
     if (ship.systems.sail_count > 0 && sailFullness > 0.02f) {
         // Trim: the sail sets from athwartships (running) toward fore-and-aft
