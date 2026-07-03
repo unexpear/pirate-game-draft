@@ -48,6 +48,7 @@ void pieceColor(const sea::Piece& p, float out[4]) {
     auto set = [&](float r, float g, float b) { out[0] = r; out[1] = g; out[2] = b; out[3] = 1.0f; };
     if (p.damage >= 1.0) set(0.11f, 0.11f, 0.13f);          // destroyed
     else if (p.damage > 0.0) set(0.67f, 0.22f, 0.18f);      // damaged
+    else if (p.type == "stem" || p.type == "sternpost") set(0.36f, 0.23f, 0.12f); // backbone posts
     else if (p.type == "keel" || p.type == "rib") set(0.29f, 0.17f, 0.09f); // structural
     else if (p.type == "deck") set(0.62f, 0.44f, 0.25f);    // deck
     else set(0.55f, 0.36f, 0.18f);                          // plank

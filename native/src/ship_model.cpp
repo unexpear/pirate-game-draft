@@ -76,7 +76,8 @@ Ship makeShipFromConfig(const ShipConfig& cfg) {
     ship.systems.cannon_count = cfg.cannonCount;
     ship.systems.cargo_mass = cfg.cargoMass;
 
-    // Keel
+    // Backbone: keel (the spine), then the stem (bow post) and sternpost (stern
+    // post) rising from its ends. Everything else is framed/planked onto these.
     {
         Piece p;
         p.id = "keel_001";
@@ -86,6 +87,32 @@ Ship makeShipFromConfig(const ShipConfig& cfg) {
         p.mass = p.volume * density;
         p.position = { 0, -depth * 0.55, 0 };
         p.bounds = { 0.18, 0.18, length };
+        ship.pieces.push_back(p);
+    }
+    {
+        // Stem: rises from the fore end of the keel and rakes forward.
+        Piece p;
+        p.id = "stem_001";
+        p.type = "stem";
+        p.material = cfg.material;
+        p.volume = 0.22 * 0.30 * (depth * 1.4);
+        p.mass = p.volume * density;
+        p.position = { 0, -depth * 0.1, length * 0.5 };
+        p.rotation = { -0.42, 0, 0 }; // rake the head forward
+        p.bounds = { 0.22, depth * 1.4, 0.30 };
+        ship.pieces.push_back(p);
+    }
+    {
+        // Sternpost: rises near-vertically from the aft end of the keel.
+        Piece p;
+        p.id = "sternpost_001";
+        p.type = "sternpost";
+        p.material = cfg.material;
+        p.volume = 0.24 * 0.32 * (depth * 1.3);
+        p.mass = p.volume * density;
+        p.position = { 0, -depth * 0.12, -length * 0.5 };
+        p.rotation = { 0.20, 0, 0 }; // slight aft rake
+        p.bounds = { 0.24, depth * 1.3, 0.32 };
         ship.pieces.push_back(p);
     }
 
@@ -419,12 +446,13 @@ bool isFrameFirst(BuildTradition t) { return t == BuildTradition::English; }
 std::vector<int> buildOrder(const Ship& ship, BuildTradition t) {
     const bool frameFirst = isFrameFirst(t);
     auto stage = [&](const std::string& type) -> int {
-        if (type == "keel") return 0;             // backbone always first
-        if (type == "deck") return 3;             // deck always last
+        if (type == "keel") return 0;                         // laid first
+        if (type == "stem" || type == "sternpost") return 1;  // rest of the backbone
+        if (type == "deck") return 4;                         // deck always last
         const bool frame = (type == "rib");
-        // shell-first: planks(1) then frames(2). frame-first: frames(1) then planks(2).
-        if (frameFirst) return frame ? 1 : 2;
-        return frame ? 2 : 1;
+        // shell-first: planks(2) then frames(3). frame-first: frames(2) then planks(3).
+        if (frameFirst) return frame ? 2 : 3;
+        return frame ? 3 : 2;
     };
     std::vector<int> idx(ship.pieces.size());
     for (int i = 0; i < static_cast<int>(ship.pieces.size()); ++i) idx[i] = i;
@@ -739,6 +767,25 @@ std::vector<TestResult> runSelfTest() {
         const std::vector<int> ord = buildOrder(base, BuildTradition::English);
         const bool ends = base.pieces[ord.front()].type == "keel" && base.pieces[ord.back()].type == "deck";
         push("Keel is laid first and the deck fitted last", ends);
+
+        // Backbone: a stem and a sternpost exist, laid (with the keel) before planking.
+        int stems = 0, sternposts = 0;
+        for (const auto& p : base.pieces) {
+            if (p.type == "stem") ++stems;
+            if (p.type == "sternpost") ++sternposts;
+        }
+        push("Ship has a stem and a sternpost (the backbone)", stems == 1 && sternposts == 1,
+             num(stems) + " stem, " + num(sternposts) + " sternpost");
+
+        std::vector<int> rk(base.pieces.size(), 0);
+        for (int i = 0; i < static_cast<int>(ord.size()); ++i) rk[ord[i]] = i;
+        int maxBack = -1, minPlank = 1 << 30;
+        for (int i = 0; i < static_cast<int>(base.pieces.size()); ++i) {
+            const std::string& t = base.pieces[i].type;
+            if (t == "keel" || t == "stem" || t == "sternpost") maxBack = std::max(maxBack, rk[i]);
+            if (t == "plank") minPlank = std::min(minPlank, rk[i]);
+        }
+        push("The whole backbone is laid before the planking", maxBack < minPlank);
     }
 
     // --- Island collision ---
