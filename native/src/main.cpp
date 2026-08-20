@@ -185,8 +185,14 @@ int main(int argc, char** argv) {
     float windDir = 2.1f;             // wind blows toward this heading (radians); drifts
 
     // Gunnery + an AI enemy warship that maneuvers for a broadside and fires back.
-    sea::Ship enemy = sea::makeShipFromConfig(cfg);
+    // A big, beamy, heavily-gunned Man-o'-War: its own hull profile makes it sail
+    // and turn like the ponderous warship it is.
+    sea::ShipConfig enemyCfg;
+    enemyCfg.name = "Man-o'-War";
+    enemyCfg.length = 17.0; enemyCfg.width = 6.5; enemyCfg.depth = 3.2; enemyCfg.cannonCount = 4;
+    sea::Ship enemy = sea::makeShipFromConfig(enemyCfg);
     enemy.display_name = "Man-o'-War";
+    sea::HullProfile enemyProfile = sea::bakeHullProfile(enemy);
     float enemyWorldX = 10.0f, enemyWorldZ = 60.0f; // starts off the starboard bow
     float enemyHeading = 3.0f, enemySink = 0.0f;
     float enemySpeed = 0.0f, enemyReload = 0.0f;
@@ -245,7 +251,7 @@ int main(int argc, char** argv) {
     auto resetShip = [&]() {
         ship = sea::makeShipFromConfig(cfg);
         sinkDepth = 0.0f; sailTier = 1; wHoldTime = 0.0f; speed = 0.0f; heading = 0.0f; worldX = 0.0f; worldZ = 0.0f;
-        enemy = sea::makeShipFromConfig(cfg); enemy.display_name = "Man-o'-War";
+        enemy = sea::makeShipFromConfig(enemyCfg); enemy.display_name = "Man-o'-War";
         enemyWorldX = 10.0f; enemyWorldZ = 60.0f; enemyHeading = 3.0f; enemySink = 0.0f;
         enemySpeed = 0.0f; enemyReload = 0.0f; shots.clear(); enemyShots.clear();
         enemyStruck = false; boarding = false; captured = false; boardTimer = 0.0f;
@@ -400,12 +406,14 @@ int main(int argc, char** argv) {
             const bool eReady = enemyReload <= 0.0f;
             const sea::AiOrders ord = sea::aiCaptain(enemyWorldX, enemyWorldZ, enemyHeading,
                                                      worldX, worldZ, 28.0, eReady);
+            const float eFull = kFullSpeed * float(enemyProfile.topSpeedFactor);
+            const float eTrav = kTravelSpeed * float(enemyProfile.topSpeedFactor);
             const float eTarget = ord.sailTier <= 0 ? 0.0f
-                                : (ord.sailTier == 1 ? kFullSpeed * 0.5f
-                                : (ord.sailTier == 2 ? kFullSpeed : kTravelSpeed));
-            enemySpeed += (eTarget - enemySpeed) * clampf(dt * 1.0f, 0.0f, 1.0f);
-            const float eFrac = clampf(enemySpeed / kTravelSpeed, 0.0f, 1.0f);
-            enemyHeading += ord.steer * (1.2f * (1.0f - 0.55f * eFrac)) * dt;
+                                : (ord.sailTier == 1 ? eFull * 0.5f
+                                : (ord.sailTier == 2 ? eFull : eTrav));
+            enemySpeed += (eTarget - enemySpeed) * clampf(dt * 1.0f * float(enemyProfile.accelFactor), 0.0f, 1.0f);
+            const float eFrac = clampf(enemySpeed / (eTrav > 0.1f ? eTrav : kTravelSpeed), 0.0f, 1.0f);
+            enemyHeading += ord.steer * (1.2f * (1.0f - 0.55f * eFrac) * float(enemyProfile.turnFactor)) * dt;
             enemyWorldX += std::sin(enemyHeading) * enemySpeed * dt;
             enemyWorldZ += std::cos(enemyHeading) * enemySpeed * dt;
             enemyPose = sea::computeFloatPose(enemy, waves, timeSec, enemyWorldX, enemyWorldZ, enemyHeading);
