@@ -141,6 +141,10 @@ int resolveHits(std::vector<Projectile>& shots, Ship& target,
                 double tx, double ty, double tz, double heading);
 // Flood (damage) the least-damaged intact hull plank/rib by `amount`.
 void damageHull(Ship& ship, double amount);
+// Damage the mast/rigging by `amount` (a high shot rakes the rig).
+void damageRig(Ship& ship, double amount);
+// Fraction of the rig (mast) still intact, 0..1 — scales the ship's sail drive.
+double rigIntegrity(const Ship& ship);
 
 // Decide orders for an enemy captain at (ex,ez,eHeading) engaging a foe at
 // (ox,oz): close to `engageRange`, then turn to present a broadside and fire the

@@ -355,7 +355,8 @@ int main(int argc, char** argv) {
         const float tierSpeed = effTier == 0 ? 0.0f
                               : (effTier == 1 ? pFull * 0.5f
                               : (effTier == 2 ? pFull : pTravel));
-        const float targetSpeed = tierSpeed * windFactor;
+        const float rig = float(sea::rigIntegrity(ship)); // a shot-up rig loses drive
+        const float targetSpeed = tierSpeed * windFactor * rig;
         // Heavier hulls gather (and lose) way more slowly.
         speed += (targetSpeed - speed) * clampf(dt * 1.2f * float(activeProfile.accelFactor), 0.0f, 1.0f);
         const float speedFrac = clampf(speed / (pTravel > 0.1f ? pTravel : kTravelSpeed), 0.0f, 1.0f);
@@ -408,9 +409,10 @@ int main(int argc, char** argv) {
                                                      worldX, worldZ, 28.0, eReady);
             const float eFull = kFullSpeed * float(enemyProfile.topSpeedFactor);
             const float eTrav = kTravelSpeed * float(enemyProfile.topSpeedFactor);
-            const float eTarget = ord.sailTier <= 0 ? 0.0f
+            const float eRig = float(sea::rigIntegrity(enemy)); // rake her rig to slow her
+            const float eTarget = (ord.sailTier <= 0 ? 0.0f
                                 : (ord.sailTier == 1 ? eFull * 0.5f
-                                : (ord.sailTier == 2 ? eFull : eTrav));
+                                : (ord.sailTier == 2 ? eFull : eTrav))) * eRig;
             enemySpeed += (eTarget - enemySpeed) * clampf(dt * 1.0f * float(enemyProfile.accelFactor), 0.0f, 1.0f);
             const float eFrac = clampf(enemySpeed / (eTrav > 0.1f ? eTrav : kTravelSpeed), 0.0f, 1.0f);
             enemyHeading += ord.steer * (1.2f * (1.0f - 0.55f * eFrac) * float(enemyProfile.turnFactor)) * dt;
@@ -579,6 +581,8 @@ int main(int argc, char** argv) {
                                  : (effTier == 2 ? "full sail" : "TRAVEL SPEED"));
             ImGui::Text("Sails:   %s", tierName);
             ImGui::Text("Speed:   %.1f", speed);
+            ImGui::TextColored(rig < 0.6f ? kRed : (rig < 0.99f ? ImVec4(1.0f, 0.8f, 0.3f, 1.0f) : kGreen),
+                               "Rig:     %.0f%%", rig * 100.0f);
             ImGui::Text("Heading: %.0f deg", heading * 57.2957795f);
             ImGui::Text("Wind:    %.0f deg off bow  (%s)", awaDeg, sea::pointOfSail(awaDeg));
             ImGui::TextColored(windFactor < 0.08f ? kRed : kGreen, "Drive:   %.0f%%%s",

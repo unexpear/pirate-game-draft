@@ -410,6 +410,19 @@ void damageHull(Ship& ship, double amount) {
     if (best) best->damage = clampd(best->damage + amount, 0.0, 1.0);
 }
 
+void damageRig(Ship& ship, double amount) {
+    // Damage the mast (the rigging). A shot-up rig loses drive (see rigIntegrity).
+    for (auto& p : ship.pieces)
+        if (p.type == "mast" && p.damage < 1.0) { p.damage = clampd(p.damage + amount, 0.0, 1.0); return; }
+}
+
+double rigIntegrity(const Ship& ship) {
+    double sum = 0.0; int n = 0;
+    for (const auto& p : ship.pieces)
+        if (p.type == "mast") { sum += 1.0 - clampd(p.damage, 0.0, 1.0); ++n; }
+    return n ? clampd(sum / n, 0.0, 1.0) : 1.0;
+}
+
 int resolveHits(std::vector<Projectile>& shots, Ship& target,
                 double tx, double ty, double tz, double heading) {
     int hits = 0;
@@ -417,7 +430,9 @@ int resolveHits(std::vector<Projectile>& shots, Ship& target,
         if (!p.alive) continue;
         if (pointInHull(target, tx, ty, tz, heading, p.x, p.y, p.z)) {
             p.alive = false;
-            damageHull(target, 0.34);
+            // High shots rake the rigging (slowing her); low shots flood the hull.
+            if (p.y > ty + target.bounds.depth * 0.55) damageRig(target, 0.5);
+            else damageHull(target, 0.34);
             ++hits;
         }
     }
@@ -772,6 +787,22 @@ std::vector<TestResult> runSelfTest() {
             resolveHits(volley, victim, 0, 0, 0, 0.0);
         }
         push("Sustained fire founders the target", getShipStats(victim).sinking);
+
+        // A HIGH shot rakes the rigging (slowing her); a low shot floods the hull.
+        Ship rigTarget = makeShipFromConfig(baseCfg);
+        const double rig0 = rigIntegrity(rigTarget);
+        const double hi = rigTarget.bounds.depth * 0.85; // upper part of the hit box
+        std::vector<Projectile> high = { Projectile{ 0, hi, 0, 0, 0, 0, 4.0, true } };
+        resolveHits(high, rigTarget, 0, 0, 0, 0.0);
+        push("A high shot rakes the rigging (rig loses integrity)", rigIntegrity(rigTarget) < rig0);
+        push("An undamaged rig reads full integrity", rig0 > 0.99);
+
+        // A low shot floods the hull and spares the rig.
+        Ship hullTarget = makeShipFromConfig(baseCfg);
+        std::vector<Projectile> low = { Projectile{ 0, 0, 0, 0, 0, 0, 4.0, true } };
+        resolveHits(low, hullTarget, 0, 0, 0, 0.0);
+        push("A low shot floods the hull, not the rig",
+             getShipStats(hullTarget).damageRatio > 0.0 && rigIntegrity(hullTarget) > 0.99);
     }
 
     // --- Enemy AI captain ---
