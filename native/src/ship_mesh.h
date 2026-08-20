@@ -21,7 +21,7 @@ void shutdown();
 // the scene (0,0 = our ship at the scrolling-ocean origin).
 void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
             float heading, float windDir, float sailFullness, float timeSec,
-            float posX = 0.0f, float posZ = 0.0f);
+            float posX = 0.0f, float posZ = 0.0f, float heelScale = 1.0f);
 
 // Draw a single lit unit-cube marker (e.g. a cannonball tracer) at world (x,y,z).
 void renderBox(uint16_t viewId, float x, float y, float z, float size,

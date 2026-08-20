@@ -578,6 +578,12 @@ HullProfile bakeHullProfile(const Ship& ship) {
     p.topSpeedFactor = std::sqrt(L / refL) * (0.70 + 0.10 * p.lengthBeamRatio);
     p.turnFactor = (refL / L) * std::sqrt(B / refB);
     p.dragFactor = 0.85 + 0.12 * (B / refB);
+
+    // Heel: a tender (low-GM) hull leans hard under sail; a stiff hull barely.
+    p.heelFactor = clampd(1.0 / (0.5 + std::max(-0.4, p.gm)), 0.55, 1.9);
+    // Acceleration: a heavier (bigger-displacement) hull gathers way more slowly.
+    const double refDisp = refL * refB * (2.8 * 0.55) * 0.50 * WATER_DENSITY;
+    p.accelFactor = clampd(refDisp / std::max(1.0, p.displacementMass), 0.6, 1.4);
     return p;
 }
 
@@ -925,6 +931,12 @@ std::vector<TestResult> runSelfTest() {
         const HullProfile ref = bakeHullProfile(makeShipFromConfig(ShipConfig{}));
         push("The reference sloop bakes to ~1.0 handling", std::fabs(ref.topSpeedFactor - 1.0) < 0.05
              && std::fabs(ref.turnFactor - 1.0) < 0.05);
+
+        push("A tender hull heels more than a stiff one", fine.heelFactor > beamy.heelFactor,
+             num(fine.heelFactor * 100) + "% vs " + num(beamy.heelFactor * 100) + "%");
+        const bool accel = bakeHullProfile(makeShipFromConfig(bigCfg)).accelFactor
+                         < bakeHullProfile(makeShipFromConfig(smallCfg)).accelFactor;
+        push("A bigger hull gathers way more slowly", accel);
     }
 
     return r;

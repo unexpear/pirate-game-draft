@@ -191,6 +191,8 @@ struct HullProfile {
     double topSpeedFactor = 1;                 // relative max speed (long & fine => higher)
     double turnFactor = 1;                     // relative agility (short & beamy => higher)
     double dragFactor = 1;                     // relative resistance
+    double heelFactor = 1;                     // how far it leans under sail (tender => higher)
+    double accelFactor = 1;                    // how quickly it gathers way (heavy => lower)
 };
 HullProfile bakeHullProfile(const Ship& ship);
 

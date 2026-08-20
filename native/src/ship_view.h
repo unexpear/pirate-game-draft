@@ -24,7 +24,7 @@ void shutdown();
 void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>& waves,
             const sea::FloatPose& pose, float timeSec, float heading,
             float worldX, float worldZ, float windDir, float sailFullness,
-            int width, int height);
+            int width, int height, float heelScale = 1.0f);
 
 // Draw another ship into the same view (camera already set by render()), placed
 // at scene position (posX,posZ) relative to our ship at the origin.

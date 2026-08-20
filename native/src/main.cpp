@@ -350,7 +350,8 @@ int main(int argc, char** argv) {
                               : (effTier == 1 ? pFull * 0.5f
                               : (effTier == 2 ? pFull : pTravel));
         const float targetSpeed = tierSpeed * windFactor;
-        speed += (targetSpeed - speed) * clampf(dt * 1.2f, 0.0f, 1.0f);
+        // Heavier hulls gather (and lose) way more slowly.
+        speed += (targetSpeed - speed) * clampf(dt * 1.2f * float(activeProfile.accelFactor), 0.0f, 1.0f);
         const float speedFrac = clampf(speed / (pTravel > 0.1f ? pTravel : kTravelSpeed), 0.0f, 1.0f);
         // Turn radius couples to speed AND the hull's agility (short & beamy turns tighter).
         const float turnRate = 1.35f * (1.0f - 0.62f * speedFrac) * float(activeProfile.turnFactor);
@@ -576,6 +577,10 @@ int main(int argc, char** argv) {
                                windFactor * 100.0f, windFactor < 0.08f ? "   in irons - bear away!" : "");
             ImGui::Text("Port:    %.0f m", islandDist);
             if (inSafeZone) ImGui::TextColored(kGreen, ">> SAFE ZONE - harbour truce <<");
+            const char* hs = activeProfile.gm < 0.0 ? "tender" : (activeProfile.gm < 0.4 ? "lively"
+                            : (activeProfile.gm < 1.0 ? "stable" : "stiff"));
+            ImGui::Text("Hull:    %.0f%% speed, %.0f%% turn (%s)",
+                        activeProfile.topSpeedFactor * 100.0, activeProfile.turnFactor * 100.0, hs);
         }
         if (ImGui::CollapsingHeader("Gunnery & boarding", ImGuiTreeNodeFlags_DefaultOpen)) {
             const char* est = captured ? "captured" : (enemyGone ? "sunk"
@@ -643,7 +648,7 @@ int main(int argc, char** argv) {
             ship_view::renderBuildScene(kClearView, shown, waves, timeSec, timeSec * 0.12f, width, height,
                                         walkMode, charX, charY, charZ, charHeading, walkPhase);
         } else {
-            ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height);
+            ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height, float(activeProfile.heelFactor));
             if (!enemyGone)
                 ship_view::renderShip(kClearView, enemy, enemyPose, enemyHeading, windDir,
                                       enemyStruck ? 0.0f : 0.75f, timeSec, // furled sails once she strikes

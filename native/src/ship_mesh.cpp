@@ -91,14 +91,14 @@ void shutdown() {
 
 void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
             float heading, float windDir, float sailFullness, float timeSec,
-            float posX, float posZ) {
+            float posX, float posZ, float heelScale) {
     // Real sailing visuals: the wind angle off the bow drives sail trim, luffing,
     // and how far the hull heels to leeward under sail pressure.
     const float align = std::cos(heading - windDir);
     const float awa = std::acos(std::max(-1.0f, std::min(1.0f, -align))); // 0=in irons .. pi=astern
     const float lee = (std::sin(windDir - heading) >= 0.0f) ? 1.0f : -1.0f; // leeward side
     const float power = float(sea::sailPower(double(awa) * 57.2957795));
-    const float windHeel = lee * 0.34f * power * std::sin(awa) * sailFullness; // lean to leeward
+    const float windHeel = lee * 0.34f * power * std::sin(awa) * sailFullness * heelScale; // lean to leeward
 
     // Ship root: yaw (heading) + heave + pitch + (wave heel + wind heel) + world
     // position, above each piece's local transform.

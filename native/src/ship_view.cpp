@@ -27,7 +27,7 @@ void shutdown() {
 void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>& waves,
             const sea::FloatPose& pose, float timeSec, float heading,
             float worldX, float worldZ, float windDir, float sailFullness,
-            int width, int height) {
+            int width, int height, float heelScale) {
     // Chase camera behind the ship's heading (ship stays at the origin; the
     // ocean scrolls past via worldX/worldZ).
     const float dist = 24.0f;
@@ -47,7 +47,7 @@ void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>
     bgfx::setViewRect(viewId, 0, 0, uint16_t(width), uint16_t(height));
 
     water_gpu::render(viewId, waves, timeSec, eye.x, eye.y, eye.z, worldX, worldZ);
-    ship_mesh::render(viewId, ship, pose, heading, windDir, sailFullness, timeSec);
+    ship_mesh::render(viewId, ship, pose, heading, windDir, sailFullness, timeSec, 0.0f, 0.0f, heelScale);
 }
 
 void renderShip(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
