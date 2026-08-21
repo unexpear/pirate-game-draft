@@ -28,7 +28,7 @@ float shadowFactor(vec3 wpos) {
 	for (int y = -1; y <= 1; ++y)
 	for (int x = -1; x <= 1; ++x)
 		sh += (cur > texture2DLod(s_shadowMap, uv + vec2(float(x), float(y)) * texel, 0.0).x) ? 1.0 : 0.0;
-	return 1.0 - (sh / 9.0) * 0.38;
+	return 1.0 - (sh / 9.0) * 0.30;
 }
 
 float hash21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -91,7 +91,7 @@ void main()
 	{
 		vec3 sun = vec3(1.25, 1.12, 0.92);                 // brighter daylight sun
 		vec3 skyfill = vec3(0.55, 0.63, 0.74);             // brighter cool sky fill
-		col = base * (skyfill * 0.78 + sun * ndl * 0.90);  // lift shadows out of near-black, keep a strong key
+		col = base * (skyfill * 0.84 + sun * ndl * 0.90);  // lift shadows out of near-black, keep a strong key
 	}
 
 	if (u_mat.x < 2.5) col *= shadowFactor(v_wpos); // cast + self shadows (not the sail)

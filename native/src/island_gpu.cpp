@@ -177,7 +177,7 @@ void shutdown() {
 }
 
 void render(uint16_t viewId, float relX, float relZ) {
-    const float lightV[4] = { 0.5f, 0.6f, 0.62f, 0.0f };
+    const float lightV[4] = { 0.42f, 0.68f, -0.55f, 0.0f };
     bgfx::setUniform(u_lightDir, lightV);
     float m[16];
     bx::mtxTranslate(m, relX, 0.0f, relZ);

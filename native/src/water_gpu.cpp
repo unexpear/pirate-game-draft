@@ -126,7 +126,7 @@ void render(uint16_t viewId, const std::vector<sea::Wave>& waves, float t,
     bgfx::setUniform(u_waveTime, timeV);
     const float offV[4] = { offsetX, offsetZ, 0.0f, 0.0f };
     bgfx::setUniform(u_waveOffset, offV);
-    const float lightV[4] = { 0.5f, 0.6f, 0.62f, 0.0f };
+    const float lightV[4] = { 0.42f, 0.68f, -0.55f, 0.0f };
     bgfx::setUniform(u_lightDir, lightV);
     const float camV[4] = { eyeX, eyeY, eyeZ, 0.0f };
     bgfx::setUniform(u_camPos, camV);

@@ -36,7 +36,7 @@ constexpr uint16_t kClearView = 1;  // main scene
 constexpr uint16_t kImGuiView = 200;
 
 // Sun direction (must match the lighting in the shaders).
-constexpr float kSunX = 0.5f, kSunY = 0.6f, kSunZ = 0.62f;
+constexpr float kSunX = 0.42f, kSunY = 0.68f, kSunZ = -0.55f;
 
 void* nativeWindowHandle(SDL_Window* w) {
 #if defined(_WIN32)

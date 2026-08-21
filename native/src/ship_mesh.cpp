@@ -122,7 +122,7 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
         float(pose.pitch), heading, float(pose.heel) + windHeel,
         posX, float(pose.heaveY), posZ);
 
-    const float lightV[4] = { 0.5f, 0.6f, 0.62f, 0.0f }; // lower warm sun: lights vertical faces
+    const float lightV[4] = { 0.42f, 0.68f, -0.55f, 0.0f }; // lower warm sun: lights vertical faces
     bgfx::setUniform(u_lightDir, lightV);
 
     for (const auto& p : ship.pieces) {
@@ -264,7 +264,7 @@ void renderDepth(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& p
 void renderBoxSized(uint16_t viewId, float x, float y, float z,
                     float sx, float sy, float sz, float r, float g, float b,
                     float mat) {
-    const float lightV[4] = { 0.5f, 0.6f, 0.62f, 0.0f };
+    const float lightV[4] = { 0.42f, 0.68f, -0.55f, 0.0f };
     bgfx::setUniform(u_lightDir, lightV);
     float m[16];
     bx::mtxSRT(m, sx, sy, sz, 0.0f, 0.0f, 0.0f, x, y, z);
@@ -287,7 +287,7 @@ void renderBox(uint16_t viewId, float x, float y, float z, float size,
 
 void renderBoxRot(uint16_t viewId, float x, float y, float z, float sx, float sy, float sz,
                   float rx, float ry, float rz, float r, float g, float b, float mat) {
-    const float lightV[4] = { 0.5f, 0.6f, 0.62f, 0.0f };
+    const float lightV[4] = { 0.42f, 0.68f, -0.55f, 0.0f };
     bgfx::setUniform(u_lightDir, lightV);
     float m[16];
     bx::mtxSRT(m, sx, sy, sz, rx, ry, rz, x, y, z);
@@ -304,7 +304,7 @@ void renderBoxRot(uint16_t viewId, float x, float y, float z, float sx, float sy
 }
 
 void renderShadow(uint16_t viewId, float x, float y, float z, float sx, float sz, float alpha) {
-    const float lightV[4] = { 0.5f, 0.6f, 0.62f, 0.0f };
+    const float lightV[4] = { 0.42f, 0.68f, -0.55f, 0.0f };
     bgfx::setUniform(u_lightDir, lightV);
     float m[16];
     bx::mtxSRT(m, sx, 0.2f, sz, 0.0f, 0.0f, 0.0f, x, y, z);
@@ -322,7 +322,7 @@ void renderShadow(uint16_t viewId, float x, float y, float z, float sx, float sz
 }
 
 void renderCharacter(uint16_t viewId, float x, float y, float z, float heading, float walkPhase) {
-    const float lightV[4] = { 0.5f, 0.6f, 0.62f, 0.0f };
+    const float lightV[4] = { 0.42f, 0.68f, -0.55f, 0.0f };
     bgfx::setUniform(u_lightDir, lightV);
     // Character root: stands at (x,y,z) (y = feet on the ground), faces `heading`.
     float root[16];
