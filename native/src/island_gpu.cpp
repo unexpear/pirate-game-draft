@@ -71,6 +71,16 @@ uint32_t colorFor(float x, float z, float h, float slopeUp) {
     t = ss(2.8f, 5.5f, h);  r = r + (grass[0]-r)*t; g = g + (grass[1]-g)*t; b = b + (grass[2]-b)*t; // wide sand->grass
     t = ss(9.0f, 17.0f, h); r = r + (up[0]-r)*t;    g = g + (up[1]-g)*t;    b = b + (up[2]-b)*t;    // grass->upland
     t = ss(19.0f, 28.0f, h); r = r + (rock[0]-r)*t; g = g + (rock[1]-g)*t;  b = b + (rock[2]-b)*t;  // upland->rock
+    // Trodden TOWN GROUND: inside the built south-shore footprint the grass reads
+    // as packed earth / cobbled dirt, so the gaps between buildings aren't bright
+    // lawn. Fades out at the town edges and reverts to grass up on the bare hill.
+    {
+        const float dirt[3] = { 0.50f, 0.44f, 0.34f };
+        const float mx = ss(-60.0f, -54.0f, x) * (1.0f - ss(56.0f, 62.0f, x));
+        const float mz = ss(-44.0f, -38.0f, z) * (1.0f - ss(22.0f, 28.0f, z));
+        const float townM = mx * mz * ss(1.4f, 3.2f, h) * (1.0f - ss(15.0f, 20.0f, h)) * 0.85f;
+        r = r + (dirt[0]-r)*townM; g = g + (dirt[1]-g)*townM; b = b + (dirt[2]-b)*townM;
+    }
     // Steep faces above the beach turn to exposed rock.
     if (h > 3.0f) {
         float steep = 1.0f - ss(0.55f, 0.78f, slopeUp);
