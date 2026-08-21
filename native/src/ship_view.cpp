@@ -83,8 +83,10 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     const float metal[3] = { 0.25f, 0.22f, 0.20f };
 
     // --- Landmass (beach shelf, grass plateau, hill, rocky peak) ---
-    B(0, 0.5f, -2, 130, 1.6f, 108, sand[0], sand[1], sand[2]);
-    B(0, 3.0f, 8, 104, 6.4f, 78, grass[0], grass[1], grass[2]);
+    // Land rises clearly above the wave tops (~1) and runs deep below the
+    // waterline, so it OCCLUDES the ocean instead of sitting flush in it.
+    B(0, -0.4f, -2, 132, 5.2f, 110, sand[0], sand[1], sand[2]);   // beach: top ~2.2, base -3.0
+    B(0, 1.5f, 8, 104, 9.4f, 78, grass[0], grass[1], grass[2]);   // grass: top ~6.2, base -3.2
     B(10, 6.5f, 24, 54, 8, 44, grassD[0], grassD[1], grassD[2]);
     B(-14, 8.5f, 30, 26, 10, 24, rock[0], rock[1], rock[2]);
 
@@ -175,9 +177,9 @@ void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
     // dock the stocks sit on, a great ship hall + flanking gantry cranes behind
     // the berth (so the hull stays the clear foreground focus).
     water_gpu::render(viewId, waves, timeSec, eye.x, eye.y, eye.z, 24.0f, 76.0f);
-    box(0.0f, 6.0f, 96.0f, 180.0f, 12.0f, 74.0f, grass[0], grass[1], grass[2]);   // island (distance)
-    box(0.0f, 0.8f, 58.0f, 200.0f, 2.0f, 20.0f, sand[0], sand[1], sand[2]);       // shore/beach
-    box(0.0f, 0.5f, 6.0f, 56.0f, 1.0f, 46.0f, sand[0], sand[1], sand[2]);         // dock ground
+    box(0.0f, 5.0f, 96.0f, 180.0f, 16.0f, 74.0f, grass[0], grass[1], grass[2]);   // island (distance, deep base)
+    box(0.0f, 0.0f, 58.0f, 200.0f, 5.0f, 20.0f, sand[0], sand[1], sand[2]);       // shore/beach: top ~2.5
+    box(0.0f, -0.6f, 6.0f, 56.0f, 4.8f, 46.0f, sand[0], sand[1], sand[2]);        // dock ground: top ~1.8, base -3.0
     box(0.0f, 10.0f, 40.0f, 48.0f, 20.0f, 22.0f, timber[0], timber[1], timber[2]); // great ship hall
     box(0.0f, 20.6f, 40.0f, 50.0f, 1.6f, 24.0f, roof[0], roof[1], roof[2]);
     for (int s = -1; s <= 1; s += 2) {                                            // gantry cranes

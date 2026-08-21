@@ -218,7 +218,7 @@ int main(int argc, char** argv) {
     // On-foot character — walk the shipyard. Position is in the build-scene's local
     // space (the ship sits on the stocks at the origin).
     bool walkMode = false, onDeck = false;
-    float charX = 9.0f, charY = 1.0f, charZ = -11.0f, charHeading = -0.7f, walkPhase = 0.0f;
+    float charX = 9.0f, charY = 1.8f, charZ = -11.0f, charHeading = -0.7f, walkPhase = 0.0f;
 
     // A large island with a port + shipyard, moored at a fixed spot to the north.
     const float islandX = 0.0f, islandZ = 120.0f;
@@ -503,7 +503,7 @@ int main(int argc, char** argv) {
             } else {
                 charX = clampf(charX, -26.0f, 26.0f);
                 charZ = clampf(charZ, -20.0f, 26.0f);
-                charY = 1.0f; // dock level
+                charY = 1.8f; // dock top
             }
             if (mv != 0.0f) walkPhase += dt * 9.0f;
         }
@@ -548,7 +548,7 @@ int main(int argc, char** argv) {
                         ImGui::TextColored(kGreen, "  On the dock - WASD walk, A/D turn.");
                     } else {
                         if (ImGui::Button("Go ashore")) {
-                            onDeck = false; charX = 9.0f; charZ = -11.0f; charHeading = -0.7f; charY = 1.0f;
+                            onDeck = false; charX = 9.0f; charZ = -11.0f; charHeading = -0.7f; charY = 1.8f;
                         }
                         ImGui::TextColored(kGreen, "  On deck - WASD walk, A/D turn.");
                     }
