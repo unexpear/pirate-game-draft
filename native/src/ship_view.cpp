@@ -335,8 +335,15 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     // framing, belt courses, chimneys and dormers — composed by house().
     const float beam[3]   = { 0.30f, 0.21f, 0.14f };  // dark oak framing timber
     const float glassC[3] = { 0.46f, 0.56f, 0.62f };  // cool window glass
-    const float sillC[3]  = { 0.84f, 0.80f, 0.70f };  // pale dressed stone (sills, lintels, steps)
-    const float quoinC[3] = { 0.82f, 0.78f, 0.68f };  // pale corner stone
+    const float sillC[3]  = { 0.82f, 0.74f, 0.57f };  // warm sandstone (sills, lintels, steps, plinths)
+    const float quoinC[3] = { 0.83f, 0.75f, 0.59f };  // warm corner stone
+    // Shutter-colour variety: windowOn uses curShutter when a building sets one,
+    // else the default blue — so the town isn't one repeated blue-shutter motif.
+    const float shutGreen[3] = { 0.28f, 0.48f, 0.33f };
+    const float shutRed[3]   = { 0.60f, 0.27f, 0.23f };
+    const float shutDark[3]  = { 0.26f, 0.23f, 0.20f };
+    const float shutTeal[3]  = { 0.24f, 0.46f, 0.48f };
+    const float* curShutter = nullptr;
 
     // All kit helpers place via BL/BLr (the current shelf) so a building is rigid.
     // A framed WINDOW on a wall face with outward normal (nx,0,nz) (one is +/-1).
@@ -354,8 +361,9 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
         place(0, -h * 0.5f - 0.2f, 0.18f, w + 0.9f, 0.24f, 0.42f, sillC); // sill
         place(0,  h * 0.5f + 0.2f, 0.12f, w + 0.7f, 0.24f, 0.30f, sillC); // lintel
         if (shut) {
-            place(-w * 0.5f - 0.33f, 0, 0.2f, 0.52f, h, 0.14f, shutter);
-            place( w * 0.5f + 0.33f, 0, 0.2f, 0.52f, h, 0.14f, shutter);
+            const float* sc = curShutter ? curShutter : shutter;
+            place(-w * 0.5f - 0.33f, 0, 0.2f, 0.52f, h, 0.14f, sc);
+            place( w * 0.5f + 0.33f, 0, 0.2f, 0.52f, h, 0.14f, sc);
         }
     };
     // A framed DOOR on the front face (normal -z), dressed-stone step, optional lantern.
@@ -439,8 +447,9 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     // style 0 = whitewash daub + quoins, 1 = timber-framed upper storey, 2 = stone.
     auto house = [&](float cx, float cz, float w, float d, int stories, float storyH,
                      const float* wall, const float* rf, float wmat, int style,
-                     int cols, const float* sign, bool chim, bool dorm) {
+                     int cols, const float* sign, bool chim, bool dorm, const float* shutC = nullptr) {
         setShelf(cx, cz);
+        curShutter = shutC;
         const float topY = stories * storyH;
         const float front = cz - d * 0.5f;
         BL(cx, -2.0f, cz, w + 1.1f, 6.0f, d + 1.1f, sillC, MAT_STONE); // stone plinth (deep, sunk into the shelf)
@@ -483,7 +492,7 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     const float tarred[3] = { 0.31f, 0.28f, 0.25f };   // tarred industry timber
     const float ironC[3]  = { 0.20f, 0.20f, 0.22f };   // black iron (cannon)
     const float flagC[3]  = { 0.12f, 0.12f, 0.14f };   // the black colours
-    const float cobble[3] = { 0.53f, 0.51f, 0.48f };   // cobbled street
+    const float cobble[3] = { 0.60f, 0.54f, 0.44f };   // warm cobbled/dirt street (less grey)
     const float wallStone[3] = { 0.56f, 0.54f, 0.50f };// fort/curtain stone
 
     auto retWall = [&](float x0, float x1, float z, float topY) {           // capstoned retaining wall
@@ -619,17 +628,17 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     // ---- BAND A: HARBOURFRONT (west -> east) — six distinct blocks with clear
     // ~3-4m street gaps, each its own colour, tall fronts on Harbour Street. ----
     // FORGE / gunsmith — grey stone, slate.
-    house(-42, -25, 12, 9, 2, 4.0f, smithyW, slate, MAT_STONE, 2, 3, red, false, false);
+    house(-42, -25, 12, 9, 2, 4.0f, smithyW, slate, MAT_STONE, 2, 3, red, false, false, shutDark);
     chimneyAt(-46, -22, 6.0f, 13.0f, true);
     BL(-46, 13.6f, -22, 1.1f, 1.3f, 1.1f, glow, MAT_FLAT);
     BL(-38, 1.4f, -30.5f, 2.2f, 1.7f, 1.5f, ironC, MAT_FLAT);     // anvil
     cannon(-35, -30, -1); shotPile(-32, -31);
     // KING'S BONDED WAREHOUSE — tall dark tarred-timber, hoist beam + cargo.
-    house(-26, -24, 13, 11, 3, 4.0f, tarred, darkRoof, 1.0f, 2, 3, nullptr, false, false);
+    house(-26, -24, 13, 11, 3, 4.0f, tarred, darkRoof, 1.0f, 2, 3, nullptr, false, false, shutDark);
     hoistBeam(-26, -29.5f, 11.5f);
     crateAt(-20, -31, 2.4f); crateAt(-31, -31, 2.4f); tarBarrel(-33, -31.5f);
     // TRADING POST / general store — ochre, terracotta, awning.
-    house(-11, -25, 11, 9, 2, 4.0f, ochre, redRoof, 1.0f, 0, 3, green, false, false);
+    house(-11, -25, 11, 9, 2, 4.0f, ochre, redRoof, 1.0f, 0, 3, green, false, false, shutGreen);
     BLr(-11, 3.4f, -30.2f, 9.0f, 0.2f, 1.7f, 0.5f, 0, 0, thatch, MAT_FLAT); // sloped awning shade
     crateAt(-6, -31, 1.8f);
     // CUSTOM HOUSE — white civic, arcade loggia, LOOKOUT TOWER (LOW skyline tier).
@@ -640,12 +649,12 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     spire(5, -23, 6.5f, 19.0f, 4.0f, slate);
     flagstaff(5, -20, 25, flagC);
     // THE CHANDLERY — teal timber, hoist beam, rope + tar spilling out.
-    house(20, -25, 10, 9, 2, 4.0f, tealW, redRoof, 1.0f, 0, 2, wood, false, false);
+    house(20, -25, 10, 9, 2, 4.0f, tealW, redRoof, 1.0f, 0, 2, wood, false, false, shutDark);
     hoistBeam(20, -30, 7.5f);
     ropeCoil(24, -31); tarBarrel(16, -31);
     // THE SALT KRAKEN TAVERN — biggest block: terracotta-red timber-frame, two-tier
     // gallery, dormers, two chimneys, amber windows.
-    house(36, -24, 15, 12, 3, 4.0f, tavW, darkRoof, 1.0f, 1, 3, amberC, false, true);
+    house(36, -24, 15, 12, 3, 4.0f, tavW, darkRoof, 1.0f, 1, 3, amberC, false, true, shutDark);
     verandah(36, -30.0f, 14, 4.0f, 2);
     setShelf(36, -24);
     chimneyAt(31, -20, 12.0f, 16.5f, true); chimneyAt(41, -20, 12.0f, 16.5f, true);
@@ -659,13 +668,14 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     gable(-3, -6, 13, 9, 11, 5.2f, redRoof, cream, MAT_STONE);
     for (int i = -1; i <= 1; i += 2) BL(-3 + i * 6.7f, 3.2f, -6, 1.4f, 8, 7.0f, cream, MAT_STONE); // buttressed flanks
     windowOn(-9.6f, 6, -6, -1, 0, 1.6f, 3.2f, false); windowOn(3.6f, 6, -6, 1, 0, 1.6f, 3.2f, false);
-    BL(-3, 13, -11.5f, 6.2f, 26, 6.2f, cream, MAT_STONE);        // campanile at the plaza-facing front
-    BL(-3, 25.5f, -11.5f, 7.2f, 3.4f, 7.2f, tailorW, MAT_STONE); // belfry
-    BL(-3, 25.5f, -12.0f, 1.3f, 1.7f, 0.4f, darkW, MAT_FLAT);    // the bell
-    spire(-3, -11.5f, 6.8f, 27.2f, 6.0f, redRoof);
-    BL(-3, 34.0f, -11.5f, 0.3f, 2.4f, 0.3f, darkW, MAT_FLAT); BL(-3, 34.6f, -11.5f, 1.6f, 0.3f, 0.3f, darkW, MAT_FLAT); // cross
+    BL(-3, 13, -11.5f, 5.6f, 26, 5.6f, cream, MAT_STONE);        // slender campanile — the dominant landmark
+    BL(-3, 26.5f, -11.5f, 6.6f, 3.6f, 6.6f, tailorW, MAT_STONE); // belfry
+    windowOn(-3, 26.5f, -14.85f, 0, -1, 1.8f, 2.6f, false);      // belfry arch
+    BL(-3, 26.5f, -12.0f, 1.3f, 1.7f, 0.4f, darkW, MAT_FLAT);    // the bell
+    spire(-3, -11.5f, 6.2f, 28.3f, 7.5f, slate);                 // slate spire (contrasts the terracotta roofs)
+    BL(-3, 36.5f, -11.5f, 0.3f, 2.6f, 0.3f, darkW, MAT_FLAT); BL(-3, 37.3f, -11.5f, 1.7f, 0.3f, 0.3f, darkW, MAT_FLAT); // cross finial
     // MERCHANTS' ARCADE & COUNTING HOUSE — brick-red, ground colonnade, west of the square.
-    house(-24, -7, 12, 9, 2, 4.0f, brickW, slate, MAT_STONE, 0, 3, cloth, false, false);
+    house(-24, -7, 12, 9, 2, 4.0f, brickW, slate, MAT_STONE, 0, 3, cloth, false, false, shutDark);
     arcade(-24, -11.7f, 10, 3.6f, 4);
     // COVERED MARKET HALL (open, on piers) east of the square + well + cross out front.
     setShelf(15, -9);
@@ -686,9 +696,9 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
 
     // ---- BAND C: TRADES TERRACE (behind retaining wall 1) — signed craft shops ----
     house(-28, 6, 8, 7, 2, 4.2f, seagrn, redRoof,  1.0f, 0, 2, cloth, true, false);  // APOTHECARY
-    house(-10, 6, 10, 7, 2, 4.0f, lemonW, darkRoof, 1.0f, 0, 3, amberC, false, false); // OUTFITTER
+    house(-10, 6, 10, 7, 2, 4.0f, lemonW, darkRoof, 1.0f, 0, 3, amberC, false, false, shutGreen); // OUTFITTER
     BLr(-10, 4.4f, 2.7f, 8.0f, 0.2f, 1.7f, 0.5f, 0, 0, thatch, MAT_FLAT); // sloped awning shade
-    house(12, 6, 9, 7, 2, 3.8f, ochre, redRoof, 1.0f, 0, 2, amberC, false, false);    // BAKEHOUSE
+    house(12, 6, 9, 7, 2, 3.8f, ochre, redRoof, 1.0f, 0, 2, amberC, false, false, shutRed);    // BAKEHOUSE
     chimneyAt(16, 8, 8.0f, 13.0f, true);
     setShelf(12, 6); BL(16, 3.4f, 2.6f, 3.0f, 3.0f, 2.0f, stone, MAT_STONE); BL(16, 3.4f, 1.5f, 1.4f, 1.4f, 0.4f, glow, MAT_FLAT); // oven
     // COOPER open work-shed + casks + saw-pit (west end of the terrace).
@@ -698,11 +708,11 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     for (int i = 0; i < 3; ++i) barrelAt(-47 + i * 1.8f, 8.5f);
 
     // ---- BAND D: RESIDENTIAL TERRACE (behind retaining wall 2) — pastel row ----
-    house(-28, 16, 9, 7, 2, 3.8f, brickW, redRoof,  1.0f, 0, 3, nullptr, true, false);
-    house(-16, 16, 9, 7, 2, 4.0f, tealW,  darkRoof, 1.0f, 1, 3, nullptr, true, false);
-    house(-4,  16, 9, 7, 2, 3.8f, ochre,  redRoof,  1.0f, 0, 3, nullptr, true, false);
+    house(-28, 16, 9, 7, 2, 3.8f, brickW, redRoof,  1.0f, 0, 3, nullptr, true, false, shutGreen);
+    house(-16, 16, 9, 7, 2, 4.0f, tealW,  darkRoof, 1.0f, 1, 3, nullptr, true, false, shutRed);
+    house(-4,  16, 9, 7, 2, 3.8f, ochre,  redRoof,  1.0f, 0, 3, nullptr, true, false, shutTeal);
     // CAPTAIN'S VILLA — fine white + full verandah, upper terrace east.
-    house(14, 15, 12, 10, 2, 4.2f, tailorW, redRoof, MAT_STONE, 0, 3, nullptr, true, false);
+    house(14, 15, 12, 10, 2, 4.2f, tailorW, redRoof, MAT_STONE, 0, 3, nullptr, true, false, shutTeal);
     verandah(14, 10.0f, 11, 4.2f, 1);
     setShelf(14, 15); flagstaff(21, 16, 12, flagC);
 
