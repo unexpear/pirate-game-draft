@@ -53,23 +53,29 @@ float hill(float x, float z, float cx, float cz, float sig, float amp) {
     return amp * std::exp(-(dx * dx + dz * dz) / (2.0f * sig * sig));
 }
 
-// Bake color for a surface point from its height and steepness.
+// Bake color for a surface point. Colours are BLENDED continuously by height
+// (and slope) rather than stepped, so the beach->grass->rock read as one rising
+// slope instead of three flat stacked shelves.
 uint32_t colorFor(float x, float z, float h, float slopeUp) {
-    float r, g, b;
-    const float tint = fbm(x * 0.09f, z * 0.09f) - 0.5f; // ±0.5 mottling
-    if (h < 0.8f) {                 // wet sand / shallows at the waterline (wide band)
-        r = 0.68f; g = 0.62f; b = 0.49f;
-    } else if (h < 3.4f) {          // dry beach (widened so the shore reads)
-        r = 0.82f; g = 0.74f; b = 0.53f;
-    } else if (slopeUp < 0.62f) {   // steep faces -> exposed rock
-        r = 0.44f; g = 0.41f; b = 0.37f;
-    } else if (h < 12.0f) {         // meadow
-        r = 0.33f; g = 0.50f; b = 0.24f;
-    } else if (h < 22.0f) {         // upland grass
-        r = 0.30f; g = 0.45f; b = 0.22f;
-    } else {                        // rocky crown (kept light so the summit isn't a muddy blob)
-        r = 0.58f; g = 0.56f; b = 0.52f;
+    auto ss = [](float e0, float e1, float t) { t = std::min(1.0f, std::max(0.0f, (t - e0) / (e1 - e0))); return t * t * (3.0f - 2.0f * t); };
+    // Height ramp: wet sand -> dry sand -> grass -> upland grass -> rock crown.
+    const float sand[3]  = { 0.82f, 0.74f, 0.53f };
+    const float wet[3]   = { 0.66f, 0.60f, 0.47f };
+    const float grass[3] = { 0.30f, 0.52f, 0.26f };
+    const float up[3]    = { 0.27f, 0.42f, 0.22f };
+    const float rock[3]  = { 0.53f, 0.51f, 0.47f };
+    float r = wet[0], g = wet[1], b = wet[2];
+    float t;
+    t = ss(0.2f, 1.6f, h);  r = r + (sand[0]-r)*t;  g = g + (sand[1]-g)*t;  b = b + (sand[2]-b)*t;  // wet->dry sand
+    t = ss(2.2f, 5.0f, h);  r = r + (grass[0]-r)*t; g = g + (grass[1]-g)*t; b = b + (grass[2]-b)*t; // sand->grass
+    t = ss(9.0f, 17.0f, h); r = r + (up[0]-r)*t;    g = g + (up[1]-g)*t;    b = b + (up[2]-b)*t;    // grass->upland
+    t = ss(19.0f, 28.0f, h); r = r + (rock[0]-r)*t; g = g + (rock[1]-g)*t;  b = b + (rock[2]-b)*t;  // upland->rock
+    // Steep faces above the beach turn to exposed rock.
+    if (h > 3.0f) {
+        float steep = 1.0f - ss(0.55f, 0.78f, slopeUp);
+        r = r + (rock[0]-r)*steep*0.7f; g = g + (rock[1]-g)*steep*0.7f; b = b + (rock[2]-b)*steep*0.7f;
     }
+    const float tint = fbm(x * 0.09f, z * 0.09f) - 0.5f; // ±0.5 mottling
     r = std::min(1.0f, std::max(0.0f, r + tint * 0.10f));
     g = std::min(1.0f, std::max(0.0f, g + tint * 0.10f));
     b = std::min(1.0f, std::max(0.0f, b + tint * 0.08f));
