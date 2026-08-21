@@ -59,14 +59,14 @@ void pieceColor(const sea::Piece& p, float out[4]) {
     auto set = [&](float r, float g, float b) { out[0] = r; out[1] = g; out[2] = b; out[3] = 1.0f; };
     if (p.damage >= 1.0) set(0.11f, 0.11f, 0.13f);          // destroyed
     else if (p.damage > 0.0) set(0.67f, 0.22f, 0.18f);      // damaged
-    else if (p.type == "stem" || p.type == "sternpost") set(0.36f, 0.23f, 0.12f); // backbone posts
-    else if (p.type == "mast" || p.type == "bowsprit") set(0.56f, 0.44f, 0.28f);  // pine spars
-    else if (p.type == "line") set(0.14f, 0.10f, 0.07f);    // rope / rigging
-    else if (p.type == "block") set(0.20f, 0.15f, 0.10f);  // blocks / pulleys
-    else if (p.type == "helm" || p.type == "capstan") set(0.34f, 0.24f, 0.14f);   // fittings
-    else if (p.type == "keel" || p.type == "rib") set(0.42f, 0.27f, 0.14f); // structural (lifted off near-black)
-    else if (p.type == "deck") set(0.62f, 0.44f, 0.25f);    // deck
-    else set(0.55f, 0.36f, 0.18f);                          // plank
+    else if (p.type == "stem" || p.type == "sternpost") set(0.48f, 0.33f, 0.19f); // backbone posts
+    else if (p.type == "mast" || p.type == "bowsprit") set(0.62f, 0.49f, 0.32f);  // pine spars
+    else if (p.type == "line") set(0.16f, 0.12f, 0.09f);    // rope / rigging
+    else if (p.type == "block") set(0.24f, 0.18f, 0.12f);  // blocks / pulleys
+    else if (p.type == "helm" || p.type == "capstan") set(0.44f, 0.32f, 0.20f);   // fittings
+    else if (p.type == "keel" || p.type == "rib") set(0.50f, 0.34f, 0.20f); // structural
+    else if (p.type == "deck") set(0.66f, 0.48f, 0.29f);    // deck
+    else set(0.66f, 0.47f, 0.28f);                          // plank (warm oak, lifted off near-black)
 }
 
 } // namespace

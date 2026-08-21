@@ -199,4 +199,22 @@ Built both blockers the panels isolated, then re-ran the panel.
   map would shadow the whole scene).
 
 62/62 self-tests. Live-confirmed: the ship casts a real hull+sail shadow on the
-water, sits in a foam ring with a bow wave and V-wake. Panel re-run on r5-final.
+water, sits in a foam ring with a bow wave and V-wake.
+
+### Round 4 result + polish
+
+The r5 panel showed **composition 0/3 → 2/3 PASS** (the cast shadows delivered the
+"grounded / gives form" read) and **water held 3/3**. The ship piece dropped to 1/5,
+dragged by two things the critics named: the chase-cam is **stern-on** (can't see
+the hull taper) and the **self-shadow darkened the hull to a near-black lump**.
+The composition's last fail was a **dark muddy island hilltop that didn't recede**.
+
+Polish (contained): lifted the hull/plank albedo to warm oak (off near-black),
+softened the shadow (0.5→0.38 darkening) so shaded faces stay legible, lightened
+the island's rocky crown + upland, pulled the LAND fog earlier (0.32·far) so the
+island recedes while the sea stays crisp, and tightened the crest foam. Re-ran the
+panel on r6-final.
+
+Standing limits (documented, not bugs): the ship's hull profile isn't visible from
+the stern-on chase cam (a framing artifact of the gauntlet shot, not the asset),
+and the shadow map is ship-focused so the distant island doesn't self-shadow.

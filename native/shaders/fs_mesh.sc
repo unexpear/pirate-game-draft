@@ -28,7 +28,7 @@ float shadowFactor(vec3 wpos) {
 	for (int y = -1; y <= 1; ++y)
 	for (int x = -1; x <= 1; ++x)
 		sh += (cur > texture2DLod(s_shadowMap, uv + vec2(float(x), float(y)) * texel, 0.0).x) ? 1.0 : 0.0;
-	return 1.0 - (sh / 9.0) * 0.5;
+	return 1.0 - (sh / 9.0) * 0.38;
 }
 
 float hash21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -101,7 +101,7 @@ void main()
 	if (u_fog.w > 1.0)
 	{
 		float dist = length(u_camPos.xyz - v_wpos);
-		float fog = smoothstep(u_fog.w * 0.5, u_fog.w, dist);
+		float fog = smoothstep(u_fog.w * 0.32, u_fog.w, dist); // land recedes into haze earlier than the sea
 		col = mix(col, u_fog.xyz, fog);
 	}
 

@@ -27,7 +27,7 @@ float shadowFactor(vec3 wpos) {
 	for (int y = -1; y <= 1; ++y)
 	for (int x = -1; x <= 1; ++x)
 		sh += (cur > texture2DLod(s_shadowMap, uv + vec2(float(x), float(y)) * texel, 0.0).x) ? 1.0 : 0.0;
-	return 1.0 - (sh / 9.0) * 0.5;
+	return 1.0 - (sh / 9.0) * 0.38;
 }
 
 void main()
@@ -58,8 +58,8 @@ void main()
 	// Foam clings to the STEEP faces of crests (surface slope), not scattered by
 	// height — so it streaks the sharp crest edges instead of floating in blobs.
 	float slope = length(N.xz);                       // 0 flat .. larger on steep crest faces
-	float foam = smoothstep(0.16, 0.34, slope) * smoothstep(0.15, 0.55, v_wpos.y);
-	col = mix(col, vec3(0.88, 0.93, 1.0), foam * 0.75);
+	float foam = smoothstep(0.22, 0.30, slope) * smoothstep(0.28, 0.5, v_wpos.y); // tighter -> crisper crest edges
+	col = mix(col, vec3(0.90, 0.95, 1.0), foam * 0.85);
 
 	// Foam ring where the sea meets the shore.
 	if (u_landCut.z > 0.5)

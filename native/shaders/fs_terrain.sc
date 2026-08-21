@@ -24,7 +24,7 @@ float shadowFactor(vec3 wpos) {
 	for (int y = -1; y <= 1; ++y)
 	for (int x = -1; x <= 1; ++x)
 		sh += (cur > texture2DLod(s_shadowMap, uv + vec2(float(x), float(y)) * texel, 0.0).x) ? 1.0 : 0.0;
-	return 1.0 - (sh / 9.0) * 0.5;
+	return 1.0 - (sh / 9.0) * 0.38;
 }
 
 void main()
@@ -44,7 +44,7 @@ void main()
 	if (u_fog.w > 1.0)
 	{
 		float dist = length(u_camPos.xyz - v_wpos);
-		float fog = smoothstep(u_fog.w * 0.5, u_fog.w, dist);
+		float fog = smoothstep(u_fog.w * 0.32, u_fog.w, dist); // island recedes into haze
 		col = mix(col, u_fog.xyz, fog);
 	}
 

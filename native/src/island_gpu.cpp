@@ -64,11 +64,11 @@ uint32_t colorFor(float x, float z, float h, float slopeUp) {
     } else if (slopeUp < 0.62f) {   // steep faces -> exposed rock
         r = 0.44f; g = 0.41f; b = 0.37f;
     } else if (h < 12.0f) {         // meadow
-        r = 0.31f; g = 0.47f; b = 0.22f;
+        r = 0.33f; g = 0.50f; b = 0.24f;
     } else if (h < 22.0f) {         // upland grass
-        r = 0.24f; g = 0.38f; b = 0.17f;
-    } else {                        // rocky crown
-        r = 0.48f; g = 0.46f; b = 0.42f;
+        r = 0.30f; g = 0.45f; b = 0.22f;
+    } else {                        // rocky crown (kept light so the summit isn't a muddy blob)
+        r = 0.58f; g = 0.56f; b = 0.52f;
     }
     r = std::min(1.0f, std::max(0.0f, r + tint * 0.10f));
     g = std::min(1.0f, std::max(0.0f, g + tint * 0.10f));
