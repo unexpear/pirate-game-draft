@@ -8,6 +8,27 @@ uniform vec4 u_lightDir; // xyz = direction to the sun
 uniform vec4 u_camPos;   // xyz = eye position
 uniform vec4 u_landCut;  // xy = land centre (world), z = radius, w unused
 uniform vec4 u_fog;      // xyz = horizon fog colour, w = fog far distance
+uniform vec4 u_ship;     // xy = heading (sin,cos), z = hull half-length, w = hull half-beam
+uniform vec4 u_shipDyn;  // x = speed factor (0..1) for bow wave + wake strength
+uniform mat4 u_lightMtx; // light view-proj, for shadow lookup
+SAMPLER2D(s_shadowMap, 4);
+
+float shadowFactor(vec3 wpos) {
+	vec4 lc = mul(u_lightMtx, vec4(wpos, 1.0));
+	vec3 ndc = lc.xyz / lc.w;
+	vec2 uv = ndc.xy * 0.5 + 0.5;
+#if BGFX_SHADER_LANGUAGE_HLSL || BGFX_SHADER_LANGUAGE_PSSL || BGFX_SHADER_LANGUAGE_METAL || BGFX_SHADER_LANGUAGE_SPIRV
+	uv.y = 1.0 - uv.y;
+#endif
+	if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 1.0;
+	float cur = ndc.z - 0.0025;
+	float texel = 1.0 / 1024.0;
+	float sh = 0.0;
+	for (int y = -1; y <= 1; ++y)
+	for (int x = -1; x <= 1; ++x)
+		sh += (cur > texture2DLod(s_shadowMap, uv + vec2(float(x), float(y)) * texel, 0.0).x) ? 1.0 : 0.0;
+	return 1.0 - (sh / 9.0) * 0.5;
+}
 
 void main()
 {
@@ -45,6 +66,42 @@ void main()
 	{
 		float shore = 1.0 - smoothstep(u_landCut.z, u_landCut.z + 4.0, landD);
 		col = mix(col, vec3(0.82, 0.90, 0.98), shore * 0.65);
+	}
+
+	col *= shadowFactor(v_wpos); // the ship casts a shadow on the sea
+
+	// --- The ship's interaction with the sea (it sits at the scene origin,
+	// oriented by heading): a foam ring at the waterline, a bow wave, and a
+	// trailing V-wake, so the hull displaces water instead of clipping/hovering.
+	if (u_ship.z > 0.1)
+	{
+		float sH = u_ship.x, cH = u_ship.y, hl = u_ship.z, hb = u_ship.w;
+		vec2 p = vec2(v_wpos.x, v_wpos.z);
+		float slon = p.x * sH + p.y * cH;   // along the hull (fwd = sin,cos)
+		float slat = p.x * cH - p.y * sH;   // across the hull
+		float spd = u_shipDyn.x;
+		float shipFoam = 0.0;
+
+		// Waterline foam ring hugging the hull edge.
+		float e = (slat / hb) * (slat / hb) + (slon / hl) * (slon / hl);
+		float ring = (1.0 - smoothstep(0.0, 0.5, abs(e - 1.0))) * smoothstep(2.4, 1.0, e);
+		shipFoam += ring * 0.75;
+
+		// Bow wave: foam pushed ahead of the stem, narrowing to the centreline.
+		float bowT = smoothstep(hl * 1.8, hl * 0.7, slon) * step(hl * 0.35, slon);
+		shipFoam += bowT * smoothstep(hb * 1.4, 0.0, abs(slat)) * spd * 0.9;
+
+		// Wake: a spreading V of foam trailing the stern, fading with distance.
+		float wd = -slon - hl * 0.5;
+		if (wd > 0.0)
+		{
+			float arm = hb * 0.6 + wd * 0.34;
+			float vfoam = exp(-pow((abs(slat) - arm) / (hb * 0.55), 2.0));
+			shipFoam += vfoam * exp(-wd * 0.02) * spd * 0.8;
+			shipFoam += smoothstep(hb * 0.9, 0.0, abs(slat)) * exp(-wd * 0.06) * spd * 0.5; // churn behind the stern
+		}
+
+		col = mix(col, vec3(0.93, 0.96, 1.0), clamp(shipFoam, 0.0, 1.0));
 	}
 
 	// Distance fog: the sea dissolves into the horizon sky colour, killing the

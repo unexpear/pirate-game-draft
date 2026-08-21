@@ -177,3 +177,26 @@ hill + beach + buildings, the build berth a lit planked dry-dock, the hull lit w
 The one big feature the critics still want and that remains genuinely deferred:
 **shadow-mapped cast shadows** (and hull-intersection foam/wake) — larger systems,
 each its own focused build.
+
+## Round 4 — the two deferred big features
+
+Built both blockers the panels isolated, then re-ran the panel.
+
+- **Waterline foam + bow wave + wake** (`fs_water` `u_ship`/`u_shipDyn`): the hull
+  sits at the scene origin oriented by heading, so the water shader draws a foam
+  ring hugging the hull ellipse at the waterline, a bow wave narrowing to the
+  stem, and a spreading V-wake that fades astern (scaled by speed). The ship now
+  displaces water instead of clipping/hovering. Plumbed heading + hull footprint
+  + speed through `water_gpu::render` and `ship_view::render`.
+- **Shadow-mapped cast shadows** (new `shadow_gpu` module + `{vs,fs}_shadow.sc`):
+  a two-pass directional shadow map focused on the ship — the sun renders the
+  hull + mast + rigging + sail depth into a 1024² R32F target from an orthographic
+  view (view 0, before the scene), and `fs_water`/`fs_mesh`/`fs_terrain` compare
+  each fragment's light-space depth (3×3 PCF) to darken what the ship occludes.
+  Real projected shadow on the sea + self-shadow on the hull for form. Replaced
+  the old contact-shadow blobs. Ship-focused coverage (radius 30 around the hull);
+  the distant island is outside the map (a known scope limit — a cascade or wider
+  map would shadow the whole scene).
+
+62/62 self-tests. Live-confirmed: the ship casts a real hull+sail shadow on the
+water, sits in a foam ring with a bow wave and V-wake. Panel re-run on r5-final.

@@ -38,7 +38,7 @@ void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>
             const sea::FloatPose& pose, float timeSec, float heading,
             float worldX, float worldZ, float windDir, float sailFullness,
             int width, int height, float heelScale,
-            float cutWorldX, float cutWorldZ, float cutR) {
+            float cutWorldX, float cutWorldZ, float cutR, float speed) {
     // Chase camera behind the ship's heading (ship stays at the origin; the
     // ocean scrolls past via worldX/worldZ).
     const float dist = 24.0f;
@@ -58,10 +58,13 @@ void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>
     bgfx::setViewRect(viewId, 0, 0, uint16_t(width), uint16_t(height));
 
     sky_gpu::render(viewId, kSkyTop, kSkyHorizon);
+    // The hull sits at the scene origin; feed the water shader the heading, hull
+    // footprint and speed so it draws a waterline foam ring, bow wave and wake.
+    const float shipSpd = speed > 0.0f ? (speed / 7.0f < 1.0f ? speed / 7.0f : 1.0f) : 0.0f;
     water_gpu::render(viewId, waves, timeSec, eye.x, eye.y, eye.z, worldX, worldZ,
-                      cutWorldX, cutWorldZ, cutR);
-    ship_mesh::renderShadow(viewId, 0.0f, 0.32f, 0.0f,
-                            float(ship.bounds.width) * 0.55f, float(ship.bounds.length) * 0.52f);
+                      cutWorldX, cutWorldZ, cutR,
+                      bx::sin(heading), bx::cos(heading),
+                      float(ship.bounds.length) * 0.5f, float(ship.bounds.width) * 0.6f, shipSpd);
     ship_mesh::render(viewId, ship, pose, heading, windDir, sailFullness, timeSec, 0.0f, 0.0f, heelScale);
 }
 
@@ -263,7 +266,6 @@ void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
     // The hull, keel resting on the blocks (with a contact shadow on the dock).
     sea::FloatPose bp;
     bp.heaveY = blockTop + float(ship.bounds.depth) * 0.55; // keel local y = -depth*0.55
-    ship_mesh::renderShadow(viewId, 0.0f, 1.95f, 0.0f, wid * 0.7f, len * 0.55f);
     ship_mesh::render(viewId, ship, bp, 0.0f, 0.0f, 0.0f, timeSec, 0.0f, 0.0f);
 
     if (walk) ship_mesh::renderCharacter(viewId, cx, cy, cz, cheading, walkPhase);

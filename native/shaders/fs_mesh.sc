@@ -10,6 +10,26 @@ uniform vec4 u_lightDir; // xyz = direction to the sun
 uniform vec4 u_mat;      // x: 0 = flat, 1 = timber planks, 2 = stone courses, 3 = canvas sail
 uniform vec4 u_camPos;   // xyz = eye position (for distance fog)
 uniform vec4 u_fog;      // xyz = horizon fog colour, w = fog far distance
+uniform mat4 u_lightMtx; // light view-proj, for shadow lookup
+SAMPLER2D(s_shadowMap, 4);
+
+// Compare the fragment's light-space depth to the shadow map (3x3 PCF).
+float shadowFactor(vec3 wpos) {
+	vec4 lc = mul(u_lightMtx, vec4(wpos, 1.0));
+	vec3 ndc = lc.xyz / lc.w;
+	vec2 uv = ndc.xy * 0.5 + 0.5;
+#if BGFX_SHADER_LANGUAGE_HLSL || BGFX_SHADER_LANGUAGE_PSSL || BGFX_SHADER_LANGUAGE_METAL || BGFX_SHADER_LANGUAGE_SPIRV
+	uv.y = 1.0 - uv.y;
+#endif
+	if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 1.0;
+	float cur = ndc.z - 0.0025;
+	float texel = 1.0 / 1024.0;
+	float sh = 0.0;
+	for (int y = -1; y <= 1; ++y)
+	for (int x = -1; x <= 1; ++x)
+		sh += (cur > texture2DLod(s_shadowMap, uv + vec2(float(x), float(y)) * texel, 0.0).x) ? 1.0 : 0.0;
+	return 1.0 - (sh / 9.0) * 0.5;
+}
 
 float hash21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vnoise(vec2 p) {
@@ -73,6 +93,8 @@ void main()
 		vec3 skyfill = vec3(0.55, 0.63, 0.74);             // brighter cool sky fill
 		col = base * (skyfill * 0.78 + sun * ndl * 0.90);  // lift shadows out of near-black, keep a strong key
 	}
+
+	if (u_mat.x < 2.5) col *= shadowFactor(v_wpos); // cast + self shadows (not the sail)
 
 	// Aerial-perspective fog: distant structures/land recede into the horizon
 	// colour (matches the water + sky), so depth reads and nothing sits flat.

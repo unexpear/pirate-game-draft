@@ -15,6 +15,8 @@
 #include <imgui.h>
 #include "imgui/imgui_bgfx.h"
 #include "ship_view.h"
+#include "ship_mesh.h"
+#include "shadow_gpu.h"
 #include "screenshot.h"
 
 #include "ship_model.hpp"
@@ -29,8 +31,12 @@
 
 namespace {
 
-constexpr uint16_t kClearView = 0;
+constexpr uint16_t kShadowView = 0; // sun's depth pass (renders first, lowest id)
+constexpr uint16_t kClearView = 1;  // main scene
 constexpr uint16_t kImGuiView = 200;
+
+// Sun direction (must match the lighting in the shaders).
+constexpr float kSunX = 0.5f, kSunY = 0.6f, kSunZ = 0.62f;
 
 void* nativeWindowHandle(SDL_Window* w) {
 #if defined(_WIN32)
@@ -188,6 +194,7 @@ int main(int argc, char** argv) {
     const std::vector<sea::Wave> waves = sea::makeWaveField("sea-trial-native");
 
     ship_view::init();
+    shadow::init(1024);
 
     std::printf("self-tests: %d / %d passing\n", passing, total);
     std::printf("renderer: %s\n", bgfx::getRendererName(bgfx::getRendererType()));
@@ -766,13 +773,22 @@ int main(int argc, char** argv) {
             const bool complete = reveal >= int(border.size());
             if (!complete) { shown.systems.mast_count = 0; shown.systems.sail_count = 0; }
             const float buildOrbit = shotMode ? shotHead : timeSec * 0.12f; // --head frames the shot
+            // Shadow pass: the hull on the stocks casts onto the dock.
+            shadow::beginPass(kShadowView, kSunX, kSunY, kSunZ, 0.0f, 0.0f, 34.0f);
+            sea::FloatPose bp; bp.heaveY = 2.9f + float(ship.bounds.depth) * 0.55f;
+            ship_mesh::renderDepth(kShadowView, shown, bp, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
             ship_view::renderBuildScene(kClearView, shown, waves, timeSec, buildOrbit, width, height,
                                         walkMode, charX, charY, charZ, charHeading, walkPhase);
         } else {
-            ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height, float(activeProfile.heelFactor), islandX, islandZ, kLandCutRadius);
+            // Shadow depth pass: the sun renders the ship(s) into the shadow map
+            // (view 0, before the scene) so they cast real shadows on the sea.
+            shadow::beginPass(kShadowView, kSunX, kSunY, kSunZ, 0.0f, 0.0f, 30.0f);
+            ship_mesh::renderDepth(kShadowView, ship, pose, heading, windDir, sailFullness, 0.0f, 0.0f, float(activeProfile.heelFactor));
+            if (!enemyGone)
+                ship_mesh::renderDepth(kShadowView, enemy, enemyPose, enemyHeading, windDir,
+                                       enemyStruck ? 0.0f : 0.75f, enemyWorldX - worldX, enemyWorldZ - worldZ);
+            ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height, float(activeProfile.heelFactor), islandX, islandZ, kLandCutRadius, speed);
             if (!enemyGone) {
-                ship_view::renderShadow(kClearView, enemyWorldX - worldX, enemyWorldZ - worldZ,
-                                        float(enemy.bounds.width) * 0.55f, float(enemy.bounds.length) * 0.52f);
                 ship_view::renderShip(kClearView, enemy, enemyPose, enemyHeading, windDir,
                                       enemyStruck ? 0.0f : 0.75f, timeSec, // furled sails once she strikes
                                       enemyWorldX - worldX, enemyWorldZ - worldZ);
@@ -807,6 +823,7 @@ int main(int argc, char** argv) {
         if (maxFrames >= 0 && ++frame >= maxFrames) running = false;
     }
 
+    shadow::shutdown();
     ship_view::shutdown();
     imgui_bgfx::shutdown();
     bgfx::shutdown();

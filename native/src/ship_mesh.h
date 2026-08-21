@@ -23,6 +23,12 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
             float heading, float windDir, float sailFullness, float timeSec,
             float posX = 0.0f, float posZ = 0.0f, float heelScale = 1.0f);
 
+// Depth-only pass: submit the ship's pieces with the shadow program to the
+// shadow view (same pose as render), so the hull casts a real shadow.
+void renderDepth(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
+                 float heading, float windDir, float sailFullness,
+                 float posX = 0.0f, float posZ = 0.0f, float heelScale = 1.0f);
+
 // Draw a single lit unit-cube marker (e.g. a cannonball tracer) at world (x,y,z).
 void renderBox(uint16_t viewId, float x, float y, float z, float size,
                float r, float g, float b);

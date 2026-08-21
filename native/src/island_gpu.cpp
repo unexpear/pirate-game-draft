@@ -1,5 +1,6 @@
 // Sea Trial — GPU island terrain. Public domain (Unlicense).
 #include "island_gpu.h"
+#include "shadow_gpu.h"
 
 #include <bgfx/bgfx.h>
 #include <bx/math.h>
@@ -161,6 +162,7 @@ void render(uint16_t viewId, float relX, float relZ) {
     bgfx::setUniform(u_lightDir, lightV);
     float m[16];
     bx::mtxTranslate(m, relX, 0.0f, relZ);
+    shadow::bindRead(4);
     bgfx::setTransform(m);
     bgfx::setVertexBuffer(0, s_vbh);
     bgfx::setIndexBuffer(s_ibh);

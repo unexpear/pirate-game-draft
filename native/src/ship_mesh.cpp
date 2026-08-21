@@ -2,6 +2,7 @@
 #include "ship_mesh.h"
 
 #include "ship_model.hpp"
+#include "shadow_gpu.h"
 
 #include <bgfx/bgfx.h>
 #include <bx/math.h>
@@ -137,6 +138,7 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
         pieceColor(p, col);
         bgfx::setUniform(u_color, col);
         setMat(pieceMat(p));
+        shadow::bindRead(4);
         bgfx::setTransform(model);
         bgfx::setVertexBuffer(0, s_vbh);
         bgfx::setIndexBuffer(s_ibh);
@@ -186,11 +188,75 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
             bx::mtxSRT(strip, sailW / float(kStrips) * 1.06f, h, 0.05f, 0.0f, 0.0f, 0.0f, lx, 0.0f, bz);
             float model[16];
             bx::mtxMul(model, strip, sailModel);
+            shadow::bindRead(4);
             bgfx::setTransform(model);
             bgfx::setVertexBuffer(0, s_vbh);
             bgfx::setIndexBuffer(s_ibh);
             bgfx::setState(baseState); // no cull: sail visible from both sides
             bgfx::submit(viewId, s_prog);
+        }
+    }
+}
+
+void renderDepth(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
+                 float heading, float windDir, float sailFullness, float posX, float posZ, float heelScale) {
+    // Same ship root as render(), so the shadow matches the visible hull. Submits
+    // the hull/mast/rig pieces with the depth-only program to the shadow view.
+    const float align = std::cos(heading - windDir);
+    const float awa = std::acos(std::max(-1.0f, std::min(1.0f, -align)));
+    const float lee = (std::sin(windDir - heading) >= 0.0f) ? 1.0f : -1.0f;
+    const float power = float(sea::sailPower(double(awa) * 57.2957795));
+    const float windHeel = lee * 0.34f * power * std::sin(awa) * sailFullness * heelScale;
+    float shipRoot[16];
+    bx::mtxSRT(shipRoot, 1.0f, 1.0f, 1.0f,
+        float(pose.pitch), heading, float(pose.heel) + windHeel, posX, float(pose.heaveY), posZ);
+    for (const auto& p : ship.pieces) {
+        float local[16];
+        bx::mtxSRT(local,
+            float(p.bounds.x), float(p.bounds.y), float(p.bounds.z),
+            float(p.rotation.x), float(p.rotation.y), float(p.rotation.z),
+            float(p.position.x), float(p.position.y), float(p.position.z));
+        float model[16];
+        bx::mtxMul(model, local, shipRoot);
+        bgfx::setTransform(model);
+        bgfx::setVertexBuffer(0, s_vbh);
+        bgfx::setIndexBuffer(s_ibh);
+        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW);
+        bgfx::submit(viewId, shadow::program());
+    }
+
+    // The sail is the biggest occluder — cast it too (matches render()'s billow).
+    if (ship.systems.sail_count > 0 && sailFullness > 0.02f) {
+        const float depth = float(ship.bounds.depth);
+        const float len = float(ship.bounds.length);
+        const float wid = float(ship.bounds.width);
+        const bool luffing = awa < 0.75f || power < 0.08f;
+        const float trim = lee * (1.57079633f - awa * 0.5f);
+        const float mastH = depth * 0.9f + 6.0f;
+        const float fullH = mastH * 0.66f;
+        const float yardTop = depth * 0.03f + mastH * 0.94f;
+        const float h = fullH * sailFullness * (luffing ? 0.85f : 1.0f);
+        const float sailW = wid * 1.7f;
+        float sailRoot[16];
+        bx::mtxSRT(sailRoot, 1.0f, 1.0f, 1.0f, 0.0f, trim, 0.0f, 0.0f, yardTop - h * 0.5f, -len * 0.05f);
+        float sailModel[16];
+        bx::mtxMul(sailModel, sailRoot, shipRoot);
+        const int kStrips = 7;
+        const float belly = lee * (0.16f * sailW) * sailFullness * (luffing ? 0.35f : 1.0f);
+        for (int s = 0; s < kStrips; ++s) {
+            const float sc = (s + 0.5f) / float(kStrips);
+            const float lx = (sc - 0.5f) * sailW;
+            const float t01 = 2.0f * sc - 1.0f;
+            const float bz = belly * (1.0f - t01 * t01);
+            float strip[16];
+            bx::mtxSRT(strip, sailW / float(kStrips) * 1.06f, h, 0.05f, 0.0f, 0.0f, 0.0f, lx, 0.0f, bz);
+            float model[16];
+            bx::mtxMul(model, strip, sailModel);
+            bgfx::setTransform(model);
+            bgfx::setVertexBuffer(0, s_vbh);
+            bgfx::setIndexBuffer(s_ibh);
+            bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
+            bgfx::submit(viewId, shadow::program());
         }
     }
 }
@@ -205,6 +271,7 @@ void renderBoxSized(uint16_t viewId, float x, float y, float z,
     const float col[4] = { r, g, b, 1.0f };
     bgfx::setUniform(u_color, col);
     setMat(mat);
+    shadow::bindRead(4);
     bgfx::setTransform(m);
     bgfx::setVertexBuffer(0, s_vbh);
     bgfx::setIndexBuffer(s_ibh);
@@ -226,6 +293,7 @@ void renderShadow(uint16_t viewId, float x, float y, float z, float sx, float sz
     const float col[4] = { 0.03f, 0.05f, 0.08f, alpha }; // dark, translucent
     bgfx::setUniform(u_color, col);
     setMat(0.0f);
+    shadow::bindRead(4);
     bgfx::setTransform(m);
     bgfx::setVertexBuffer(0, s_vbh);
     bgfx::setIndexBuffer(s_ibh);
@@ -250,6 +318,7 @@ void renderCharacter(uint16_t viewId, float x, float y, float z, float heading, 
         const float col[4] = { r, g, b, 1.0f };
         bgfx::setUniform(u_color, col);
         setMat(0.0f); // person: flat, no plank texture
+        shadow::bindRead(4);
         bgfx::setTransform(model);
         bgfx::setVertexBuffer(0, s_vbh);
         bgfx::setIndexBuffer(s_ibh);

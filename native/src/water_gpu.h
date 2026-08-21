@@ -23,6 +23,8 @@ void shutdown();
 // radius <= 0 for open ocean with no cutout.
 void render(uint16_t viewId, const std::vector<sea::Wave>& waves, float timeSec,
             float eyeX, float eyeY, float eyeZ, float offsetX, float offsetZ,
-            float cutX = 0.0f, float cutZ = 0.0f, float cutR = 0.0f);
+            float cutX = 0.0f, float cutZ = 0.0f, float cutR = 0.0f,
+            float shipSin = 0.0f, float shipCos = 0.0f, float shipHalfLen = 0.0f,
+            float shipHalfBeam = 0.0f, float shipSpeed = 0.0f);
 
 } // namespace water_gpu

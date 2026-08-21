@@ -59,6 +59,7 @@ add_executable(sea_trial
     src/water_gpu.cpp
     src/island_gpu.cpp
     src/sky_gpu.cpp
+    src/shadow_gpu.cpp
     src/ship_mesh.cpp
     src/screenshot.cpp
     src/imgui/imgui_bgfx.cpp
@@ -104,6 +105,9 @@ sea_trial_shader(VERTEX   vs_terrain.sc TERRAIN_VS_OUT)
 sea_trial_shader(FRAGMENT fs_terrain.sc TERRAIN_FS_OUT)
 sea_trial_shader(VERTEX   vs_sky.sc SKY_VS_OUT)
 sea_trial_shader(FRAGMENT fs_sky.sc SKY_FS_OUT)
+sea_trial_shader(VERTEX   vs_shadow.sc SHADOW_VS_OUT)
+sea_trial_shader(FRAGMENT fs_shadow.sc SHADOW_FS_OUT)
 target_sources(sea_trial PRIVATE ${WATER_VS_OUT} ${WATER_FS_OUT} ${MESH_VS_OUT} ${MESH_FS_OUT}
-               ${TERRAIN_VS_OUT} ${TERRAIN_FS_OUT} ${SKY_VS_OUT} ${SKY_FS_OUT})
+               ${TERRAIN_VS_OUT} ${TERRAIN_FS_OUT} ${SKY_VS_OUT} ${SKY_FS_OUT}
+               ${SHADOW_VS_OUT} ${SHADOW_FS_OUT})
 target_include_directories(sea_trial PRIVATE ${SHADER_OUT})
