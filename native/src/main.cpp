@@ -137,6 +137,8 @@ int main(int argc, char** argv) {
     float shotPosX = 0.0f, shotPosZ = 0.0f, shotHead = 0.0f;
     bool shotWalk = false;
     int shotFrames = 90;
+    float shotCam[6] = { 0, 0, 0, 0, 0, 0 }; // --cam ex ey ez  ax ay az (scene space free camera)
+    bool useCam = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) maxFrames = std::atoi(argv[++i]);
         else if (std::strcmp(argv[i], "--shot") == 0 && i + 1 < argc) shotPath = argv[++i];
@@ -144,6 +146,7 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--pos") == 0 && i + 2 < argc) { shotPosX = float(std::atof(argv[++i])); shotPosZ = float(std::atof(argv[++i])); }
         else if (std::strcmp(argv[i], "--head") == 0 && i + 1 < argc) shotHead = float(std::atof(argv[++i]));
         else if (std::strcmp(argv[i], "--walk") == 0) shotWalk = true;
+        else if (std::strcmp(argv[i], "--cam") == 0 && i + 6 < argc) { for (int k = 0; k < 6; ++k) shotCam[k] = float(std::atof(argv[++i])); useCam = true; }
         else if (std::strcmp(argv[i], "--shot-frames") == 0 && i + 1 < argc) shotFrames = std::atoi(argv[++i]);
     }
     const bool shotMode = !shotPath.empty();
@@ -323,6 +326,7 @@ int main(int argc, char** argv) {
     if (shotMode) {
         worldX = shotPosX; worldZ = shotPosZ; heading = shotHead;
         if (shotScene == "build") { buildMode = true; walkMode = shotWalk; placed = 9999; } // full hull on the stocks
+        if (useCam) ship_view::setFreeCamera(true, shotCam[0], shotCam[1], shotCam[2], shotCam[3], shotCam[4], shotCam[5]);
     }
     const int shotAt = shotMode ? (maxFrames > 3 ? maxFrames - 3 : 0) : -1; // request a few frames before exit
     bool shotRequested = false;

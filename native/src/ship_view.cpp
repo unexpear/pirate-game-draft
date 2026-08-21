@@ -34,6 +34,13 @@ void shutdown() {
     sky_gpu::shutdown();
 }
 
+// Optional fixed screenshot camera (scene space).
+static bool s_freeCam = false;
+static bx::Vec3 s_freeEye = { 0, 0, 0 }, s_freeAt = { 0, 0, 0 };
+void setFreeCamera(bool enabled, float ex, float ey, float ez, float ax, float ay, float az) {
+    s_freeCam = enabled; s_freeEye = { ex, ey, ez }; s_freeAt = { ax, ay, az };
+}
+
 void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>& waves,
             const sea::FloatPose& pose, float timeSec, float heading,
             float worldX, float worldZ, float windDir, float sailFullness,
@@ -44,8 +51,8 @@ void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>
     const float dist = 24.0f;
     const float fwdX = bx::sin(heading);
     const float fwdZ = bx::cos(heading);
-    const bx::Vec3 eye = { -fwdX * dist, 9.0f, -fwdZ * dist };
-    const bx::Vec3 at = { fwdX * 5.0f, -0.4f, fwdZ * 5.0f };
+    const bx::Vec3 eye = s_freeCam ? s_freeEye : bx::Vec3{ -fwdX * dist, 9.0f, -fwdZ * dist };
+    const bx::Vec3 at  = s_freeCam ? s_freeAt  : bx::Vec3{ fwdX * 5.0f, -0.4f, fwdZ * 5.0f };
     const bx::Vec3 up = { 0.0f, 1.0f, 0.0f };
 
     float view[16];

@@ -17,6 +17,11 @@ namespace ship_view {
 void init();
 void shutdown();
 
+// Override the sail-scene camera with a fixed free camera (scene space) — used
+// for framed screenshots of the town/island. Pass enabled=false to restore the
+// chase camera.
+void setFreeCamera(bool enabled, float ex, float ey, float ez, float ax, float ay, float az);
+
 // Chase camera behind `heading`, scrolling ocean at the ship's virtual world
 // position (worldX/worldZ), and the ship riding the surface at `pose`, yawed to
 // `heading`. The sail trims toward `windDir` and is reefed to `sailFullness`
