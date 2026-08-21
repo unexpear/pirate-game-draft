@@ -474,11 +474,11 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
         if (dorm) { dormer(cx - w * 0.24f, front + 0.5f, topY, 2.2f, wall); dormer(cx + w * 0.24f, front + 0.5f, topY, 2.2f, wall); }
         if (chim) chimneyAt(cx + w * 0.32f, cz + d * 0.18f, topY - 1.0f, topY + 4.0f, false);
         if (sign) {
-            const float bx2 = cx - w * 0.34f;
-            BL(bx2, topY - storyH * 0.5f, front - 0.45f, 0.2f, 0.2f, 0.9f, beam, MAT_FLAT);            // short bracket
-            BL(bx2, topY - storyH * 0.5f - 0.5f, front - 0.78f, 2.4f, 1.7f, 0.2f, sign, MAT_FLAT);     // board (close to wall)
-            const float glyphC[3] = { 0.95f, 0.91f, 0.82f };
-            BL(bx2, topY - storyH * 0.5f - 0.5f, front - 0.9f, 1.1f, 1.1f, 0.1f, glyphC, MAT_FLAT);    // glyph
+            const float bx2 = cx - w * 0.34f, sy = storyH * 0.85f;
+            BL(bx2, sy + 0.9f, front - 0.6f, 0.22f, 0.22f, 1.3f, beam, MAT_FLAT);   // iron bracket
+            BL(bx2, sy, front - 1.15f, 3.0f, 2.0f, 0.24f, sign, MAT_FLAT);          // big painted signboard over the door
+            const float glyphC[3] = { 0.96f, 0.92f, 0.83f };
+            BL(bx2, sy, front - 1.28f, 1.5f, 1.4f, 0.1f, glyphC, MAT_FLAT);         // trade glyph
         }
     };
 
@@ -613,16 +613,19 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     // grass. Cobble bands run wide along the contours (narrow in z) so each rides
     // its shelf flat; retaining walls hold the terrace edges; the Grand Stair spine
     // and Harbour Street tie it together. ----
-    B(-4, -0.4f, -31, 96, 2.4f, 9, cobble[0], cobble[1], cobble[2], MAT_STONE);   // Harbour Street
-    B(-6, -1.0f, -23, 100, 3.2f, 16, cobble[0], cobble[1], cobble[2], MAT_STONE); // waterfront apron (deep, sunk)  z:-31..-15
+    // Cobble stays well INLAND (narrower than the buildings' span) so no flat slab
+    // overhangs the coast — the sloped dirt-toned terrain shows between/around the
+    // buildings, so the town sits on the island's landform, not a floating tray.
+    B(-4, -0.5f, -30, 76, 2.4f, 7, cobble[0], cobble[1], cobble[2], MAT_STONE);   // Harbour Street
+    B(-4, -0.7f, -23, 72, 2.6f, 11, cobble[0], cobble[1], cobble[2], MAT_STONE);  // waterfront apron (inland)
     B(-2, -0.3f, -22, 9, 2.8f, 14, cobble[0], cobble[1], cobble[2], MAT_STONE);   // Grand Stair base run
     stairUp(-2, -16, 9, 24, 11);                                                  // the climbing stair
-    retWall(-36, 16, -15, 4.5f);                                                  // plaza retaining wall
-    B(-8, -0.2f, -9, 68, 3.2f, 16, cobble[0], cobble[1], cobble[2], MAT_STONE);   // plaza deck (deep)  z:-17..-1
-    retWall(-36, 20, 3, 6.0f);                                                    // terrace wall 1
-    B(-6, 0.4f, 4, 68, 3.2f, 15, cobble[0], cobble[1], cobble[2], MAT_STONE);     // trades terrace  z:-3.5..+11.5
-    retWall(-32, 20, 13, 7.0f);                                                   // terrace wall 2
-    B(-2, 1.0f, 13, 62, 3.2f, 14, cobble[0], cobble[1], cobble[2], MAT_STONE);    // residential terrace  z:+6..+20
+    retWall(-32, 14, -15, 4.5f);                                                  // plaza retaining wall
+    B(-8, -0.2f, -9, 54, 3.0f, 13, cobble[0], cobble[1], cobble[2], MAT_STONE);   // plaza deck
+    retWall(-32, 18, 3, 6.0f);                                                    // terrace wall 1
+    B(-6, 0.4f, 4, 54, 3.0f, 12, cobble[0], cobble[1], cobble[2], MAT_STONE);     // trades terrace
+    retWall(-28, 18, 13, 7.0f);                                                   // terrace wall 2
+    B(-2, 1.0f, 13, 48, 3.0f, 11, cobble[0], cobble[1], cobble[2], MAT_STONE);    // residential terrace
     lamp(-34, -30); lamp(-16, -30); lamp(2, -30); lamp(22, -30); lamp(-2, -12);
 
     // ---- QUAY-FRONT BATTERY + cargo: the waterfront defence + working life the
@@ -634,6 +637,7 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
         shotPile(7 + i * 8.5f, -39.5f);
         BL(7.25f + i * 8.5f, 3.0f, -42.0f, 3.2f, 3.4f, 1.5f, wallStone, MAT_STONE); // merlon between the guns (embrasure)
     }
+    flagstaff(-28, -41, 14, flagC);                                                                    // the black colours over the battery
     setShelf(-26, -38); BL(-26, 1.7f, -38, 1.8f, 2.2f, 1.8f, darkW, MAT_FLAT); BL(-26, 2.9f, -38, 2.4f, 0.5f, 2.4f, darkW, MAT_FLAT); // capstan
     setShelf(24, -38); BL(24, 1.7f, -38, 1.8f, 2.2f, 1.8f, darkW, MAT_FLAT); BL(24, 2.9f, -38, 2.4f, 0.5f, 2.4f, darkW, MAT_FLAT);   // capstan
     crateAt(-14, -38, 2.4f); crateAt(-11, -39, 2.0f); crateAt(14, -38, 2.4f); ropeCoil(18, -39); ropeCoil(-18, -39); barrelAt(-8, -39);
