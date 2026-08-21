@@ -318,7 +318,7 @@ int main(int argc, char** argv) {
         // speed, so a near-stop pivots sharpest while full/travel turn wide (the
         // stop-to-turn tactic). Ship-centric: the ship holds the origin, ocean scrolls.
         const bool* keys = SDL_GetKeyboardState(nullptr);
-        const bool kbFree = !ImGui::GetIO().WantCaptureKeyboard;
+        const bool kbFree = !ImGui::GetIO().WantCaptureKeyboard && !buildMode; // no sailing input while building/walking
         float steer = 0.0f;
         if (kbFree) {
             if (keys[SDL_SCANCODE_D]) steer += 1.0f;
@@ -542,12 +542,13 @@ int main(int argc, char** argv) {
                 if (walkMode) {
                     if (!onDeck) {
                         if (ImGui::Button("Board ship (up the gangplank)")) {
-                            onDeck = true; charX = 0.0f; charZ = -float(ship.bounds.length) * 0.3f; charHeading = 0.0f;
+                            onDeck = true; charX = 0.0f; charZ = -float(ship.bounds.length) * 0.3f;
+                            charHeading = 0.0f; charY = ship_view::deckStandHeight(ship);
                         }
                         ImGui::TextColored(kGreen, "  On the dock - WASD walk, A/D turn.");
                     } else {
                         if (ImGui::Button("Go ashore")) {
-                            onDeck = false; charX = 9.0f; charZ = -11.0f; charHeading = -0.7f;
+                            onDeck = false; charX = 9.0f; charZ = -11.0f; charHeading = -0.7f; charY = 1.0f;
                         }
                         ImGui::TextColored(kGreen, "  On deck - WASD walk, A/D turn.");
                     }
