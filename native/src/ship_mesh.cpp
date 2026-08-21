@@ -51,6 +51,7 @@ void pieceColor(const sea::Piece& p, float out[4]) {
     else if (p.type == "stem" || p.type == "sternpost") set(0.36f, 0.23f, 0.12f); // backbone posts
     else if (p.type == "mast" || p.type == "bowsprit") set(0.56f, 0.44f, 0.28f);  // pine spars
     else if (p.type == "line") set(0.14f, 0.10f, 0.07f);    // rope / rigging
+    else if (p.type == "block") set(0.20f, 0.15f, 0.10f);  // blocks / pulleys
     else if (p.type == "helm" || p.type == "capstan") set(0.34f, 0.24f, 0.14f);   // fittings
     else if (p.type == "keel" || p.type == "rib") set(0.29f, 0.17f, 0.09f); // structural
     else if (p.type == "deck") set(0.62f, 0.44f, 0.25f);    // deck

@@ -186,6 +186,10 @@ void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
     }
     box(26.0f, 2.0f, 8.0f, 4.0f, 3.0f, 16.0f, wood[0], wood[1], wood[2]);          // timber stacks
     box(-26.0f, 2.0f, 8.0f, 4.0f, 3.0f, 16.0f, timber[0], timber[1], timber[2]);
+    // A spar hoisted on the port crane: rope from the arm -> block (pulley) -> spar.
+    box(-15.0f, 12.5f, 6.0f, 0.12f, 12.0f, 0.12f, dark[0], dark[1], dark[2]);       // rope
+    box(-15.0f, 6.2f, 6.0f, 0.5f, 0.7f, 0.5f, dark[0], dark[1], dark[2]);           // block
+    box(-15.0f, 5.2f, 6.0f, 0.45f, 0.45f, 7.0f, wood[0], wood[1], wood[2]);         // suspended spar
 
     // The building stand: two ground ways, keel blocks along the spine, and a row
     // of shoring posts each side.

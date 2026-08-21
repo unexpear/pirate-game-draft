@@ -146,6 +146,11 @@ void damageRig(Ship& ship, double amount);
 // Fraction of the rig (mast) still intact, 0..1 — scales the ship's sail drive.
 double rigIntegrity(const Ship& ship);
 
+// Mechanical advantage of a block-and-tackle with `parts` rope parts supporting
+// the load: hauling `load / parts` of effort raises the load (frictionless). The
+// yard's pulleys hoist heavy spars & timbers this way.
+double tackleAdvantage(int parts);
+
 // Decide orders for an enemy captain at (ex,ez,eHeading) engaging a foe at
 // (ox,oz): close to `engageRange`, then turn to present a broadside and fire the
 // bearing side when roughly abeam, in range, and `reloadReady`.

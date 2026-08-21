@@ -204,6 +204,20 @@ Ship makeShipFromConfig(const ShipConfig& cfg) {
             const double L = std::sqrt(dz * dz + dy * dy), a = std::atan2(dz, dy);
             fit("backstay", "line", "hemp", { 0, (gunY + mastTopY) * 0.5, (sz + mastZ) * 0.5 }, { -a, 0, 0 }, { 0.06, L, 0.06 }, 0.01);
         }
+        // Running rigging: a halyard up the mast and two sheets to the deck.
+        const double halL = mastTopY - (deckY + 0.3);
+        fit("halyard", "line", "hemp", { 0.35, (deckY + 0.3 + mastTopY) * 0.5, mastZ }, {}, { 0.05, halL, 0.05 }, 0.01);
+        const double shx = width * 0.35, shTop = deckY + 2.4, shBot = deckY + 0.4, shDz = length * 0.24;
+        {
+            const double dy = shTop - shBot, L = std::sqrt(shDz * shDz + dy * dy), a = std::atan2(shDz, dy);
+            fit("sheet_p", "line", "hemp", { -shx, (shTop + shBot) * 0.5, mastZ - shDz * 0.5 }, { -a, 0, 0 }, { 0.05, L, 0.05 }, 0.01);
+            fit("sheet_s", "line", "hemp", {  shx, (shTop + shBot) * 0.5, mastZ - shDz * 0.5 }, { -a, 0, 0 }, { 0.05, L, 0.05 }, 0.01);
+        }
+        // Blocks (pulleys) at the mast foot, masthead, and the sheet lands.
+        fit("block_foot", "block", "oak", { 0.35, deckY + 0.4, mastZ }, {}, { 0.28, 0.34, 0.28 }, 0.005);
+        fit("block_head", "block", "oak", { 0.0, mastTopY - 0.2, mastZ }, {}, { 0.30, 0.36, 0.30 }, 0.005);
+        fit("block_sp", "block", "oak", { -shx, deckY + 0.4, mastZ - shDz }, {}, { 0.26, 0.32, 0.26 }, 0.005);
+        fit("block_ss", "block", "oak", {  shx, deckY + 0.4, mastZ - shDz }, {}, { 0.26, 0.32, 0.26 }, 0.005);
     }
     if (cfg.hasHelm) {
         fit("helm_001", "helm", cfg.material, { 0, deckY + 0.7, -length * 0.34 }, {}, { 0.14, 1.3, 1.3 }, 0.03);
@@ -423,6 +437,10 @@ double rigIntegrity(const Ship& ship) {
     return n ? clampd(sum / n, 0.0, 1.0) : 1.0;
 }
 
+double tackleAdvantage(int parts) {
+    return parts < 1 ? 1.0 : double(parts);
+}
+
 int resolveHits(std::vector<Projectile>& shots, Ship& target,
                 double tx, double ty, double tz, double heading) {
     int hits = 0;
@@ -510,7 +528,7 @@ std::vector<int> buildOrder(const Ship& ship, BuildTradition t) {
         if (type == "deck") return 4;                          // deck after the hull is planked
         if (type == "mast" || type == "bowsprit") return 5;    // step the spars
         if (type == "helm" || type == "capstan") return 6;     // fit out
-        if (type == "line") return 7;                          // set up the standing rigging
+        if (type == "line" || type == "block") return 7;       // reeve the rigging (stays, halyards, blocks)
         const bool frame = (type == "rib");
         // shell-first: planks(2) then frames(3). frame-first: frames(2) then planks(3).
         if (frameFirst) return frame ? 2 : 3;
@@ -534,7 +552,7 @@ std::vector<std::string> buildSequence(BuildTradition t) {
             "Fit the deck beams and lay the deck",
             "Step the mast; rig the bowsprit",
             "Fit out (helm, capstan)",
-            "Set up the standing rigging - stays & shrouds (lines)",
+            "Reeve the rigging - stays, shrouds, halyards & sheets through the blocks",
         };
         case BuildTradition::Viking: return {
             "Lay the T-keel, scarf on stem & sternpost",
@@ -544,7 +562,7 @@ std::vector<std::string> buildSequence(BuildTradition t) {
             "Add the crossbeams and lay the deck",
             "Step the mast in the kerling; rig the bowsprit",
             "Fit out (helm, capstan)",
-            "Set up the standing rigging - stays & shrouds (lines)",
+            "Reeve the rigging - stays, shrouds, halyards & sheets through the blocks",
         };
         case BuildTradition::English: return {
             "Scarph the keel; step the stem & sternpost",
@@ -554,7 +572,7 @@ std::vector<std::string> buildSequence(BuildTradition t) {
             "Keelson, deck beams & knees; lay the deck",
             "Step the mast; rig the bowsprit",
             "Fit out (helm, capstan)",
-            "Set up the standing rigging - stays & shrouds (lines)",
+            "Reeve the rigging - stays, shrouds, halyards & sheets through the blocks",
         };
     }
     return {};
@@ -899,6 +917,12 @@ std::vector<TestResult> runSelfTest() {
         push("Ship has a mast, bowsprit, helm and rigging lines",
              masts == 1 && bows == 1 && helms == 1 && lines >= 3,
              num(masts) + "/" + num(bows) + "/" + num(helms) + "/" + num(lines));
+
+        int blocks = 0;
+        for (const auto& p : base.pieces) if (p.type == "block") ++blocks;
+        push("Ship is rigged with blocks (pulleys)", blocks >= 4, num(blocks) + " blocks");
+        push("A block-and-tackle multiplies hauling force",
+             tackleAdvantage(4) > tackleAdvantage(2) && tackleAdvantage(1) == 1.0 && tackleAdvantage(3) == 3.0);
 
         // Backbone: a stem and a sternpost exist, laid (with the keel) before planking.
         int stems = 0, sternposts = 0;
