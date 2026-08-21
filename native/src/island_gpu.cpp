@@ -84,23 +84,31 @@ namespace island_gpu {
 float heightAt(float x, float z) {
     const float r = std::sqrt(x * x + z * z);
     const float ang = std::atan2(z, x);
-    // Irregular coastline (all terms 2*pi-periodic -> no seam at +-pi).
-    const float coastR = kMeanCoast + 8.0f * std::sin(3.0f * ang + 0.5f)
-                       + 4.0f * std::sin(5.0f * ang + 2.0f)
-                       + 3.0f * std::cos(2.0f * ang - 1.0f);
+    // Irregular coastline: periodic harmonics + a non-periodic noise sampled on a
+    // circle, giving real inlets and points instead of a smooth oval. Clamped to
+    // stay outside the water-cut radius (no dry moat).
+    float coastR = kMeanCoast + 6.0f * std::sin(3.0f * ang + 0.5f)
+                 + 4.0f * std::sin(5.0f * ang + 2.0f)
+                 + 3.0f * std::cos(2.0f * ang - 1.0f)
+                 + 4.0f * std::sin(7.0f * ang + 1.3f)
+                 + (fbm(std::cos(ang) * 2.6f + 4.0f, std::sin(ang) * 2.6f + 7.0f) - 0.5f) * 9.0f;
+    coastR = std::max(43.0f, coastR);
     const float d = coastR - r; // metres inland of the shore (negative = offshore)
-    float h;
-    if (d < 0.0f) h = d * 0.40f;                           // submerged shelf sloping away
-    else          h = 3.8f * (1.0f - std::exp(-d / 13.0f)); // gentle wide beach ramp to a shelf
-    // Inland relief: real hills toward the interior (rising well above the
-    // shore-line buildings so the land reads as having mass, not a flat pad).
-    h += hill(x, z, 4.0f, 28.0f, 24.0f, 30.0f);   // main peak
-    h += hill(x, z, -22.0f, 12.0f, 16.0f, 16.0f); // western shoulder
-    h += hill(x, z, 26.0f, 36.0f, 15.0f, 15.0f);  // northern secondary summit
-    // Ground texture, faded out below the waterline so the shelf stays smooth.
+    // Smooth base: a wide beach ramp + real inland hills.
+    float base;
+    if (d < 0.0f) base = d * 0.40f;                            // submerged shelf sloping away
+    else          base = 3.8f * (1.0f - std::exp(-d / 13.0f)); // gentle wide beach ramp
+    base += hill(x, z, 4.0f, 28.0f, 24.0f, 30.0f);   // main peak
+    base += hill(x, z, -22.0f, 12.0f, 16.0f, 16.0f); // western shoulder
+    base += hill(x, z, 26.0f, 36.0f, 15.0f, 15.0f);  // northern secondary summit
+    // Roughness: rolling + RIDGED noise so the hills read as sculpted ground, not
+    // a smooth dome. Scaled up with height so the low shore shelf stays flat
+    // enough to build the town on, while the interior gets broken relief.
     const float landFrac = std::min(1.0f, std::max(0.0f, d / 8.0f));
-    h += (fbm(x * 0.05f, z * 0.05f) - 0.5f) * 5.5f * landFrac;
-    return h;
+    const float roughAmt = std::min(1.0f, std::max(0.0f, (base - 3.0f) / 9.0f));
+    const float rolling = (fbm(x * 0.06f, z * 0.06f) - 0.5f) * 3.0f;
+    const float ridged = (1.0f - std::fabs(2.0f * fbm(x * 0.11f, z * 0.11f) - 1.0f)) * 4.5f - 1.5f;
+    return base + (rolling + ridged) * roughAmt * landFrac + (fbm(x * 0.05f, z * 0.05f) - 0.5f) * 1.5f * landFrac;
 }
 
 float landRadius() { return kMeanCoast; }

@@ -129,6 +129,102 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     B(6, 2.6f, -39, 3, 3, 3, crate[0], crate[1], crate[2]);
     B(-26, 1.7f, -60, 3, 1.2f, 8, wood[0], wood[1], wood[2]);      // moored fishing boat
 
+    // --- Pirate town: a row of shops along the waterfront street, a little
+    // square behind, fences, market stalls, lamps and signs. Each shop is a
+    // distinct form/colour with a hanging sign so it reads as its own trade. ---
+    const float plaster[3] = { 0.76f, 0.66f, 0.52f };  // whitewashed daub
+    const float soot[3]    = { 0.33f, 0.30f, 0.28f };  // smithy stone/soot
+    const float tavernW[3] = { 0.60f, 0.43f, 0.26f };  // tavern timber
+    const float darkW[3]   = { 0.26f, 0.23f, 0.20f };  // shady weathered wood
+    const float slate[3]   = { 0.40f, 0.41f, 0.45f };  // slate roof
+    const float thatch[3]  = { 0.60f, 0.50f, 0.28f };  // thatch roof
+    const float redRoof[3] = { 0.48f, 0.22f, 0.15f };  // red tile roof
+    const float amberC[3]  = { 0.96f, 0.72f, 0.26f };  // lantern amber
+    const float glow[3]    = { 1.00f, 0.52f, 0.16f };  // forge glow
+    const float cloth[3]   = { 0.46f, 0.30f, 0.55f };  // dyer's purple
+    const float green[3]   = { 0.30f, 0.52f, 0.30f };  // grocer green
+    const float barrel[3]  = { 0.46f, 0.32f, 0.18f };  // barrel wood
+
+    // A shop/house: walls + an overhanging roof cap + a south-facing door.
+    auto building = [&](float cx, float cz, float w, float hgt, float d,
+                        const float* wall, const float* rf, float mat) {
+        B(cx, hgt * 0.5f, cz, w, hgt, d, wall[0], wall[1], wall[2], mat);
+        B(cx, hgt + 0.35f, cz, w + 1.3f, 0.9f, d + 1.3f, rf[0], rf[1], rf[2], MAT_FLAT);
+        B(cx, 1.15f, cz - d * 0.5f - 0.05f, 1.5f, 2.3f, 0.25f, darkW[0], darkW[1], darkW[2], MAT_FLAT);
+    };
+    // A hanging shop sign on a post by the door (colour = the trade).
+    auto sign = [&](float cx, float cz, const float* c) {
+        B(cx, 2.4f, cz, 0.22f, 4.8f, 0.22f, wood[0], wood[1], wood[2], MAT_FLAT);
+        B(cx + 0.95f, 4.2f, cz, 1.7f, 1.1f, 0.18f, c[0], c[1], c[2], MAT_FLAT);
+    };
+    // A market stall: four posts, a coloured awning, and a goods counter.
+    auto stall = [&](float cx, float cz, const float* awn) {
+        for (int ax = -1; ax <= 1; ax += 2) for (int az = -1; az <= 1; az += 2)
+            B(cx + ax * 1.7f, 1.2f, cz + az * 1.3f, 0.18f, 2.4f, 0.18f, wood[0], wood[1], wood[2], MAT_FLAT);
+        B(cx, 2.7f, cz, 4.4f, 0.28f, 3.4f, awn[0], awn[1], awn[2], MAT_FLAT);
+        B(cx, 1.05f, cz + 1.2f, 3.8f, 0.9f, 0.55f, wood[0], wood[1], wood[2]);
+    };
+    auto lamp = [&](float cx, float cz) {
+        B(cx, 1.9f, cz, 0.18f, 3.8f, 0.18f, darkW[0], darkW[1], darkW[2], MAT_FLAT);
+        B(cx, 4.0f, cz, 0.55f, 0.55f, 0.55f, amberC[0], amberC[1], amberC[2], MAT_FLAT);
+    };
+    auto barrelAt = [&](float cx, float cz) { B(cx, 0.9f, cz, 1.3f, 1.8f, 1.3f, barrel[0], barrel[1], barrel[2]); };
+    auto fenceX = [&](float x0, float x1, float z) { // picket fence run along X
+        const int n = int((x1 - x0) / 1.6f);
+        for (int i = 0; i <= n; ++i) B(x0 + (x1 - x0) * i / float(n < 1 ? 1 : n), 0.8f, z, 0.2f, 1.6f, 0.2f, wood[0], wood[1], wood[2], MAT_FLAT);
+        B((x0 + x1) * 0.5f, 1.2f, z, x1 - x0, 0.18f, 0.16f, wood[0], wood[1], wood[2], MAT_FLAT); // top rail
+    };
+    auto fenceZ = [&](float z0, float z1, float x) { // picket fence run along Z
+        const int n = int((z1 - z0) / 1.6f);
+        for (int i = 0; i <= n; ++i) B(x, 0.8f, z0 + (z1 - z0) * i / float(n < 1 ? 1 : n), 0.2f, 1.6f, 0.2f, wood[0], wood[1], wood[2], MAT_FLAT);
+        B(x, 1.2f, (z0 + z1) * 0.5f, 0.16f, 0.18f, z1 - z0, wood[0], wood[1], wood[2], MAT_FLAT);
+    };
+
+    // Waterfront shop row (facing the sea, south), west -> east:
+    // Blacksmith / WEAPON SHOP — soot walls, slate roof, a stone chimney and forge glow.
+    building(-38, -14, 13, 7, 10, soot, slate, MAT_STONE);
+    B(-42.5f, 6.5f, -14, 2.2f, 9, 2.2f, soot[0], soot[1], soot[2], MAT_STONE); // chimney
+    B(-42.5f, 11.2f, -14, 1.0f, 1.2f, 1.0f, glow[0], glow[1], glow[2], MAT_FLAT); // chimney glow
+    B(-35, 1.0f, -9, 2.0f, 1.6f, 1.4f, soot[0], soot[1], soot[2], MAT_FLAT);   // anvil block out front
+    sign(-31, -9, red);
+    // CLOTHING SHOP / tailor — whitewashed daub, red tile roof, a cloth awning.
+    building(-19, -13, 11, 6, 9, plaster, redRoof, 1.0f);
+    B(-19, 3.4f, -18.0f, 10.0f, 0.25f, 2.2f, cloth[0], cloth[1], cloth[2], MAT_FLAT); // front awning
+    sign(-13, -8.5f, cloth);
+    // GENERAL STORE / trading post — timber, thatch roof, barrels of goods.
+    building(-1, -14, 13, 6.5f, 10, timber, thatch, 1.0f);
+    barrelAt(6, -9); barrelAt(7.6f, -8.2f); barrelAt(6.8f, -10.4f);
+    sign(6.5f, -8.5f, green);
+    // TAVERN — the biggest, warm timber, lit windows, a swinging sign, lanterns.
+    building(19, -15, 16, 8.5f, 12, tavernW, redRoof, 1.0f);
+    B(12.5f, 3.2f, -9.0f, 1.6f, 1.6f, 0.3f, amberC[0], amberC[1], amberC[2], MAT_FLAT); // lit window
+    B(25.5f, 3.2f, -9.0f, 1.6f, 1.6f, 0.3f, amberC[0], amberC[1], amberC[2], MAT_FLAT);
+    barrelAt(28, -8); barrelAt(29.6f, -9.2f);
+    sign(28.5f, -8.5f, amberC);
+    // The FENCE / black-market — small, dark, tucked to the east with barred windows.
+    building(37, -20, 9, 5, 8, darkW, slate, MAT_FLAT);
+    B(37, 3.0f, -24.2f, 1.4f, 1.4f, 0.2f, soot[0], soot[1], soot[2], MAT_FLAT);   // barred window
+    for (int b = -1; b <= 1; ++b) B(37 + b * 0.45f, 3.0f, -24.35f, 0.12f, 1.4f, 0.12f, metal[0], metal[1], metal[2], MAT_FLAT); // bars
+    sign(41.5f, -16.5f, darkW);
+
+    // A little market square behind the shop row (near the town centre).
+    stall(-14, -3, cloth);
+    stall(2, -3, green);
+    stall(-26, -1, red);
+    // A stone well in the square.
+    B(-6, 1.1f, -2, 3.0f, 2.2f, 3.0f, stone[0], stone[1], stone[2], MAT_STONE);
+    B(-6, 3.4f, -2, 0.25f, 3.0f, 0.25f, wood[0], wood[1], wood[2], MAT_FLAT); // well post
+    B(-6, 4.9f, -2, 3.6f, 0.3f, 1.6f, redRoof[0], redRoof[1], redRoof[2], MAT_FLAT); // well roof
+    // A couple of cottages up the slope.
+    building(-32, 2, 9, 5.5f, 8, plaster, redRoof, 1.0f);
+    building(30, 2, 10, 5.5f, 8, timber, thatch, 1.0f);
+
+    // Fences enclosing the square + a livestock pen, and lamps along the street.
+    fenceX(-40, 10, 4);
+    fenceZ(-3, 4, 12);
+    fenceX(18, 40, 4);
+    lamp(-27, -20); lamp(-9, -20); lamp(9, -21); lamp(33, -12);
+
     // --- Shipyard (large, on the east shore, kept inside the shore line) ---
     B(38, 9, 6, 36, 18, 32, timber[0], timber[1], timber[2]);      // great ship hall
     B(38, 18.6f, 6, 38, 1.6f, 34, roof[0], roof[1], roof[2]);
