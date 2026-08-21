@@ -417,14 +417,14 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     // ridge cap + tapered gable-end fill; used by house() so the roof rides the
     // same shelf as the walls (no per-box terrain drift).
     auto gable = [&](float cx, float cz, float w, float d, float wallTopY, float rise, const float* rc, const float* wc, float wmat) {
-        const float halfW = w * 0.5f + 0.22f, depth = d + 0.5f;   // tight eaves so roofs don't splay into neighbours
+        const float halfW = w * 0.5f + 0.05f, depth = d + 0.1f;   // roof stays WITHIN the footprint (no splay into neighbours)
         const float slope = std::sqrt(halfW * halfW + rise * rise), ang = std::atan2(rise, halfW);
-        const float py = wallTopY + rise * 0.5f, pl = slope * 1.04f;
-        BLr(cx - halfW * 0.5f, py, cz, pl, 0.5f, depth, 0, 0,  ang, rc, MAT_FLAT);
-        BLr(cx + halfW * 0.5f, py, cz, pl, 0.5f, depth, 0, 0, -ang, rc, MAT_FLAT);
+        const float py = wallTopY + rise * 0.5f, pl = slope * 1.02f;
+        BLr(cx - halfW * 0.5f, py, cz, pl, 0.42f, depth, 0, 0,  ang, rc, MAT_FLAT);
+        BLr(cx + halfW * 0.5f, py, cz, pl, 0.42f, depth, 0, 0, -ang, rc, MAT_FLAT);
         const float ridge[3] = { rc[0] * 0.68f, rc[1] * 0.68f, rc[2] * 0.68f };
-        BLr(cx, wallTopY + rise + 0.06f, cz, 1.0f, 0.42f, depth, 0, 0, 0, ridge, MAT_FLAT);
-        BL(cx, wallTopY + 0.25f, cz, w + 0.5f, 0.5f, d + 0.5f, ridge, MAT_FLAT); // eave fascia band (real thickness, no flying-slab look)
+        BLr(cx, wallTopY + rise + 0.06f, cz, 0.9f, 0.42f, depth, 0, 0, 0, ridge, MAT_FLAT);
+        BL(cx, wallTopY + 0.2f, cz, w + 0.15f, 0.5f, d + 0.15f, ridge, MAT_FLAT); // eave fascia (thickness, tight)
         for (int e = -1; e <= 1; e += 2) {
             const float ez = cz + e * (d * 0.5f - 0.15f);
             for (int s = 0; s < 5; ++s) {
@@ -475,6 +475,9 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
 
     // ---- extra palette + kit for the upscaled port ----
     const float ochre[3]  = { 0.86f, 0.72f, 0.48f };   // pale ochre daub
+    const float brickW[3] = { 0.76f, 0.46f, 0.37f };   // brick-red daub
+    const float tealW[3]  = { 0.55f, 0.71f, 0.71f };   // colonial teal
+    const float lemonW[3] = { 0.88f, 0.81f, 0.54f };   // pale lemon
     const float seagrn[3] = { 0.70f, 0.80f, 0.73f };   // pale sea-green daub
     const float thatch[3] = { 0.60f, 0.50f, 0.33f };   // palm thatch
     const float tarred[3] = { 0.31f, 0.28f, 0.25f };   // tarred industry timber
@@ -613,128 +616,123 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     B(-2, 1.0f, 13, 62, 3.2f, 14, cobble[0], cobble[1], cobble[2], MAT_STONE);    // residential terrace  z:+6..+20
     lamp(-34, -30); lamp(-16, -30); lamp(2, -30); lamp(22, -30); lamp(-2, -12);
 
-    // ---- HARBOURFRONT (west -> east), tall fronts on Harbour Street ----
-    // FORGE / gunsmith — grey stone, slate, smoking chimney, anvil, dismounted cannon.
-    house(-40, -25, 13, 10, 2, 4.0f, smithyW, slate, MAT_STONE, 2, 3, red, false, false);
-    chimneyAt(-45, -22, 6.0f, 13.0f, true);
-    BL(-45, 13.6f, -22, 1.1f, 1.3f, 1.1f, glow, MAT_FLAT);        // forge glow at the chimney mouth
-    BL(-34, 1.4f, -31.5f, 2.2f, 1.7f, 1.5f, ironC, MAT_FLAT);     // anvil on the street
-    cannon(-31, -30, -1); shotPile(-28, -31);
-    // KING'S BONDED WAREHOUSE — tall tarred-timber gable end + hoist beam + cargo.
-    house(-22, -24, 14, 12, 3, 4.0f, tarred, darkRoof, 1.0f, 2, 3, nullptr, false, false);
-    hoistBeam(-22, -30, 11.5f);
-    crateAt(-16, -31, 2.6f); crateAt(-13.5f, -32, 2.0f); crateAt(-28, -31, 2.4f); tarBarrel(-30, -32);
-    // TRADING POST / general store — sandy ochre + quoins, terracotta, awning.
-    house(-8, -25, 11, 9, 2, 4.0f, ochre, redRoof, 1.0f, 0, 3, green, false, false);
-    BL(-8, 3.4f, -31.0f, 9.0f, 0.25f, 2.0f, thatch, MAT_FLAT);   // canvas awning
-    crateAt(-3, -31, 1.8f); barrelAt(-13, -31.5f);
-    // CUSTOM HOUSE & HARBOURMASTER — whitewash over stone, arcade loggia, LOOKOUT TOWER.
-    house(8, -26, 14, 11, 3, 4.0f, cream, slate, MAT_STONE, 0, 3, nullptr, false, false);
-    arcade(8, -31.2f, 12, 3.6f, 4);                              // ground loggia over the quay door
-    setShelf(8, -26);
-    BL(8, 15.5f, -24, 6, 7, 6, cream, MAT_STONE);                // 3rd-storey lookout tower
-    spire(8, -24, 6.5f, 19.0f, 4.0f, slate);
-    flagstaff(8, -21, 26, flagC);
-    // THE CHANDLERY — tarred timber, hoist beam, rope + tar + spars spilling out.
-    house(20, -25, 10, 9, 2, 4.0f, tarred, darkRoof, 1.0f, 2, 2, wood, false, false);
+    // ---- BAND A: HARBOURFRONT (west -> east) — six distinct blocks with clear
+    // ~3-4m street gaps, each its own colour, tall fronts on Harbour Street. ----
+    // FORGE / gunsmith — grey stone, slate.
+    house(-42, -25, 12, 9, 2, 4.0f, smithyW, slate, MAT_STONE, 2, 3, red, false, false);
+    chimneyAt(-46, -22, 6.0f, 13.0f, true);
+    BL(-46, 13.6f, -22, 1.1f, 1.3f, 1.1f, glow, MAT_FLAT);
+    BL(-38, 1.4f, -30.5f, 2.2f, 1.7f, 1.5f, ironC, MAT_FLAT);     // anvil
+    cannon(-35, -30, -1); shotPile(-32, -31);
+    // KING'S BONDED WAREHOUSE — tall dark tarred-timber, hoist beam + cargo.
+    house(-26, -24, 13, 11, 3, 4.0f, tarred, darkRoof, 1.0f, 2, 3, nullptr, false, false);
+    hoistBeam(-26, -29.5f, 11.5f);
+    crateAt(-20, -31, 2.4f); crateAt(-31, -31, 2.4f); tarBarrel(-33, -31.5f);
+    // TRADING POST / general store — ochre, terracotta, awning.
+    house(-11, -25, 11, 9, 2, 4.0f, ochre, redRoof, 1.0f, 0, 3, green, false, false);
+    BLr(-11, 3.4f, -30.2f, 9.0f, 0.2f, 1.7f, 0.5f, 0, 0, thatch, MAT_FLAT); // sloped awning shade
+    crateAt(-6, -31, 1.8f);
+    // CUSTOM HOUSE — white civic, arcade loggia, LOOKOUT TOWER (LOW skyline tier).
+    house(5, -25, 13, 10, 3, 4.0f, cream, slate, MAT_STONE, 0, 3, nullptr, false, false);
+    arcade(5, -30.0f, 11, 3.6f, 4);
+    setShelf(5, -25);
+    BL(5, 15.5f, -23, 6, 7, 6, cream, MAT_STONE);                // lookout tower
+    spire(5, -23, 6.5f, 19.0f, 4.0f, slate);
+    flagstaff(5, -20, 25, flagC);
+    // THE CHANDLERY — teal timber, hoist beam, rope + tar spilling out.
+    house(20, -25, 10, 9, 2, 4.0f, tealW, redRoof, 1.0f, 0, 2, wood, false, false);
     hoistBeam(20, -30, 7.5f);
-    ropeCoil(24, -31); ropeCoil(26, -31.8f); tarBarrel(16, -31.5f);
-    // THE SALT KRAKEN TAVERN — biggest waterfront block: terracotta timber-frame, a
-    // two-tier gallery over the street, dormers, two smoking chimneys, amber windows.
-    house(34, -24, 16, 13, 3, 4.0f, tavW, darkRoof, 1.0f, 1, 3, amberC, false, true);
-    verandah(34, -30.5f, 15, 4.0f, 2);
-    setShelf(34, -24);
-    chimneyAt(29, -20, 12.0f, 16.5f, true); chimneyAt(39, -20, 12.0f, 16.5f, true);
-    BL(28, 2.4f, -30.6f, 1.6f, 1.8f, 0.2f, amberC, MAT_FLAT); BL(40, 2.4f, -30.6f, 1.6f, 1.8f, 0.2f, amberC, MAT_FLAT); // lit windows
-    barrelAt(44, -31); barrelAt(45.5f, -32); crateAt(43, -32.5f, 1.6f);
+    ropeCoil(24, -31); tarBarrel(16, -31);
+    // THE SALT KRAKEN TAVERN — biggest block: terracotta-red timber-frame, two-tier
+    // gallery, dormers, two chimneys, amber windows.
+    house(36, -24, 15, 12, 3, 4.0f, tavW, darkRoof, 1.0f, 1, 3, amberC, false, true);
+    verandah(36, -30.0f, 14, 4.0f, 2);
+    setShelf(36, -24);
+    chimneyAt(31, -20, 12.0f, 16.5f, true); chimneyAt(41, -20, 12.0f, 16.5f, true);
+    barrelAt(45, -31); crateAt(43, -32, 1.6f);
 
-    // ---- PLAZA DE ARMAS (one terrace up): church, counting house, market hall, well ----
-    // CHURCH OF ST. ELMO — whitewash nave + buttresses + tall campanile (MID skyline tier).
-    setShelf(-4, -4);
-    BL(-4, 4.0f, -2, 15, 11, 15, cream, MAT_STONE);              // nave
-    gable(-4, -2, 15, 15, 11, 5.8f, redRoof, cream, MAT_STONE);
-    for (int i = -1; i <= 1; i += 2) { BL(-4 + i * 7.7f, 3.2f, -6, 1.5f, 8, 1.5f, cream, MAT_STONE); BL(-4 + i * 7.7f, 3.2f, 2, 1.5f, 8, 1.5f, cream, MAT_STONE); }
-    windowOn(-11.6f, 6, -2, -1, 0, 1.8f, 3.4f, false); windowOn(3.6f, 6, -2, 1, 0, 1.8f, 3.4f, false);
-    BL(-4, 6, -9.4f, 3.0f, 3.0f, 0.4f, glassC, MAT_FLAT);        // rose window
-    BL(-4, 13, -10, 6.5f, 26, 6.5f, cream, MAT_STONE);           // bell tower shaft
-    BL(-4, 25.5f, -10, 7.4f, 3.4f, 7.4f, tailorW, MAT_STONE);    // belfry
-    BL(-4, 25.5f, -10, 1.3f, 1.7f, 1.3f, darkW, MAT_FLAT);       // the bell
-    spire(-4, -10, 7.0f, 27.2f, 6.0f, redRoof);
-    BL(-4, 34.0f, -10, 0.3f, 2.4f, 0.3f, darkW, MAT_FLAT); BL(-4, 34.6f, -10, 1.6f, 0.3f, 0.3f, darkW, MAT_FLAT); // cross finial
-    // MERCHANTS' ARCADE & COUNTING HOUSE — fine whitewash + ground colonnade.
-    house(-20, -6, 13, 10, 2, 4.0f, tailorW, redRoof, MAT_STONE, 0, 3, cloth, false, false);
-    arcade(-20, -11.2f, 11, 3.6f, 4);
-    // COVERED MARKET HALL (open, on piers) + WELL + MARKET CROSS on the plaza.
-    setShelf(-20, -12);
-    for (int i = -1; i <= 1; ++i) for (int j = 0; j <= 1; ++j) BL(-20 + i * 4.5f, 3.0f, -12 + j * 4.0f, 0.8f, 6, 0.8f, wood, MAT_FLAT); // piers
-    gable(-20, -12, 13, 9, 6.0f, 3.0f, thatch, wood, 1.0f);     // wide hip-ish roof (thatch)
-    stall(-24, -13, cloth); stall(-16, -13, green);
-    wellAt(-9, -11); marketCross(0, -11);
-    B(6, 1.4f, -12, 0.3f, 3.0f, 0.3f, wood[0], wood[1], wood[2], MAT_FLAT); B(6, 3.2f, -12, 2.2f, 1.6f, 0.2f, cream[0], cream[1], cream[2], MAT_FLAT); // bounty board
+    // ---- BAND B: PLAZA DE ARMAS (one terrace up) — church + counting house frame an
+    // open square with the market hall, well and cross; wide gaps between blocks. ----
+    // CHURCH OF ST. ELMO — white nave + buttresses + tall campanile (MID skyline tier).
+    setShelf(-3, -6);
+    BL(-3, 4.0f, -6, 13, 11, 9, cream, MAT_STONE);               // nave (kept compact in z)
+    gable(-3, -6, 13, 9, 11, 5.2f, redRoof, cream, MAT_STONE);
+    for (int i = -1; i <= 1; i += 2) BL(-3 + i * 6.7f, 3.2f, -6, 1.4f, 8, 7.0f, cream, MAT_STONE); // buttressed flanks
+    windowOn(-9.6f, 6, -6, -1, 0, 1.6f, 3.2f, false); windowOn(3.6f, 6, -6, 1, 0, 1.6f, 3.2f, false);
+    BL(-3, 13, -11.5f, 6.2f, 26, 6.2f, cream, MAT_STONE);        // campanile at the plaza-facing front
+    BL(-3, 25.5f, -11.5f, 7.2f, 3.4f, 7.2f, tailorW, MAT_STONE); // belfry
+    BL(-3, 25.5f, -12.0f, 1.3f, 1.7f, 0.4f, darkW, MAT_FLAT);    // the bell
+    spire(-3, -11.5f, 6.8f, 27.2f, 6.0f, redRoof);
+    BL(-3, 34.0f, -11.5f, 0.3f, 2.4f, 0.3f, darkW, MAT_FLAT); BL(-3, 34.6f, -11.5f, 1.6f, 0.3f, 0.3f, darkW, MAT_FLAT); // cross
+    // MERCHANTS' ARCADE & COUNTING HOUSE — brick-red, ground colonnade, west of the square.
+    house(-24, -7, 12, 9, 2, 4.0f, brickW, slate, MAT_STONE, 0, 3, cloth, false, false);
+    arcade(-24, -11.7f, 10, 3.6f, 4);
+    // COVERED MARKET HALL (open, on piers) east of the square + well + cross out front.
+    setShelf(15, -9);
+    for (int i = -1; i <= 1; ++i) for (int j = 0; j <= 1; ++j) BL(15 + i * 4.5f, 3.0f, -9 + j * 3.6f, 0.8f, 6, 0.8f, wood, MAT_FLAT);
+    gable(15, -9, 12, 8, 6.0f, 2.6f, thatch, wood, 1.0f);
+    stall(11, -10, cloth); stall(19, -10, green);
+    wellAt(-10, -9); marketCross(-1, -9);
+    B(6, 1.4f, -10, 0.3f, 3.0f, 0.3f, wood[0], wood[1], wood[2], MAT_FLAT); B(6, 3.2f, -10, 2.2f, 1.6f, 0.2f, cream[0], cream[1], cream[2], MAT_FLAT); // notice board
 
-    // ---- RUM ROW (east warren, in shade behind the tavern) ----
-    // THE DROWNED MAN boarding inn — tall 3-storey timber-frame, jettied, small windows.
-    house(20, -13, 10, 9, 3, 4.0f, tailorW, darkRoof, 1.0f, 1, 3, amberC, true, false);
+    // ---- RUM ROW (east warren, behind the tavern) ----
+    // THE DROWNED MAN boarding inn — tall timber-frame, jettied.
+    house(26, -12, 9, 8, 3, 4.0f, tailorW, darkRoof, 1.0f, 1, 3, amberC, true, false);
     // THE FENCE — dark, crooked, barred, no sign, one red lantern.
-    house(31, -11, 8, 7, 2, 3.6f, fenceWall, darkRoof, 1.0f, 2, 2, nullptr, false, false);
-    BL(31, 3.0f, -14.6f, 1.5f, 1.5f, 0.2f, darkW, MAT_FLAT);
-    for (int b = -1; b <= 1; ++b) BL(31 + b * 0.5f, 3.0f, -14.75f, 0.14f, 1.5f, 0.14f, metal, MAT_FLAT); // bars
-    setShelf(31, -11); BL(35, 2.6f, -14.5f, 0.6f, 0.6f, 0.6f, red, MAT_FLAT);   // discreet red lantern
+    house(37, -11, 8, 7, 2, 3.6f, fenceWall, darkRoof, 1.0f, 2, 2, nullptr, false, false);
+    BL(37, 3.0f, -14.6f, 1.5f, 1.5f, 0.2f, darkW, MAT_FLAT);
+    for (int b = -1; b <= 1; ++b) BL(37 + b * 0.5f, 3.0f, -14.75f, 0.14f, 1.5f, 0.14f, metal, MAT_FLAT); // bars
+    setShelf(37, -11); BL(41, 2.6f, -14.5f, 0.6f, 0.6f, 0.6f, red, MAT_FLAT);   // red lantern
 
-    // ---- TRADES TERRACES ----
-    // APOTHECARY — tall narrow sea-green + quoins, terracotta.
-    house(-26, -3, 8, 8, 2, 4.2f, seagrn, redRoof, 1.0f, 0, 2, cloth, true, false);
-    // OUTFITTER & SAILMAKER — whitewash + quoins, canvas awning.
-    house(-12, -2, 10, 8, 2, 4.0f, tailorW, redRoof, 1.0f, 0, 3, amberC, false, false);
-    BL(-12, 4.4f, -6.6f, 8.0f, 0.25f, 2.0f, thatch, MAT_FLAT);   // gallery awning
-    // COOPER & CARPENTER open work-shed (lean-to) + casks + saw-pit.
-    setShelf(-30, 3);
-    for (int i = -1; i <= 1; ++i) BL(-30 + i * 3.5f, 2.4f, 4.5f, 0.6f, 5, 0.6f, wood, MAT_FLAT); // posts
-    BLr(-30, 5.2f, 3.0f, 9.0f, 0.4f, 6.5f, 0.35f, 0, 0, darkRoof, MAT_FLAT);   // sloped lean-to roof
-    for (int i = 0; i < 3; ++i) barrelAt(-33 + i * 1.8f, 5.5f);
-    crateAt(-27, 5.5f, 1.6f);
-    // BAKEHOUSE — whitewash + a big domed oven-chimney with a warm glow.
-    house(12, 2, 9, 8, 2, 3.8f, cream, redRoof, 1.0f, 0, 2, amberC, false, false);
-    chimneyAt(16, 5, 8.0f, 13.0f, true);
-    setShelf(12, 2); BL(16, 3.2f, -1.6f, 3.0f, 3.0f, 2.0f, stone, MAT_STONE); BL(16, 3.2f, -2.7f, 1.4f, 1.4f, 0.4f, glow, MAT_FLAT); // oven bulge + glow
+    // ---- BAND C: TRADES TERRACE (behind retaining wall 1) — signed craft shops ----
+    house(-28, 6, 8, 7, 2, 4.2f, seagrn, redRoof,  1.0f, 0, 2, cloth, true, false);  // APOTHECARY
+    house(-10, 6, 10, 7, 2, 4.0f, lemonW, darkRoof, 1.0f, 0, 3, amberC, false, false); // OUTFITTER
+    BLr(-10, 4.4f, 2.7f, 8.0f, 0.2f, 1.7f, 0.5f, 0, 0, thatch, MAT_FLAT); // sloped awning shade
+    house(12, 6, 9, 7, 2, 3.8f, ochre, redRoof, 1.0f, 0, 2, amberC, false, false);    // BAKEHOUSE
+    chimneyAt(16, 8, 8.0f, 13.0f, true);
+    setShelf(12, 6); BL(16, 3.4f, 2.6f, 3.0f, 3.0f, 2.0f, stone, MAT_STONE); BL(16, 3.4f, 1.5f, 1.4f, 1.4f, 0.4f, glow, MAT_FLAT); // oven
+    // COOPER open work-shed + casks + saw-pit (west end of the terrace).
+    setShelf(-44, 6);
+    for (int i = -1; i <= 1; ++i) BL(-44 + i * 3.5f, 2.4f, 7.5f, 0.6f, 5, 0.6f, wood, MAT_FLAT);
+    BLr(-44, 5.2f, 6.0f, 9.0f, 0.4f, 6.5f, 0.35f, 0, 0, darkRoof, MAT_FLAT);
+    for (int i = 0; i < 3; ++i) barrelAt(-47 + i * 1.8f, 8.5f);
 
-    // ---- RESIDENTIAL TERRACES (pastel party-wall rows, staggered) ----
-    house(-28, 5, 10, 8, 2, 3.8f, ochre,  redRoof,  1.0f, 0, 3, nullptr, true, false);
-    house(-18, 6, 10, 8, 2, 4.0f, seagrn, darkRoof, 1.0f, 1, 3, nullptr, true, false);
-    house(-8,  7, 10, 8, 2, 3.8f, cream,  redRoof,  1.0f, 0, 3, nullptr, true, false);
-    // CAPTAIN'S VILLA — fine whitewash + full verandah, upper terrace east.
-    house(14, 10, 13, 11, 2, 4.2f, tailorW, redRoof, MAT_STONE, 0, 3, nullptr, true, false);
-    verandah(14, 4.5f, 12, 4.2f, 1);
-    setShelf(14, 10); flagstaff(21, 11, 12, flagC);
+    // ---- BAND D: RESIDENTIAL TERRACE (behind retaining wall 2) — pastel row ----
+    house(-28, 16, 9, 7, 2, 3.8f, brickW, redRoof,  1.0f, 0, 3, nullptr, true, false);
+    house(-16, 16, 9, 7, 2, 4.0f, tealW,  darkRoof, 1.0f, 1, 3, nullptr, true, false);
+    house(-4,  16, 9, 7, 2, 3.8f, ochre,  redRoof,  1.0f, 0, 3, nullptr, true, false);
+    // CAPTAIN'S VILLA — fine white + full verandah, upper terrace east.
+    house(14, 15, 12, 10, 2, 4.2f, tailorW, redRoof, MAT_STONE, 0, 3, nullptr, true, false);
+    verandah(14, 10.0f, 11, 4.2f, 1);
+    setShelf(14, 15); flagstaff(21, 16, 12, flagC);
 
-    // ---- GOVERNOR'S HILL / THE CITADEL ----
-    fort(-8, 24);
-    // GOVERNOR'S RESIDENCE — whitewash mansion + two-tier verandah + cupola, beside the fort.
-    house(10, 20, 15, 12, 2, 4.4f, tailorW, redRoof, MAT_STONE, 0, 3, nullptr, true, false);
-    verandah(10, 14.0f, 14, 4.4f, 2);
-    setShelf(10, 20);
-    BL(10, 10.5f, 20, 3.5f, 2.5f, 3.5f, tailorW, MAT_STONE); spire(10, 20, 3.8f, 12.5f, 2.2f, slate); // rooftop cupola
-    flagstaff(18, 21, 16, flagC);
-    cannon(4, 15.5f, -1); cannon(16, 15.5f, -1);                 // two trophy cannon on the forecourt
-    // POWDER MAGAZINE — squat, thick, windowless stone with a slab roof, set apart.
-    setShelf(-20, 22);
-    BL(-20, 3.0f, 22, 9, 7, 8, wallStone, MAT_STONE);
-    BL(-20, 6.8f, 22, 10, 1.4f, 9, stone, MAT_STONE);           // thick slab roof
-    for (int i = -1; i <= 1; i += 2) BLr(-20 + i * 5.0f, 3.0f, 22, 2.0f, 6.5f, 8.0f, 0, 0, i * 0.18f, wallStone, MAT_STONE); // battered buttresses
+    // ---- BAND E: GOVERNOR'S HILL / THE CITADEL (summit) ----
+    fort(-8, 26);
+    // GOVERNOR'S RESIDENCE — white mansion + two-tier verandah + cupola, beside the fort.
+    house(12, 22, 14, 11, 2, 4.4f, tailorW, redRoof, MAT_STONE, 0, 3, nullptr, true, false);
+    verandah(12, 16.5f, 13, 4.4f, 2);
+    setShelf(12, 22);
+    BL(12, 11.0f, 22, 3.5f, 2.5f, 3.5f, tailorW, MAT_STONE); spire(12, 22, 3.8f, 13.0f, 2.2f, slate); // cupola
+    flagstaff(20, 23, 16, flagC);
+    cannon(6, 17.5f, -1); cannon(18, 17.5f, -1);                 // trophy cannon
+    // POWDER MAGAZINE — squat windowless stone, slab roof, set apart west.
+    setShelf(-24, 24);
+    BL(-24, 3.0f, 24, 9, 7, 8, wallStone, MAT_STONE);
+    BL(-24, 6.8f, 24, 10, 1.4f, 9, stone, MAT_STONE);
+    for (int i = -1; i <= 1; i += 2) BLr(-24 + i * 5.0f, 3.0f, 24, 2.0f, 6.5f, 8.0f, 0, 0, i * 0.18f, wallStone, MAT_STONE);
 
     // ---- WEST POINT: sea battery + fishermen's cottages ----
-    battery(-52, -30);
-    house(-46, 4, 7, 6, 1, 4.0f, fenceWall, thatch, 1.0f, 2, 2, nullptr, false, false);
-    house(-38, 3, 6, 6, 1, 4.0f, tarred,   thatch, 1.0f, 2, 2, nullptr, false, false);
-    house(-42, 8, 6, 5, 1, 4.0f, fenceWall, thatch, 1.0f, 2, 2, nullptr, false, false);
-    dryRack(-44, 0, 4); dryRack(-39, -1, 4); B(-48, 0.6f, -2, 3.0f, 1.2f, 1.4f, wood[0], wood[1], wood[2], 1.0f); // beached skiff
+    battery(-54, -30);
+    house(-48, 5, 7, 6, 1, 4.0f, fenceWall, thatch, 1.0f, 2, 2, nullptr, false, false);
+    house(-40, 4, 6, 6, 1, 4.0f, tarred,   thatch, 1.0f, 2, 2, nullptr, false, false);
+    dryRack(-46, 0, 4); dryRack(-40, -1, 4); B(-50, 0.6f, -2, 3.0f, 1.2f, 1.4f, wood[0], wood[1], wood[2], 1.0f); // skiff
 
     // ---- SHIPYARD edge: a long low SAIL LOFT & ROPEWALK (east, by the hall) ----
-    house(46, -16, 10, 9, 2, 4.0f, tarred, darkRoof, 1.0f, 2, 2, wood, false, false);
-    setShelf(56, -14);
-    BL(56, 3.0f, -14, 22, 6, 7, tarred, 1.0f);                   // the long ropewalk shed
-    BLr(56, 6.8f, -14, 23, 0.4f, 5.5f, 0.28f, 0, 0, darkRoof, MAT_FLAT);
-    BLr(56, 6.8f, -14, 23, 0.4f, 5.5f, -0.28f, 0, 0, darkRoof, MAT_FLAT);
+    house(48, -16, 9, 8, 2, 4.0f, tarred, darkRoof, 1.0f, 2, 2, wood, false, false);
+    setShelf(58, -14);
+    BL(58, 3.0f, -14, 20, 6, 6, tarred, 1.0f);                   // long ropewalk shed
+    BLr(58, 6.6f, -14, 21, 0.4f, 5.0f, 0.28f, 0, 0, darkRoof, MAT_FLAT);
+    BLr(58, 6.6f, -14, 21, 0.4f, 5.0f, -0.28f, 0, 0, darkRoof, MAT_FLAT);
 
     // --- Palm trees: the Caribbean signature — a leaning trunk and a drooping
     // green crown, clustered on the sandy shore and dotting the green slopes. ---
