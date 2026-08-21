@@ -285,6 +285,24 @@ void renderBox(uint16_t viewId, float x, float y, float z, float size,
     renderBoxSized(viewId, x, y, z, size, size, size, r, g, b, 0.0f); // markers: flat
 }
 
+void renderBoxRot(uint16_t viewId, float x, float y, float z, float sx, float sy, float sz,
+                  float rx, float ry, float rz, float r, float g, float b, float mat) {
+    const float lightV[4] = { 0.5f, 0.6f, 0.62f, 0.0f };
+    bgfx::setUniform(u_lightDir, lightV);
+    float m[16];
+    bx::mtxSRT(m, sx, sy, sz, rx, ry, rz, x, y, z);
+    const float col[4] = { r, g, b, 1.0f };
+    bgfx::setUniform(u_color, col);
+    setMat(mat);
+    shadow::bindRead(4);
+    bgfx::setTransform(m);
+    bgfx::setVertexBuffer(0, s_vbh);
+    bgfx::setIndexBuffer(s_ibh);
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z
+                   | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW | BGFX_STATE_MSAA);
+    bgfx::submit(viewId, s_prog);
+}
+
 void renderShadow(uint16_t viewId, float x, float y, float z, float sx, float sz, float alpha) {
     const float lightV[4] = { 0.5f, 0.6f, 0.62f, 0.0f };
     bgfx::setUniform(u_lightDir, lightV);

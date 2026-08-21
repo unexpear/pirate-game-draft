@@ -14,6 +14,9 @@
 #include <bgfx/bgfx.h>
 #include <bx/math.h>
 
+#include <algorithm>
+#include <cmath>
+
 namespace ship_view {
 
 // Shared sky/atmosphere palette (sky gradient + water horizon fog match).
@@ -151,6 +154,57 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
         }
     };
 
+    // A rotated lit box at an ABSOLUTE height (no terrain lift) — the primitive
+    // for sloped roof panels. gableRoof/pyramidRoof compute the lift once and add
+    // it to every panel so the whole roof moves as one rigid piece with the walls.
+    auto BRabs = [&](float cx, float cy, float cz, float sx, float sy, float sz,
+                     float rx, float ry, float rz, const float* c, float mat) {
+        ship_mesh::renderBoxRot(viewId, relX + cx, cy, relZ + cz, sx, sy, sz, rx, ry, rz, c[0], c[1], c[2], mat);
+    };
+    // A PITCHED GABLE roof over a building: two sloped panels meeting at a ridge
+    // (ridge runs along z / the depth), an eave + gable overhang, a ridge cap and
+    // triangular gable-end walls — so the roof reads as a real roof, not a flat
+    // slab on a cube. `wallTopY` is the wall-top height (pre-lift); `rise` is the
+    // roof height; `rc` roof colour, `wc`/`wmat` the wall colour+material used to
+    // fill the gable-end triangles.
+    auto gableRoof = [&](float cx, float cz, float w, float d, float wallTopY,
+                         float rise, const float* rc, const float* wc, float wmat) {
+        const float lift  = std::max(0.0f, island_gpu::heightAt(cx, cz));
+        const float halfW = w * 0.5f + 0.4f;                       // modest eave overhang past the walls
+        const float depth = d + 0.9f;                              // modest gable overhang front/back
+        const float slope = std::sqrt(halfW * halfW + rise * rise);
+        const float ang   = std::atan2(rise, halfW);
+        const float py    = wallTopY + lift + rise * 0.5f;
+        const float pl    = slope * 1.1f;                          // panels overlap at the ridge (no gap) + deeper eave
+        BRabs(cx - halfW * 0.5f, py, cz, pl, 0.4f, depth, 0.0f, 0.0f,  ang, rc, MAT_FLAT); // left slope
+        BRabs(cx + halfW * 0.5f, py, cz, pl, 0.4f, depth, 0.0f, 0.0f, -ang, rc, MAT_FLAT); // right slope
+        const float ridge[3] = { rc[0] * 0.68f, rc[1] * 0.68f, rc[2] * 0.68f };
+        BRabs(cx, wallTopY + lift + rise + 0.08f, cz, 1.1f, 0.42f, depth, 0.0f, 0.0f, 0.0f, ridge, MAT_FLAT); // ridge cap covers the seam
+        for (int e = -1; e <= 1; e += 2) {                         // gable-end triangles (front & back)
+            const float ez = cz + e * (d * 0.5f - 0.15f);          // inset so the roof panels overhang it
+            const int steps = 5;
+            for (int s = 0; s < steps; ++s) {
+                const float t  = (s + 0.5f) / float(steps);        // 0..1 up the triangle
+                const float fy = wallTopY + lift + rise * t;
+                const float fw = w * std::max(0.0f, 1.0f - t * 1.12f); // tapers to nothing BELOW the ridge
+                if (fw < 0.3f) continue;                           // (so it never pokes through the roof)
+                BRabs(cx, fy, ez, fw, rise / steps + 0.1f, 0.4f, 0.0f, 0.0f, 0.0f, wc, wmat);
+            }
+        }
+    };
+    // A four-sided PYRAMID/HIP roof (for towers) — four tilted panels to an apex.
+    auto pyramidRoof = [&](float cx, float cz, float w, float wallTopY, float rise, const float* rc) {
+        const float lift  = std::max(0.0f, island_gpu::heightAt(cx, cz));
+        const float half  = w * 0.5f + 0.4f;
+        const float slope = std::sqrt(half * half + rise * rise);
+        const float ang   = std::atan2(rise, half);
+        const float py    = wallTopY + lift + rise * 0.5f;
+        BRabs(cx - half * 0.5f, py, cz, slope, 0.4f, w + 0.8f, 0.0f, 0.0f,  ang, rc, MAT_FLAT); // -x
+        BRabs(cx + half * 0.5f, py, cz, slope, 0.4f, w + 0.8f, 0.0f, 0.0f, -ang, rc, MAT_FLAT); // +x
+        BRabs(cx, py, cz - half * 0.5f, w + 0.8f, 0.4f, slope, -ang, 0.0f, 0.0f, rc, MAT_FLAT); // -z
+        BRabs(cx, py, cz + half * 0.5f, w + 0.8f, 0.4f, slope,  ang, 0.0f, 0.0f, rc, MAT_FLAT); // +z
+    };
+
     // --- Landmass: a real procedural island (coloured heightfield), rising from
     // the sea with an irregular coastline, beach, meadow and rocky heights. It
     // occludes the ocean where it stands above the waves; the sea is also carved
@@ -174,11 +228,11 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     mooredBoat(-32, -50, 7); mooredBoat(-8, -52, 8);         // small boats tied along the piers
     mooredShip(31, -56, 22);                                 // the hero: a moored galleon alongside the east pier
     B(-34, 2.5f, -26, 16, 11, 13, timber[0], timber[1], timber[2]); // warehouse A (base sunk)
-    B(-34, 8.4f, -26, 17, 1.2f, 14, roof[0], roof[1], roof[2]);
+    gableRoof(-34, -26, 16, 13, 8.0f, 5.0f, roof, timber, 1.0f);
     B(-14, 3.0f, -24, 15, 12, 12, timber[0], timber[1], timber[2]); // warehouse B (base sunk)
-    B(-14, 9.3f, -24, 16, 1.2f, 13, roof[0], roof[1], roof[2]);
+    gableRoof(-14, -24, 15, 12, 9.0f, 4.8f, roof, timber, 1.0f);
     B(-50, 7, -22, 6, 14, 6, stone[0], stone[1], stone[2], MAT_STONE); // harbourmaster tower (on land, west of town)
-    B(-50, 14.5f, -22, 7, 1.5f, 7, roof[0], roof[1], roof[2]);
+    pyramidRoof(-50, -22, 6, 14.0f, 3.6f, roof);
     B(40, 10, -62, 5, 20, 5, white[0], white[1], white[2], MAT_STONE); // lighthouse
     B(40, 20.5f, -62, 6, 2, 6, red[0], red[1], red[2]);
     B(-8, 2.1f, -40, 2.4f, 2, 2.4f, crate[0], crate[1], crate[2]); // crates on the quay
@@ -223,8 +277,11 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
         // Walls sink 3 units into the ground so the base stays embedded on the
         // sloped terrain (no floating downhill edge).
         B(cx, (hgt - 3.0f) * 0.5f, cz, w, hgt + 3.0f, d, wall[0], wall[1], wall[2], mat);
-        B(cx, hgt + 0.35f, cz, w + 1.4f, 0.9f, d + 1.4f, rf[0], rf[1], rf[2], MAT_FLAT);
-        B(cx, 1.2f, front - 0.05f, 1.6f, 2.4f, 0.25f, darkW[0], darkW[1], darkW[2], MAT_FLAT);
+        // A pitched gable roof (not a flat slab) — the main thing that stops the
+        // buildings reading as stacked cubes.
+        const float rise = std::max(2.6f, w * 0.32f);
+        gableRoof(cx, cz, w, d, hgt, rise, rf, wall, mat);
+        B(cx, 1.2f, front - 0.05f, 1.6f, 2.4f, 0.25f, darkW[0], darkW[1], darkW[2], MAT_FLAT); // door
         if (sc) {
             const float bx2 = cx + w * 0.30f;
             B(bx2, hgt - 0.6f, front - 0.5f, 0.2f, 0.2f, 1.3f, darkW[0], darkW[1], darkW[2], MAT_FLAT); // bracket
@@ -297,7 +354,7 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     // LANDMARK: a colonial church BELL TOWER behind the row, anchoring the skyline.
     B(2, 11, -12, 6, 22, 6, cream[0], cream[1], cream[2], MAT_STONE);                   // tower shaft
     B(2, 22.5f, -12, 7, 3.5f, 7, tailorW[0], tailorW[1], tailorW[2], MAT_STONE);        // belfry
-    B(2, 25.6f, -12, 5, 3, 5, redRoof[0], redRoof[1], redRoof[2], MAT_FLAT);            // pyramidal roof
+    pyramidRoof(2, -12, 7, 24.25f, 4.8f, redRoof);                                       // steep hip roof
     B(2, 22.5f, -12, 1.2f, 1.6f, 1.2f, darkW[0], darkW[1], darkW[2], MAT_FLAT);         // the bell
 
     // Market square behind the row: striped stalls + a stone well.
@@ -343,7 +400,7 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
 
     // --- Shipyard (large, on the east shore, kept inside the shore line) ---
     B(38, 7, 6, 36, 22, 32, timber[0], timber[1], timber[2]);      // great ship hall (base sunk to the ground)
-    B(38, 18.6f, 6, 38, 1.6f, 34, roof[0], roof[1], roof[2]);
+    gableRoof(38, 6, 36, 32, 18.0f, 9.0f, roof, timber, 1.0f);     // big pitched roof over the hall
     B(24, 1.4f, -46, 11, 0.8f, 34, wood[0], wood[1], wood[2]);     // slipway 1
     B(40, 1.4f, -44, 11, 0.8f, 32, wood[0], wood[1], wood[2]);     // slipway 2
     B(54, 1.4f, -40, 9, 0.8f, 28, wood[0], wood[1], wood[2]);      // slipway 3

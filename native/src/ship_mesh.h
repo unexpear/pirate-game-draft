@@ -44,6 +44,14 @@ void renderBoxSized(uint16_t viewId, float x, float y, float z,
                     float sx, float sy, float sz, float r, float g, float b,
                     float mat = 1.0f);
 
+// Draw a lit box rotated by (rx,ry,rz) radians (SRT order) — for sloped roof
+// panels, gable ends and any non-axis-aligned scenery. Same materials as
+// renderBoxSized. This is what lets buildings have pitched roofs instead of flat
+// cubes.
+void renderBoxRot(uint16_t viewId, float x, float y, float z,
+                  float sx, float sy, float sz, float rx, float ry, float rz,
+                  float r, float g, float b, float mat = 1.0f);
+
 // Draw a simple box-figure human standing at (x,y,z) (y = feet on the ground),
 // facing `heading` (radians); `walkPhase` animates the stride when moving.
 void renderCharacter(uint16_t viewId, float x, float y, float z,
