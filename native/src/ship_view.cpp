@@ -127,6 +127,13 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     B(52, 2, -14, 4, 2, 16, timber[0], timber[1], timber[2]);
 }
 
+float deckStandHeight(const sea::Ship& ship) {
+    // Matches renderBuildScene: keel rests on blocks (top 2.9) -> hull origin at
+    // +depth*0.55 -> deck piece at +depth*0.03 -> stand on its top.
+    const float depth = float(ship.bounds.depth);
+    return 2.9f + depth * 0.55f + depth * 0.03f + 0.06f;
+}
+
 void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
                       const std::vector<sea::Wave>& waves, float timeSec,
                       float orbitAngle, int width, int height,
@@ -196,6 +203,19 @@ void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
         const float z = -len * 0.30f + (len * 0.60f) * i / 3.0f;
         box(-wid * 0.64f, 2.7f, z, 0.5f, 4.6f, 0.5f, wood[0], wood[1], wood[2]);
         box( wid * 0.64f, 2.7f, z, 0.5f, 4.6f, 0.5f, wood[0], wood[1], wood[2]);
+    }
+
+    // Gangplank: a stair of timber steps up to the deck at the stern.
+    {
+        const float deckY = deckStandHeight(ship);
+        const float hl = len * 0.5f;
+        const int steps = 6;
+        for (int i = 0; i < steps; ++i) {
+            const float t = i / float(steps - 1);
+            const float sy = 1.0f + t * (deckY - 1.0f);      // top of this step
+            const float sz = -hl - 3.4f + t * 3.4f;          // dock (-hl-3.4) up to deck edge (-hl)
+            box(0.0f, sy * 0.5f, sz, 1.8f, sy, 1.1f, wood[0], wood[1], wood[2]);
+        }
     }
 
     // The hull, keel resting on the blocks.

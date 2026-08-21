@@ -217,7 +217,7 @@ int main(int argc, char** argv) {
 
     // On-foot character — walk the shipyard. Position is in the build-scene's local
     // space (the ship sits on the stocks at the origin).
-    bool walkMode = false;
+    bool walkMode = false, onDeck = false;
     float charX = 9.0f, charY = 1.0f, charZ = -11.0f, charHeading = -0.7f, walkPhase = 0.0f;
 
     // A large island with a port + shipyard, moored at a fixed spot to the north.
@@ -491,8 +491,20 @@ int main(int argc, char** argv) {
                 if (wk[SDL_SCANCODE_A]) tn -= 1.0f;
             }
             charHeading += tn * 2.2f * dt;
-            charX = clampf(charX + std::sin(charHeading) * mv * 3.4f * dt, -26.0f, 26.0f);
-            charZ = clampf(charZ + std::cos(charHeading) * mv * 3.4f * dt, -20.0f, 26.0f);
+            charX += std::sin(charHeading) * mv * 3.4f * dt;
+            charZ += std::cos(charHeading) * mv * 3.4f * dt;
+            if (onDeck) {
+                // Stay on the deck of the ship (at the origin on the stocks).
+                const float hw = float(ship.bounds.width) * 0.5f - 0.5f;
+                const float hl = float(ship.bounds.length) * 0.5f - 0.5f;
+                charX = clampf(charX, -hw, hw);
+                charZ = clampf(charZ, -hl, hl);
+                charY = ship_view::deckStandHeight(ship);
+            } else {
+                charX = clampf(charX, -26.0f, 26.0f);
+                charZ = clampf(charZ, -20.0f, 26.0f);
+                charY = 1.0f; // dock level
+            }
             if (mv != 0.0f) walkPhase += dt * 9.0f;
         }
 
@@ -527,7 +539,19 @@ int main(int argc, char** argv) {
             ImGui::TextDisabled("%s", sea::traditionName(sea::BuildTradition(buildTrad)));
             if (buildMode) {
                 ImGui::Checkbox("Walk the yard (on foot)", &walkMode);
-                if (walkMode) ImGui::TextColored(kGreen, "  WASD to walk, A/D to turn.");
+                if (walkMode) {
+                    if (!onDeck) {
+                        if (ImGui::Button("Board ship (up the gangplank)")) {
+                            onDeck = true; charX = 0.0f; charZ = -float(ship.bounds.length) * 0.3f; charHeading = 0.0f;
+                        }
+                        ImGui::TextColored(kGreen, "  On the dock - WASD walk, A/D turn.");
+                    } else {
+                        if (ImGui::Button("Go ashore")) {
+                            onDeck = false; charX = 9.0f; charZ = -11.0f; charHeading = -0.7f;
+                        }
+                        ImGui::TextColored(kGreen, "  On deck - WASD walk, A/D turn.");
+                    }
+                }
                 ImGui::Separator();
                 // Shape the hull (until freeform placement exists, drive L/B/depth).
                 bool shapeChanged = false;

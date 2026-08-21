@@ -40,6 +40,10 @@ void renderTracer(uint16_t viewId, float x, float y, float z, float size,
 // offset (relX,relZ) relative to our ship at the origin.
 void renderIsland(uint16_t viewId, float relX, float relZ);
 
+// Height (feet level) of the deck surface for a ship on the stocks in the build
+// scene — where a character stands when boarded. Matches renderBuildScene.
+float deckStandHeight(const sea::Ship& ship);
+
 // Build-mode scene: the hull up on a building STAND (keel blocks + shoring) at
 // the island's shipyard. Orbit camera (`orbitAngle`) to look the ship over, or
 // (`walk`) a third-person follow camera on a character walking the yard at
