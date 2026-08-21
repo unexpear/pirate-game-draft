@@ -29,6 +29,7 @@ bgfx::UniformHandle u_waveOffset = BGFX_INVALID_HANDLE;
 bgfx::UniformHandle u_lightDir = BGFX_INVALID_HANDLE;
 bgfx::UniformHandle u_camPos = BGFX_INVALID_HANDLE;
 bgfx::UniformHandle u_landCut = BGFX_INVALID_HANDLE;
+bgfx::UniformHandle u_fog = BGFX_INVALID_HANDLE;
 
 void destroyIfValid(bgfx::UniformHandle& h) { if (bgfx::isValid(h)) { bgfx::destroy(h); h = BGFX_INVALID_HANDLE; } }
 
@@ -76,6 +77,7 @@ void init() {
     u_lightDir = bgfx::createUniform("u_lightDir", bgfx::UniformType::Vec4);
     u_camPos = bgfx::createUniform("u_camPos", bgfx::UniformType::Vec4);
     u_landCut = bgfx::createUniform("u_landCut", bgfx::UniformType::Vec4);
+    u_fog = bgfx::createUniform("u_fog", bgfx::UniformType::Vec4);
 }
 
 void shutdown() {
@@ -86,6 +88,7 @@ void shutdown() {
     destroyIfValid(u_lightDir);
     destroyIfValid(u_camPos);
     destroyIfValid(u_landCut);
+    destroyIfValid(u_fog);
     if (bgfx::isValid(s_program)) { bgfx::destroy(s_program); s_program = BGFX_INVALID_HANDLE; }
     if (bgfx::isValid(s_ibh)) { bgfx::destroy(s_ibh); s_ibh = BGFX_INVALID_HANDLE; }
     if (bgfx::isValid(s_vbh)) { bgfx::destroy(s_vbh); s_vbh = BGFX_INVALID_HANDLE; }
@@ -112,12 +115,15 @@ void render(uint16_t viewId, const std::vector<sea::Wave>& waves, float t,
     bgfx::setUniform(u_waveTime, timeV);
     const float offV[4] = { offsetX, offsetZ, 0.0f, 0.0f };
     bgfx::setUniform(u_waveOffset, offV);
-    const float lightV[4] = { 0.4f, 0.85f, 0.35f, 0.0f };
+    const float lightV[4] = { 0.5f, 0.6f, 0.62f, 0.0f };
     bgfx::setUniform(u_lightDir, lightV);
     const float camV[4] = { eyeX, eyeY, eyeZ, 0.0f };
     bgfx::setUniform(u_camPos, camV);
     const float cutV[4] = { cutX, cutZ, cutR, 0.0f };
     bgfx::setUniform(u_landCut, cutV);
+    // Horizon fog: colour matches the sky horizon (sky_gpu), far ~ grid reach.
+    const float fogV[4] = { 0.86f, 0.76f, 0.62f, 300.0f };
+    bgfx::setUniform(u_fog, fogV);
 
     bgfx::setVertexBuffer(0, s_vbh);
     bgfx::setIndexBuffer(s_ibh);

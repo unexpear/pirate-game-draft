@@ -15,6 +15,7 @@
 #include <imgui.h>
 #include "imgui/imgui_bgfx.h"
 #include "ship_view.h"
+#include "screenshot.h"
 
 #include "ship_model.hpp"
 
@@ -23,6 +24,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace {
@@ -118,8 +120,29 @@ void drawWindVane(int width, float trueSrcRel, float appSrcRel, float awaDeg,
 
 int main(int argc, char** argv) {
     int maxFrames = -1;
-    for (int i = 1; i < argc; ++i)
+    // Headless screenshot capture for scripted / gauntlet-loop verification:
+    //   --shot <path>        write a clean PNG frame and exit
+    //   --scene sail|build   which scene to capture (default sail)
+    //   --pos <x> <z>        initial ship world position (framing)
+    //   --head <rad>         initial ship heading
+    //   --shot-frames <n>    frames to render before capture (default 90, lets waves settle)
+    std::string shotPath;
+    std::string shotScene = "sail";
+    float shotPosX = 0.0f, shotPosZ = 0.0f, shotHead = 0.0f;
+    bool shotWalk = false;
+    int shotFrames = 90;
+    for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) maxFrames = std::atoi(argv[++i]);
+        else if (std::strcmp(argv[i], "--shot") == 0 && i + 1 < argc) shotPath = argv[++i];
+        else if (std::strcmp(argv[i], "--scene") == 0 && i + 1 < argc) shotScene = argv[++i];
+        else if (std::strcmp(argv[i], "--pos") == 0 && i + 2 < argc) { shotPosX = float(std::atof(argv[++i])); shotPosZ = float(std::atof(argv[++i])); }
+        else if (std::strcmp(argv[i], "--head") == 0 && i + 1 < argc) shotHead = float(std::atof(argv[++i]));
+        else if (std::strcmp(argv[i], "--walk") == 0) shotWalk = true;
+        else if (std::strcmp(argv[i], "--shot-frames") == 0 && i + 1 < argc) shotFrames = std::atoi(argv[++i]);
+    }
+    const bool shotMode = !shotPath.empty();
+    const bool hideUI = shotMode;      // clean frame for the critic — no debug panel
+    if (shotMode && maxFrames < 0) maxFrames = shotFrames;
 
     SDL_SetMainReady();
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -141,8 +164,9 @@ int main(int argc, char** argv) {
     init.type = bgfx::RendererType::Direct3D11; // water shaders are compiled for D3D11 (dxbc)
     init.resolution.width = (uint32_t)width;
     init.resolution.height = (uint32_t)height;
-    init.resolution.reset = BGFX_RESET_VSYNC;
+    init.resolution.reset = shotMode ? BGFX_RESET_NONE : BGFX_RESET_VSYNC; // no vsync wait when capturing
     init.platformData.nwh = nativeWindowHandle(window);
+    init.callback = shot::callback(); // handles bgfx::requestScreenShot -> PNG
     if (!bgfx::init(init)) {
         std::fprintf(stderr, "bgfx::init failed\n");
         SDL_DestroyWindow(window);
@@ -287,6 +311,14 @@ int main(int argc, char** argv) {
         shots.clear();
         spawnEnemyForZone();
     };
+
+    // Shot mode: pose the scene for a clean capture (no player input arrives).
+    if (shotMode) {
+        worldX = shotPosX; worldZ = shotPosZ; heading = shotHead;
+        if (shotScene == "build") { buildMode = true; walkMode = shotWalk; placed = 9999; } // full hull on the stocks
+    }
+    const int shotAt = shotMode ? (maxFrames > 3 ? maxFrames - 3 : 0) : -1; // request a few frames before exit
+    bool shotRequested = false;
 
     bool running = true;
     int frame = 0;
@@ -552,6 +584,7 @@ int main(int argc, char** argv) {
 
         imgui_bgfx::beginFrame(width, height, dt, mouseX, mouseY, mouseButtons, wheel);
 
+        if (!hideUI) {
         ImGui::SetNextWindowPos(ImVec2(24, 24), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(440, 460), ImGuiCond_FirstUseEver);
         ImGui::Begin("Sea Trial - Milestone 0"); // ASCII: default ImGui font has no em-dash glyph
@@ -705,9 +738,10 @@ int main(int argc, char** argv) {
         ImGui::Text("Frame %d   %.1f FPS", frame, ImGui::GetIO().Framerate);
         ImGui::TextDisabled("Orbit camera - Esc to quit");
         ImGui::End();
+        } // !hideUI
 
-        // Wind vane HUD (hidden while building on the stocks).
-        if (!buildMode) {
+        // Wind vane HUD (hidden while building on the stocks, or capturing a clean shot).
+        if (!buildMode && !hideUI) {
             auto norm = [](float a) {
                 while (a > 3.14159265f) a -= 6.28318531f;
                 while (a <= -3.14159265f) a += 6.28318531f;
@@ -751,13 +785,19 @@ int main(int argc, char** argv) {
                 const float bxo = islandX + kSafeRadius * std::cos(a) - worldX;
                 const float bzo = islandZ + kSafeRadius * std::sin(a) - worldZ;
                 const float byo = 0.8f + 0.3f * std::sin(timeSec * 1.5f + i);
-                ship_view::renderTracer(kClearView, bxo, byo, bzo, 0.7f, 0.90f, 0.16f, 0.12f);
+                ship_view::renderTracer(kClearView, bxo, byo, bzo, 0.6f, 0.86f, 0.42f, 0.12f); // weathered nav-buoy orange
             }
             sea::FloatPose yardPose; yardPose.heaveY = 1.9f;
             ship_view::renderShip(kClearView, yardShip, yardPose, 0.15f, windDir, 0.0f, timeSec,
                                   islX + 24.0f, islZ - 44.0f);
         }
         imgui_bgfx::endFrame(kImGuiView);
+
+        // Queue the screenshot a few frames before exit so bgfx has frames to deliver it.
+        if (shotMode && !shotRequested && frame >= shotAt) {
+            bgfx::requestScreenShot(BGFX_INVALID_HANDLE, shotPath.c_str());
+            shotRequested = true;
+        }
         bgfx::frame();
 
         if (maxFrames >= 0 && ++frame >= maxFrames) running = false;

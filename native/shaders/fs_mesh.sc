@@ -7,7 +7,7 @@ $input v_normal, v_wpos
 
 uniform vec4 u_color;    // rgb = piece colour
 uniform vec4 u_lightDir; // xyz = direction to the sun
-uniform vec4 u_mat;      // x: 0 = flat, 1 = timber planks, 2 = stone courses
+uniform vec4 u_mat;      // x: 0 = flat, 1 = timber planks, 2 = stone courses, 3 = canvas sail
 
 float hash21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vnoise(vec2 p) {
@@ -23,10 +23,9 @@ void main()
 	vec3 N = normalize(v_normal);
 	vec3 L = normalize(u_lightDir.xyz);
 	float ndl = max(dot(N, L), 0.0);
-	float ambient = 0.35;
 	vec3 base = u_color.xyz;
 
-	if (u_mat.x > 0.5)
+	if (u_mat.x > 0.5 && u_mat.x < 2.5)
 	{
 		// Courses run horizontally on walls/hull; on near-flat faces (decks,
 		// roofs, ground) they run along world X instead so they still read.
@@ -58,6 +57,19 @@ void main()
 		}
 	}
 
-	vec3 col = base * (ambient + (1.0 - ambient) * ndl);
+	// Hemispheric light: a warm sun keys the lit faces, a cool sky fills shadow
+	// (lifts the near-black scenes and gives objects warm/cool form).
+	vec3 col;
+	if (u_mat.x > 2.5)
+	{
+		// Canvas sail: bright warm cloth that stays creamy in shade (no cool fill).
+		col = base * (0.74 + 0.32 * ndl);
+	}
+	else
+	{
+		vec3 sun = vec3(1.20, 1.02, 0.78);
+		vec3 skyfill = vec3(0.50, 0.56, 0.64);
+		col = base * (skyfill * 0.62 + sun * ndl * 0.90); // stronger key -> more form
+	}
 	gl_FragColor = vec4(col, 1.0);
 }

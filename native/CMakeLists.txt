@@ -58,7 +58,9 @@ add_executable(sea_trial
     src/ship_view.cpp
     src/water_gpu.cpp
     src/island_gpu.cpp
+    src/sky_gpu.cpp
     src/ship_mesh.cpp
+    src/screenshot.cpp
     src/imgui/imgui_bgfx.cpp
     extern/imgui/imgui.cpp
     extern/imgui/imgui_draw.cpp
@@ -69,8 +71,9 @@ target_include_directories(sea_trial PRIVATE
     src
     src/imgui
     extern/imgui
+    extern/bgfx.cmake/bimg/include
 )
-target_link_libraries(sea_trial PRIVATE SDL3::SDL3-static bgfx bx)
+target_link_libraries(sea_trial PRIVATE SDL3::SDL3-static bgfx bx bimg)
 
 # Compile shaders (D3D11 / dxbc profile) into headers via shaderc. The app
 # forces the D3D11 renderer so this single profile is enough.
@@ -99,6 +102,8 @@ sea_trial_shader(VERTEX   vs_mesh.sc  MESH_VS_OUT)
 sea_trial_shader(FRAGMENT fs_mesh.sc  MESH_FS_OUT)
 sea_trial_shader(VERTEX   vs_terrain.sc TERRAIN_VS_OUT)
 sea_trial_shader(FRAGMENT fs_terrain.sc TERRAIN_FS_OUT)
+sea_trial_shader(VERTEX   vs_sky.sc SKY_VS_OUT)
+sea_trial_shader(FRAGMENT fs_sky.sc SKY_FS_OUT)
 target_sources(sea_trial PRIVATE ${WATER_VS_OUT} ${WATER_FS_OUT} ${MESH_VS_OUT} ${MESH_FS_OUT}
-               ${TERRAIN_VS_OUT} ${TERRAIN_FS_OUT})
+               ${TERRAIN_VS_OUT} ${TERRAIN_FS_OUT} ${SKY_VS_OUT} ${SKY_FS_OUT})
 target_include_directories(sea_trial PRIVATE ${SHADER_OUT})

@@ -8,6 +8,7 @@
 #include "ship_model.hpp"
 #include "water_gpu.h"
 #include "island_gpu.h"
+#include "sky_gpu.h"
 #include "ship_mesh.h"
 
 #include <bgfx/bgfx.h>
@@ -15,7 +16,12 @@
 
 namespace ship_view {
 
+// Shared sky/atmosphere palette (sky gradient + water horizon fog match).
+static const float kSkyTop[3]     = { 0.12f, 0.19f, 0.34f }; // deep navy zenith
+static const float kSkyHorizon[3] = { 0.86f, 0.76f, 0.62f }; // warm pale haze
+
 void init() {
+    sky_gpu::init();
     water_gpu::init();
     island_gpu::init();
     ship_mesh::init();
@@ -25,6 +31,7 @@ void shutdown() {
     ship_mesh::shutdown();
     island_gpu::shutdown();
     water_gpu::shutdown();
+    sky_gpu::shutdown();
 }
 
 void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>& waves,
@@ -50,6 +57,7 @@ void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>
     bgfx::setViewTransform(viewId, view, proj);
     bgfx::setViewRect(viewId, 0, 0, uint16_t(width), uint16_t(height));
 
+    sky_gpu::render(viewId, kSkyTop, kSkyHorizon);
     water_gpu::render(viewId, waves, timeSec, eye.x, eye.y, eye.z, worldX, worldZ,
                       cutWorldX, cutWorldZ, cutR);
     ship_mesh::render(viewId, ship, pose, heading, windDir, sailFullness, timeSec, 0.0f, 0.0f, heelScale);
@@ -172,15 +180,16 @@ void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
     const float FLAT = 0.0f;
     const float sand[3]  = { 0.82f, 0.74f, 0.52f };
     const float grass[3] = { 0.30f, 0.46f, 0.22f };
-    const float dark[3]  = { 0.24f, 0.16f, 0.10f };
-    const float wood[3]  = { 0.42f, 0.28f, 0.16f };
+    const float dark[3]  = { 0.34f, 0.24f, 0.16f };
+    const float wood[3]  = { 0.44f, 0.30f, 0.18f };
     const float timber[3]= { 0.52f, 0.40f, 0.27f };
-    const float roof[3]  = { 0.35f, 0.20f, 0.14f };
-    const float metal[3] = { 0.25f, 0.22f, 0.20f };
+    const float roof[3]  = { 0.38f, 0.22f, 0.15f };
+    const float metal[3] = { 0.40f, 0.37f, 0.33f };
 
     // The sea, then the coastal yard: an island in the distance behind, a stone
     // dock the stocks sit on, a great ship hall + flanking gantry cranes behind
     // the berth (so the hull stays the clear foreground focus).
+    sky_gpu::render(viewId, kSkyTop, kSkyHorizon);
     // Carve the sea out under the dock berth so the ground reads as land, not a
     // box on the water. Dock centre scene (0,6) + water offset (24,76) = world (24,82).
     water_gpu::render(viewId, waves, timeSec, eye.x, eye.y, eye.z, 24.0f, 76.0f,

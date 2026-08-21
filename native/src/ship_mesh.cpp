@@ -63,7 +63,7 @@ void pieceColor(const sea::Piece& p, float out[4]) {
     else if (p.type == "line") set(0.14f, 0.10f, 0.07f);    // rope / rigging
     else if (p.type == "block") set(0.20f, 0.15f, 0.10f);  // blocks / pulleys
     else if (p.type == "helm" || p.type == "capstan") set(0.34f, 0.24f, 0.14f);   // fittings
-    else if (p.type == "keel" || p.type == "rib") set(0.29f, 0.17f, 0.09f); // structural
+    else if (p.type == "keel" || p.type == "rib") set(0.42f, 0.27f, 0.14f); // structural (lifted off near-black)
     else if (p.type == "deck") set(0.62f, 0.44f, 0.25f);    // deck
     else set(0.55f, 0.36f, 0.18f);                          // plank
 }
@@ -121,7 +121,7 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
         float(pose.pitch), heading, float(pose.heel) + windHeel,
         posX, float(pose.heaveY), posZ);
 
-    const float lightV[4] = { 0.4f, 0.85f, 0.35f, 0.0f };
+    const float lightV[4] = { 0.5f, 0.6f, 0.62f, 0.0f }; // lower warm sun: lights vertical faces
     bgfx::setUniform(u_lightDir, lightV);
 
     for (const auto& p : ship.pieces) {
@@ -167,9 +167,9 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
                    0.0f, yardTop - h * 0.5f, -len * 0.05f);
         float model[16];
         bx::mtxMul(model, local, shipRoot);
-        const float sailCol[4] = { 0.90f, 0.87f, 0.80f, 1.0f };
+        const float sailCol[4] = { 0.95f, 0.90f, 0.76f, 1.0f }; // warm canvas cream
         bgfx::setUniform(u_color, sailCol);
-        setMat(0.0f); // canvas: flat, no plank texture
+        setMat(3.0f); // canvas: bright warm cloth shading
         bgfx::setTransform(model);
         bgfx::setVertexBuffer(0, s_vbh);
         bgfx::setIndexBuffer(s_ibh);
@@ -181,7 +181,7 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
 void renderBoxSized(uint16_t viewId, float x, float y, float z,
                     float sx, float sy, float sz, float r, float g, float b,
                     float mat) {
-    const float lightV[4] = { 0.4f, 0.85f, 0.35f, 0.0f };
+    const float lightV[4] = { 0.5f, 0.6f, 0.62f, 0.0f };
     bgfx::setUniform(u_lightDir, lightV);
     float m[16];
     bx::mtxSRT(m, sx, sy, sz, 0.0f, 0.0f, 0.0f, x, y, z);
@@ -202,7 +202,7 @@ void renderBox(uint16_t viewId, float x, float y, float z, float size,
 }
 
 void renderCharacter(uint16_t viewId, float x, float y, float z, float heading, float walkPhase) {
-    const float lightV[4] = { 0.4f, 0.85f, 0.35f, 0.0f };
+    const float lightV[4] = { 0.5f, 0.6f, 0.62f, 0.0f };
     bgfx::setUniform(u_lightDir, lightV);
     // Character root: stands at (x,y,z) (y = feet on the ground), faces `heading`.
     float root[16];

@@ -11,7 +11,9 @@ void main()
 	vec3 N = normalize(v_normal);
 	vec3 L = normalize(u_lightDir.xyz);
 	float ndl = max(dot(N, L), 0.0);
-	float ambient = 0.42;
-	vec3 col = v_color.xyz * (ambient + (1.0 - ambient) * ndl);
+	// Warm sun + cool sky fill, matching the mesh shader.
+	vec3 sun = vec3(1.15, 1.00, 0.80);
+	vec3 skyfill = vec3(0.50, 0.56, 0.62);
+	vec3 col = v_color.xyz * (skyfill * 0.55 + sun * ndl * 0.80);
 	gl_FragColor = vec4(col, 1.0);
 }

@@ -62,9 +62,9 @@ uint32_t colorFor(float x, float z, float h, float slopeUp) {
         r = 0.80f; g = 0.72f; b = 0.51f;
     } else if (slopeUp < 0.62f) {   // steep faces -> exposed rock
         r = 0.44f; g = 0.41f; b = 0.37f;
-    } else if (h < 8.0f) {          // meadow
+    } else if (h < 12.0f) {         // meadow
         r = 0.31f; g = 0.47f; b = 0.22f;
-    } else if (h < 14.0f) {         // upland grass
+    } else if (h < 22.0f) {         // upland grass
         r = 0.24f; g = 0.38f; b = 0.17f;
     } else {                        // rocky crown
         r = 0.48f; g = 0.46f; b = 0.42f;
@@ -90,13 +90,15 @@ float heightAt(float x, float z) {
     const float d = coastR - r; // metres inland of the shore (negative = offshore)
     float h;
     if (d < 0.0f) h = d * 0.45f;                          // submerged shelf sloping away
-    else          h = 3.2f * (1.0f - std::exp(-d / 7.0f)); // beach rising to a ~3.2 ft shelf
-    // Inland relief: two hills toward the north (local +z), away from the port.
-    h += hill(x, z, 6.0f, 27.0f, 21.0f, 12.0f);
-    h += hill(x, z, -20.0f, 10.0f, 14.0f, 6.0f);
+    else          h = 4.5f * (1.0f - std::exp(-d / 9.0f)); // beach rising to a ~4.5 ft shelf
+    // Inland relief: real hills toward the interior (rising well above the
+    // shore-line buildings so the land reads as having mass, not a flat pad).
+    h += hill(x, z, 4.0f, 28.0f, 24.0f, 30.0f);   // main peak
+    h += hill(x, z, -22.0f, 12.0f, 16.0f, 16.0f); // western shoulder
+    h += hill(x, z, 26.0f, 36.0f, 15.0f, 15.0f);  // northern secondary summit
     // Ground texture, faded out below the waterline so the shelf stays smooth.
     const float landFrac = std::min(1.0f, std::max(0.0f, d / 8.0f));
-    h += (fbm(x * 0.05f, z * 0.05f) - 0.5f) * 3.6f * landFrac;
+    h += (fbm(x * 0.05f, z * 0.05f) - 0.5f) * 5.5f * landFrac;
     return h;
 }
 
@@ -155,7 +157,7 @@ void shutdown() {
 }
 
 void render(uint16_t viewId, float relX, float relZ) {
-    const float lightV[4] = { 0.4f, 0.85f, 0.35f, 0.0f };
+    const float lightV[4] = { 0.5f, 0.6f, 0.62f, 0.0f };
     bgfx::setUniform(u_lightDir, lightV);
     float m[16];
     bx::mtxTranslate(m, relX, 0.0f, relZ);
