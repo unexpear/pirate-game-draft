@@ -157,6 +157,14 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     // out under it (water_gpu land cut) so nothing floats on a flat sheet. ---
     island_gpu::render(viewId, relX, relZ);
 
+    // Angular ROCK CRAGS at the summit to break the smooth-dome silhouette into a
+    // ridged peak (drawn directly at the terrain height, not lifted).
+    auto crag = [&](float cx, float cy, float cz, float sx, float sy, float sz) {
+        ship_mesh::renderBoxSized(viewId, relX + cx, cy, relZ + cz, sx, sy, sz, 0.50f, 0.47f, 0.43f, MAT_STONE);
+    };
+    crag(4, 30, 28, 9, 11, 8);   crag(-4, 26, 23, 6, 9, 6);   crag(13, 27, 33, 7, 8, 6);
+    crag(0, 33, 31, 5, 7, 4);    crag(10, 24, 22, 5, 6, 5);
+
     // --- Port (south shore) ---
     B(-6, 1.2f, -40, 78, 1.4f, 6, stone[0], stone[1], stone[2], MAT_STONE);   // stone quay
     B(-26, 1.1f, -54, 4.5f, 0.8f, 30, wood[0], wood[1], wood[2]);  // pier 1
