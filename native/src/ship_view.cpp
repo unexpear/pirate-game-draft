@@ -111,6 +111,24 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     const float red[3]   = { 0.70f, 0.16f, 0.13f };
     const float crate[3] = { 0.55f, 0.42f, 0.24f };
     const float metal[3] = { 0.25f, 0.22f, 0.20f };
+    const float pileC[3] = { 0.30f, 0.22f, 0.14f };
+
+    // Support pilings under a pier/dock (from below the water up to its deck), so
+    // over-water structures stand on posts instead of floating.
+    auto pilings = [&](float px, float pz, float plen, float halfw, float deckY) {
+        const int n = int(plen / 6.0f);
+        for (int i = 0; i <= n; ++i) {
+            const float z = pz - plen * 0.5f + plen * i / float(n < 1 ? 1 : n);
+            B(px - halfw, deckY * 0.5f - 1.5f, z, 0.5f, deckY + 3.0f, 0.5f, pileC[0], pileC[1], pileC[2], MAT_FLAT);
+            B(px + halfw, deckY * 0.5f - 1.5f, z, 0.5f, deckY + 3.0f, 0.5f, pileC[0], pileC[1], pileC[2], MAT_FLAT);
+        }
+    };
+    // A small moored boat (hull + a stub mast) tied at the dock.
+    auto mooredBoat = [&](float cx, float cz, float len) {
+        B(cx, 0.7f, cz, 2.6f, 1.0f, len, 0.44f, 0.30f, 0.17f, 1.0f);
+        B(cx, 0.3f, cz + len * 0.5f, 1.4f, 0.7f, 1.2f, 0.44f, 0.30f, 0.17f, 1.0f);
+        B(cx, 3.2f, cz, 0.2f, 5.0f, 0.2f, 0.36f, 0.26f, 0.16f, MAT_FLAT);
+    };
 
     // --- Landmass: a real procedural island (coloured heightfield), rising from
     // the sea with an irregular coastline, beach, meadow and rocky heights. It
@@ -123,9 +141,11 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     B(-26, 1.1f, -54, 4.5f, 0.8f, 30, wood[0], wood[1], wood[2]);  // pier 1
     B(-2, 1.1f, -56, 4.5f, 0.8f, 34, wood[0], wood[1], wood[2]);   // pier 2
     B(22, 1.1f, -52, 4.5f, 0.8f, 26, wood[0], wood[1], wood[2]);   // pier 3
-    B(-34, 4.0f, -26, 16, 8, 13, timber[0], timber[1], timber[2]); // warehouse A
+    pilings(-26, -54, 30, 1.7f, 1.5f); pilings(-2, -56, 34, 1.7f, 1.5f); pilings(22, -52, 26, 1.7f, 1.5f);
+    mooredBoat(-30, -52, 7); mooredBoat(6, -54, 8); mooredBoat(18, -50, 6); // boats tied along the piers
+    B(-34, 2.5f, -26, 16, 11, 13, timber[0], timber[1], timber[2]); // warehouse A (base sunk)
     B(-34, 8.4f, -26, 17, 1.2f, 14, roof[0], roof[1], roof[2]);
-    B(-14, 4.5f, -24, 15, 9, 12, timber[0], timber[1], timber[2]); // warehouse B
+    B(-14, 3.0f, -24, 15, 12, 12, timber[0], timber[1], timber[2]); // warehouse B (base sunk)
     B(-14, 9.3f, -24, 16, 1.2f, 13, roof[0], roof[1], roof[2]);
     B(-50, 7, -22, 6, 14, 6, stone[0], stone[1], stone[2], MAT_STONE); // harbourmaster tower (on land, west of town)
     B(-50, 14.5f, -22, 7, 1.5f, 7, roof[0], roof[1], roof[2]);
@@ -170,13 +190,16 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     auto building = [&](float cx, float cz, float w, float hgt, float d,
                         const float* wall, const float* rf, float mat, const float* sc) {
         const float front = cz - d * 0.5f;
-        B(cx, hgt * 0.5f, cz, w, hgt, d, wall[0], wall[1], wall[2], mat);
+        // Walls sink 3 units into the ground so the base stays embedded on the
+        // sloped terrain (no floating downhill edge).
+        B(cx, (hgt - 3.0f) * 0.5f, cz, w, hgt + 3.0f, d, wall[0], wall[1], wall[2], mat);
         B(cx, hgt + 0.35f, cz, w + 1.4f, 0.9f, d + 1.4f, rf[0], rf[1], rf[2], MAT_FLAT);
         B(cx, 1.2f, front - 0.05f, 1.6f, 2.4f, 0.25f, darkW[0], darkW[1], darkW[2], MAT_FLAT);
         if (sc) {
             const float bx2 = cx + w * 0.30f;
             B(bx2, hgt - 0.6f, front - 0.5f, 0.2f, 0.2f, 1.3f, darkW[0], darkW[1], darkW[2], MAT_FLAT); // bracket
             B(bx2, hgt - 1.0f, front - 1.1f, 2.6f, 1.7f, 0.22f, sc[0], sc[1], sc[2], MAT_FLAT);          // board
+            B(bx2, hgt - 1.0f, front - 1.22f, 1.0f, 1.0f, 0.1f, darkW[0], darkW[1], darkW[2], MAT_FLAT); // trade device on the board
         }
     };
     auto stall = [&](float cx, float cz, const float* awn) {
@@ -211,7 +234,8 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
 
     // A plank BOARDWALK street between the quay and the shop fronts, tying the
     // waterfront together. The shop row aligns its FRONTS onto it (front z = -30).
-    B(-2, 0.6f, -33, 98, 0.5f, 6, plank[0], plank[1], plank[2], 1.0f);
+    // Embedded into the slope (base below grade) so it doesn't float.
+    B(-2, -0.4f, -33, 98, 2.2f, 7, plank[0], plank[1], plank[2], 1.0f);
 
     // Waterfront shop row (fronts on the street, facing the sea), west -> east.
     // BLACKSMITH / WEAPON SHOP — grey stone, slate, chimney + forge glow + smoke, anvil.
@@ -257,9 +281,8 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     building(32, -2, 10, 5.5f, 8, cream, redRoof, 1.0f, nullptr);
     building(-16, 6, 8, 5, 7, tailorW, redRoof, 1.0f, nullptr);
 
-    // Fences around the square + lamps ALONG the boardwalk street.
-    fenceX(-40, 12, 5);
-    fenceZ(-4, 5, 14);
+    // A fence behind the square + lamps ALONG the boardwalk street.
+    fenceX(-40, 12, 6);
     lamp(-30, -33); lamp(-11, -33); lamp(7, -33); lamp(30, -33);
 
     // --- Palm trees: the Caribbean signature — a leaning trunk and a drooping
@@ -289,7 +312,7 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     palm(34, 18, 10);   palm(44, 26, 9);    palm(8, 34, 11);    palm(-30, 30, 10);
 
     // --- Shipyard (large, on the east shore, kept inside the shore line) ---
-    B(38, 9, 6, 36, 18, 32, timber[0], timber[1], timber[2]);      // great ship hall
+    B(38, 7, 6, 36, 22, 32, timber[0], timber[1], timber[2]);      // great ship hall (base sunk to the ground)
     B(38, 18.6f, 6, 38, 1.6f, 34, roof[0], roof[1], roof[2]);
     B(24, 1.4f, -46, 11, 0.8f, 34, wood[0], wood[1], wood[2]);     // slipway 1
     B(40, 1.4f, -44, 11, 0.8f, 32, wood[0], wood[1], wood[2]);     // slipway 2
