@@ -475,10 +475,10 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
         if (chim) chimneyAt(cx + w * 0.32f, cz + d * 0.18f, topY - 1.0f, topY + 4.0f, false);
         if (sign) {
             const float bx2 = cx - w * 0.34f;
-            BL(bx2, topY - storyH * 0.5f, front - 0.55f, 0.2f, 0.2f, 1.4f, beam, MAT_FLAT);            // bracket
-            BL(bx2, topY - storyH * 0.5f - 0.5f, front - 1.15f, 2.6f, 1.8f, 0.22f, sign, MAT_FLAT);    // board
+            BL(bx2, topY - storyH * 0.5f, front - 0.45f, 0.2f, 0.2f, 0.9f, beam, MAT_FLAT);            // short bracket
+            BL(bx2, topY - storyH * 0.5f - 0.5f, front - 0.78f, 2.4f, 1.7f, 0.2f, sign, MAT_FLAT);     // board (close to wall)
             const float glyphC[3] = { 0.95f, 0.91f, 0.82f };
-            BL(bx2, topY - storyH * 0.5f - 0.5f, front - 1.27f, 1.2f, 1.2f, 0.1f, glyphC, MAT_FLAT);   // glyph
+            BL(bx2, topY - storyH * 0.5f - 0.5f, front - 0.9f, 1.1f, 1.1f, 0.1f, glyphC, MAT_FLAT);    // glyph
         }
     };
 
@@ -508,10 +508,10 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
             BL(cx, rise * t - 0.4f, cz + dep * t, w, 0.9f, dep / n + 0.6f, cobble, MAT_STONE); }
     };
     auto cannon = [&](float cx, float cz, float dir) {                       // cannon on a carriage (uses curLift)
-        BL(cx, 1.0f, cz, 1.1f, 0.9f, 1.3f, ironC, MAT_FLAT);
-        BL(cx - 0.6f, 0.55f, cz, 0.22f, 1.1f, 1.1f, wood, MAT_FLAT);
-        BL(cx + 0.6f, 0.55f, cz, 0.22f, 1.1f, 1.1f, wood, MAT_FLAT);
-        BL(cx, 1.55f, cz + dir * 1.0f, 0.5f, 0.5f, 2.6f, ironC, MAT_FLAT);
+        BL(cx, 1.2f, cz, 1.4f, 1.1f, 1.6f, ironC, MAT_FLAT);
+        BL(cx - 0.75f, 0.65f, cz, 0.26f, 1.3f, 1.3f, wood, MAT_FLAT);
+        BL(cx + 0.75f, 0.65f, cz, 0.26f, 1.3f, 1.3f, wood, MAT_FLAT);
+        BL(cx, 1.9f, cz + dir * 1.2f, 0.66f, 0.66f, 3.2f, ironC, MAT_FLAT);   // barrel over the water
     };
     auto shotPile = [&](float cx, float cz) {                                // pyramid of shot (uses curLift)
         BL(cx, 0.35f, cz, 1.6f, 0.5f, 1.6f, ironC, MAT_FLAT);
@@ -625,6 +625,19 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     B(-2, 1.0f, 13, 62, 3.2f, 14, cobble[0], cobble[1], cobble[2], MAT_STONE);    // residential terrace  z:+6..+20
     lamp(-34, -30); lamp(-16, -30); lamp(2, -30); lamp(22, -30); lamp(-2, -12);
 
+    // ---- QUAY-FRONT BATTERY + cargo: the waterfront defence + working life the
+    // player sees first. A low crenellated rampart along the seaward quay edge
+    // carrying a row of cannon over the harbour, with shot, capstans and cargo. ----
+    setShelf(0, -39);
+    for (int i = -3; i <= 3; ++i) {
+        cannon(3 + i * 8.5f, -41.0f, -1);                                          // gun on the quay edge, barrel over the water
+        shotPile(7 + i * 8.5f, -39.5f);
+        BL(7.25f + i * 8.5f, 3.0f, -42.0f, 3.2f, 3.4f, 1.5f, wallStone, MAT_STONE); // merlon between the guns (embrasure)
+    }
+    setShelf(-26, -38); BL(-26, 1.7f, -38, 1.8f, 2.2f, 1.8f, darkW, MAT_FLAT); BL(-26, 2.9f, -38, 2.4f, 0.5f, 2.4f, darkW, MAT_FLAT); // capstan
+    setShelf(24, -38); BL(24, 1.7f, -38, 1.8f, 2.2f, 1.8f, darkW, MAT_FLAT); BL(24, 2.9f, -38, 2.4f, 0.5f, 2.4f, darkW, MAT_FLAT);   // capstan
+    crateAt(-14, -38, 2.4f); crateAt(-11, -39, 2.0f); crateAt(14, -38, 2.4f); ropeCoil(18, -39); ropeCoil(-18, -39); barrelAt(-8, -39);
+
     // ---- BAND A: HARBOURFRONT (west -> east) — six distinct blocks with clear
     // ~3-4m street gaps, each its own colour, tall fronts on Harbour Street. ----
     // FORGE / gunsmith — grey stone, slate.
@@ -639,8 +652,7 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     crateAt(-20, -31, 2.4f); crateAt(-31, -31, 2.4f); tarBarrel(-33, -31.5f);
     // TRADING POST / general store — ochre, terracotta, awning.
     house(-11, -25, 11, 9, 2, 4.0f, ochre, redRoof, 1.0f, 0, 3, green, false, false, shutGreen);
-    BLr(-11, 3.4f, -30.2f, 9.0f, 0.2f, 1.7f, 0.5f, 0, 0, thatch, MAT_FLAT); // sloped awning shade
-    crateAt(-6, -31, 1.8f);
+    crateAt(-6, -31, 1.8f); barrelAt(-16, -31);
     // CUSTOM HOUSE — white civic, arcade loggia, LOOKOUT TOWER (LOW skyline tier).
     house(5, -25, 13, 10, 3, 4.0f, cream, slate, MAT_STONE, 0, 3, nullptr, false, false);
     arcade(5, -30.0f, 11, 3.6f, 4);
@@ -697,7 +709,6 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     // ---- BAND C: TRADES TERRACE (behind retaining wall 1) — signed craft shops ----
     house(-28, 6, 8, 7, 2, 4.2f, seagrn, redRoof,  1.0f, 0, 2, cloth, true, false);  // APOTHECARY
     house(-10, 6, 10, 7, 2, 4.0f, lemonW, darkRoof, 1.0f, 0, 3, amberC, false, false, shutGreen); // OUTFITTER
-    BLr(-10, 4.4f, 2.7f, 8.0f, 0.2f, 1.7f, 0.5f, 0, 0, thatch, MAT_FLAT); // sloped awning shade
     house(12, 6, 9, 7, 2, 3.8f, ochre, redRoof, 1.0f, 0, 2, amberC, false, false, shutRed);    // BAKEHOUSE
     chimneyAt(16, 8, 8.0f, 13.0f, true);
     setShelf(12, 6); BL(16, 3.4f, 2.6f, 3.0f, 3.0f, 2.0f, stone, MAT_STONE); BL(16, 3.4f, 1.5f, 1.4f, 1.4f, 0.4f, glow, MAT_FLAT); // oven
