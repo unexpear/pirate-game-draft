@@ -59,11 +59,12 @@ float hill(float x, float z, float cx, float cz, float sig, float amp) {
 uint32_t colorFor(float x, float z, float h, float slopeUp) {
     auto ss = [](float e0, float e1, float t) { t = std::min(1.0f, std::max(0.0f, (t - e0) / (e1 - e0))); return t * t * (3.0f - 2.0f * t); };
     // Height ramp: wet sand -> dry sand -> grass -> upland grass -> rock crown.
-    const float sand[3]  = { 0.82f, 0.74f, 0.53f };
-    const float wet[3]   = { 0.66f, 0.60f, 0.47f };
-    const float grass[3] = { 0.30f, 0.52f, 0.26f };
-    const float up[3]    = { 0.27f, 0.42f, 0.22f };
-    const float rock[3]  = { 0.53f, 0.51f, 0.47f };
+    // Black Flag / Caribbean: golden-white sand, lush tropical greens, warm rock.
+    const float sand[3]  = { 0.90f, 0.84f, 0.64f };
+    const float wet[3]   = { 0.78f, 0.76f, 0.58f };
+    const float grass[3] = { 0.26f, 0.58f, 0.24f };
+    const float up[3]    = { 0.20f, 0.46f, 0.20f };
+    const float rock[3]  = { 0.55f, 0.50f, 0.42f };
     float r = wet[0], g = wet[1], b = wet[2];
     float t;
     t = ss(0.2f, 1.6f, h);  r = r + (sand[0]-r)*t;  g = g + (sand[1]-g)*t;  b = b + (sand[2]-b)*t;  // wet->dry sand
@@ -100,11 +101,13 @@ float heightAt(float x, float z) {
                  + (fbm(std::cos(ang) * 2.6f + 4.0f, std::sin(ang) * 2.6f + 7.0f) - 0.5f) * 9.0f;
     coastR = std::max(43.0f, coastR);
     const float d = coastR - r; // metres inland of the shore (negative = offshore)
-    // Smooth base: a wide beach ramp + real inland hills.
+    // Smooth base: a beach that KEEPS RISING inland (a continuous slope, not a
+    // flat shelf) up into the hills, plus a steeper skirt continuing underwater
+    // so the land reads as rising FROM the sea, not sitting ON it.
     float base;
-    if (d < 0.0f) base = d * 0.40f;                            // submerged shelf sloping away
-    else          base = 3.8f * (1.0f - std::exp(-d / 13.0f)); // gentle wide beach ramp
-    base += hill(x, z, 4.0f, 28.0f, 24.0f, 30.0f);   // main peak
+    if (d < 0.0f) base = d * 0.60f;                                       // steeper submerged skirt
+    else          base = 2.2f * (1.0f - std::exp(-d / 8.0f)) + d * 0.15f; // beach ramp + steady climb
+    base += hill(x, z, 4.0f, 28.0f, 24.0f, 26.0f);   // main peak
     base += hill(x, z, -22.0f, 12.0f, 16.0f, 16.0f); // western shoulder
     base += hill(x, z, 26.0f, 36.0f, 15.0f, 15.0f);  // northern secondary summit
     // Roughness: rolling + RIDGED noise so the hills read as sculpted ground, not

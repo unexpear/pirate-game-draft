@@ -61,11 +61,14 @@ void main()
 	float foam = smoothstep(0.22, 0.30, slope) * smoothstep(0.28, 0.5, v_wpos.y); // tighter -> crisper crest edges
 	col = mix(col, vec3(0.90, 0.95, 1.0), foam * 0.85);
 
-	// Foam ring where the sea meets the shore.
+	// Caribbean shallows: a wide turquoise band where the shelf shoals up to the
+	// island, then a bright foam line right at the shore.
 	if (u_landCut.z > 0.5)
 	{
+		float shallow = 1.0 - smoothstep(u_landCut.z, u_landCut.z + 30.0, landD);
+		col = mix(col, vec3(0.16, 0.68, 0.66), shallow * shallow * 0.6); // turquoise
 		float shore = 1.0 - smoothstep(u_landCut.z, u_landCut.z + 4.0, landD);
-		col = mix(col, vec3(0.82, 0.90, 0.98), shore * 0.65);
+		col = mix(col, vec3(0.85, 0.93, 0.95), shore * 0.6);
 	}
 
 	col *= shadowFactor(v_wpos); // the ship casts a shadow on the sea

@@ -134,18 +134,23 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     // distinct form/colour with a hanging sign so it reads as its own trade. ---
     // Each trade gets its OWN wall colour, roof colour and a big projecting
     // signboard, so no two shops read alike from the water.
-    const float smithyW[3] = { 0.37f, 0.37f, 0.40f };  // grey stone smithy
-    const float tailorW[3] = { 0.87f, 0.84f, 0.75f };  // bright whitewashed daub
-    const float grocerW[3] = { 0.52f, 0.38f, 0.23f };  // warm brown timber
-    const float tavW[3]    = { 0.56f, 0.24f, 0.20f };  // deep-red tavern
-    const float fenceWall[3]= { 0.23f, 0.21f, 0.20f };  // black-market dark
-    const float cottW[3]   = { 0.72f, 0.60f, 0.44f };  // cottage daub
-    const float darkW[3]   = { 0.24f, 0.21f, 0.18f };  // doors / trim / brackets
-    const float redRoof[3] = { 0.52f, 0.19f, 0.13f };  // red tile
-    const float tealRoof[3]= { 0.22f, 0.40f, 0.42f };  // weathered teal
-    const float goldRoof[3]= { 0.70f, 0.56f, 0.26f };  // golden thatch
-    const float darkRoof[3]= { 0.20f, 0.18f, 0.21f };  // dark shingle
-    const float slate[3]   = { 0.42f, 0.43f, 0.47f };  // slate
+    // Black Flag / Caribbean colonial port: whitewashed & pastel daub walls,
+    // warm terracotta tile roofs, distinguished by signs, awnings and form.
+    const float smithyW[3] = { 0.40f, 0.39f, 0.41f };  // grey stone smithy
+    const float tailorW[3] = { 0.90f, 0.87f, 0.78f };  // whitewash
+    const float grocerW[3] = { 0.86f, 0.78f, 0.60f };  // sandy cream
+    const float tavW[3]    = { 0.80f, 0.42f, 0.34f };  // warm terracotta-red tavern
+    const float fenceWall[3]= { 0.30f, 0.26f, 0.22f }; // black-market dark timber
+    const float cottW[3]   = { 0.72f, 0.80f, 0.80f };  // pale sea-green colonial
+    const float cream[3]   = { 0.88f, 0.83f, 0.70f };  // cream daub
+    const float darkW[3]   = { 0.26f, 0.20f, 0.15f };  // doors / trim / brackets
+    const float redRoof[3] = { 0.66f, 0.30f, 0.18f };  // terracotta tile (warm)
+    const float tealRoof[3]= { 0.66f, 0.30f, 0.18f };  // (colonial: terracotta too)
+    const float goldRoof[3]= { 0.66f, 0.30f, 0.18f };  // (colonial: terracotta too)
+    const float darkRoof[3]= { 0.34f, 0.22f, 0.15f };  // weathered shingle
+    const float slate[3]   = { 0.42f, 0.43f, 0.47f };  // slate (smithy)
+    const float plank[3]   = { 0.50f, 0.37f, 0.22f };  // boardwalk planks
+    const float shutter[3] = { 0.30f, 0.45f, 0.60f };  // blue colonial shutters
     const float amberC[3]  = { 0.99f, 0.76f, 0.30f };  // lantern amber
     const float glow[3]    = { 1.00f, 0.52f, 0.16f };  // forge glow
     const float smoke[3]   = { 0.58f, 0.58f, 0.60f };  // chimney smoke
@@ -189,46 +194,92 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
         B(x, 1.2f, (z0 + z1) * 0.5f, 0.16f, 0.18f, z1 - z0, wood[0], wood[1], wood[2], MAT_FLAT);
     };
 
-    // Waterfront shop row (facing the sea, south), west -> east — each distinct:
-    // Blacksmith / WEAPON SHOP — grey stone, slate roof, chimney + forge glow + a
-    // drifting smoke plume, and an anvil out front.
-    building(-38, -14, 13, 7, 10, smithyW, slate, MAT_STONE, red);
-    B(-43.0f, 6.5f, -14, 2.2f, 9, 2.2f, smithyW[0], smithyW[1], smithyW[2], MAT_STONE); // chimney
-    B(-43.0f, 11.2f, -14, 1.0f, 1.2f, 1.0f, glow[0], glow[1], glow[2], MAT_FLAT);        // forge glow
-    for (int s = 0; s < 4; ++s) B(-43.0f + s * 0.9f, 12.6f + s * 2.1f, -14 + s * 0.4f, 1.7f - s * 0.25f, 1.8f, 1.7f - s * 0.25f, smoke[0], smoke[1], smoke[2], MAT_FLAT); // smoke
-    B(-34, 1.0f, -8.5f, 2.0f, 1.6f, 1.4f, darkW[0], darkW[1], darkW[2], MAT_FLAT);       // anvil
-    // CLOTHING SHOP / tailor — bright whitewash, teal roof, a purple cloth awning.
-    building(-20, -13, 11, 6, 9, tailorW, tealRoof, 1.0f, cloth);
-    B(-20, 3.6f, -18.2f, 10.0f, 0.25f, 2.4f, cloth[0], cloth[1], cloth[2], MAT_FLAT);    // awning
-    // GENERAL STORE — warm brown timber, golden thatch, barrels of goods out front.
-    building(-2, -14, 13, 6.5f, 10, grocerW, goldRoof, 1.0f, green);
-    barrelAt(5, -8.6f); barrelAt(6.7f, -7.8f); barrelAt(5.8f, -10.0f);
-    // TAVERN — biggest, deep-red walls, dark shingle roof, lit windows + lanterns.
-    building(18, -15, 16, 8.5f, 12, tavW, darkRoof, 1.0f, amberC);
-    B(11.5f, 3.4f, -9.05f, 1.6f, 1.8f, 0.3f, amberC[0], amberC[1], amberC[2], MAT_FLAT); // lit window
-    B(24.5f, 3.4f, -9.05f, 1.6f, 1.8f, 0.3f, amberC[0], amberC[1], amberC[2], MAT_FLAT);
-    lamp(9.5f, -10); barrelAt(27, -8.5f); barrelAt(28.7f, -9.6f);
-    // FENCE / black-market — small, dark, tucked east, barred window, no bright sign.
-    building(37, -21, 9, 5, 8, fenceWall, darkRoof, MAT_FLAT, fenceWall);
-    B(37, 3.0f, -25.2f, 1.4f, 1.4f, 0.2f, darkW[0], darkW[1], darkW[2], MAT_FLAT);       // barred window
-    for (int b = -1; b <= 1; ++b) B(37 + b * 0.45f, 3.0f, -25.35f, 0.12f, 1.4f, 0.12f, metal[0], metal[1], metal[2], MAT_FLAT);
+    // Blue colonial shutters flanking a front window.
+    auto shutters = [&](float cx, float cz, float d, float y) {
+        const float f = cz - d * 0.5f - 0.02f;
+        B(cx, y, f, 1.6f, 1.4f, 0.1f, 0.30f, 0.34f, 0.40f, MAT_FLAT);        // window
+        B(cx - 1.9f, y, f, 0.5f, 1.5f, 0.12f, shutter[0], shutter[1], shutter[2], MAT_FLAT);
+        B(cx + 1.9f, y, f, 0.5f, 1.5f, 0.12f, shutter[0], shutter[1], shutter[2], MAT_FLAT);
+    };
+
+    // A plank BOARDWALK street between the quay and the shop fronts, tying the
+    // waterfront together. The shop row aligns its FRONTS onto it (front z = -30).
+    B(-2, 0.6f, -33, 98, 0.5f, 6, plank[0], plank[1], plank[2], 1.0f);
+
+    // Waterfront shop row (fronts on the street, facing the sea), west -> east.
+    // BLACKSMITH / WEAPON SHOP — grey stone, slate, chimney + forge glow + smoke, anvil.
+    building(-38, -25, 12, 7, 10, smithyW, slate, MAT_STONE, red);
+    B(-42.5f, 6.5f, -25, 2.2f, 9, 2.2f, smithyW[0], smithyW[1], smithyW[2], MAT_STONE); // chimney
+    B(-42.5f, 11.2f, -25, 1.0f, 1.2f, 1.0f, glow[0], glow[1], glow[2], MAT_FLAT);       // forge glow
+    for (int s = 0; s < 4; ++s) B(-42.5f + s * 0.9f, 12.6f + s * 2.1f, -25 + s * 0.4f, 1.7f - s * 0.25f, 1.8f, 1.7f - s * 0.25f, smoke[0], smoke[1], smoke[2], MAT_FLAT);
+    B(-33, 1.0f, -33.0f, 2.0f, 1.6f, 1.4f, darkW[0], darkW[1], darkW[2], MAT_FLAT);     // anvil on the boardwalk
+    // TAILOR / CLOTHING — whitewash, terracotta, blue shutters, purple awning.
+    building(-20, -25.5f, 11, 6, 9, tailorW, redRoof, 1.0f, cloth);
+    shutters(-20, -25.5f, 9, 3.4f);
+    B(-20, 3.5f, -31.2f, 9.5f, 0.25f, 2.2f, cloth[0], cloth[1], cloth[2], MAT_FLAT);    // awning over the street
+    // GENERAL STORE — sandy cream, terracotta, shutters, barrels of goods.
+    building(-2, -25, 13, 6.5f, 10, grocerW, redRoof, 1.0f, green);
+    shutters(-2, -25, 10, 3.6f);
+    barrelAt(5, -32.4f); barrelAt(6.7f, -31.6f); barrelAt(5.8f, -33.6f);
+    // TAVERN — biggest, warm terracotta-red, a colonial BALCONY, lit windows.
+    building(18, -24, 16, 9, 12, tavW, darkRoof, 1.0f, amberC);
+    B(18, 6.3f, -30.2f, 15.0f, 0.4f, 1.5f, plank[0], plank[1], plank[2], 1.0f);         // balcony deck
+    B(18, 7.4f, -30.9f, 15.0f, 1.2f, 0.15f, darkW[0], darkW[1], darkW[2], MAT_FLAT);    // balcony rail
+    B(11.5f, 3.6f, -30.05f, 1.6f, 1.8f, 0.3f, amberC[0], amberC[1], amberC[2], MAT_FLAT); // lit window
+    B(24.5f, 3.6f, -30.05f, 1.6f, 1.8f, 0.3f, amberC[0], amberC[1], amberC[2], MAT_FLAT);
+    barrelAt(27, -32.5f); barrelAt(28.7f, -33.6f);
+    // FENCE / black-market — small, dark, tucked back off the street to the east.
+    building(40, -18, 9, 5, 8, fenceWall, darkRoof, MAT_FLAT, fenceWall);
+    B(40, 3.0f, -22.2f, 1.4f, 1.4f, 0.2f, darkW[0], darkW[1], darkW[2], MAT_FLAT);      // barred window
+    for (int b = -1; b <= 1; ++b) B(40 + b * 0.45f, 3.0f, -22.35f, 0.12f, 1.4f, 0.12f, metal[0], metal[1], metal[2], MAT_FLAT);
+
+    // LANDMARK: a colonial church BELL TOWER behind the row, anchoring the skyline.
+    B(2, 11, -12, 6, 22, 6, cream[0], cream[1], cream[2], MAT_STONE);                   // tower shaft
+    B(2, 22.5f, -12, 7, 3.5f, 7, tailorW[0], tailorW[1], tailorW[2], MAT_STONE);        // belfry
+    B(2, 25.6f, -12, 5, 3, 5, redRoof[0], redRoof[1], redRoof[2], MAT_FLAT);            // pyramidal roof
+    B(2, 22.5f, -12, 1.2f, 1.6f, 1.2f, darkW[0], darkW[1], darkW[2], MAT_FLAT);         // the bell
 
     // Market square behind the row: striped stalls + a stone well.
-    stall(-14, -3, cloth);
-    stall(2, -3, green);
-    stall(-26, -1, red);
-    B(-6, 1.1f, -2, 3.0f, 2.2f, 3.0f, stone[0], stone[1], stone[2], MAT_STONE);          // well
-    B(-6, 3.4f, -2, 0.25f, 3.0f, 0.25f, wood[0], wood[1], wood[2], MAT_FLAT);
-    B(-6, 4.9f, -2, 3.6f, 0.3f, 1.6f, redRoof[0], redRoof[1], redRoof[2], MAT_FLAT);
-    // Cottages up the slope, distinct from the shops.
-    building(-32, 2, 9, 5.5f, 8, cottW, redRoof, 1.0f, nullptr);
-    building(30, 2, 10, 5.5f, 8, cottW, goldRoof, 1.0f, nullptr);
+    stall(-14, -4, cloth);
+    stall(-26, -2, green);
+    B(-8, 1.1f, -3, 3.0f, 2.2f, 3.0f, stone[0], stone[1], stone[2], MAT_STONE);         // well
+    B(-8, 3.4f, -3, 0.25f, 3.0f, 0.25f, wood[0], wood[1], wood[2], MAT_FLAT);
+    B(-8, 4.9f, -3, 3.6f, 0.3f, 1.6f, redRoof[0], redRoof[1], redRoof[2], MAT_FLAT);
+    // Colonial cottages climbing the slope behind the town.
+    building(-34, 0, 9, 5.5f, 8, cottW, redRoof, 1.0f, nullptr);
+    building(32, -2, 10, 5.5f, 8, cream, redRoof, 1.0f, nullptr);
+    building(-16, 6, 8, 5, 7, tailorW, redRoof, 1.0f, nullptr);
 
-    // Fences around the square + a pen, and street lamps along the waterfront.
-    fenceX(-40, 10, 4);
-    fenceZ(-3, 4, 12);
-    fenceX(18, 40, 4);
-    lamp(-28, -20); lamp(-9, -20); lamp(9, -21); lamp(33, -13);
+    // Fences around the square + lamps ALONG the boardwalk street.
+    fenceX(-40, 12, 5);
+    fenceZ(-4, 5, 14);
+    lamp(-30, -33); lamp(-11, -33); lamp(7, -33); lamp(30, -33);
+
+    // --- Palm trees: the Caribbean signature — a leaning trunk and a drooping
+    // green crown, clustered on the sandy shore and dotting the green slopes. ---
+    auto palm = [&](float cx, float cz, float ht) {
+        const float tr[3] = { 0.56f, 0.43f, 0.27f };
+        const float fr[3] = { 0.18f, 0.48f, 0.20f };
+        B(cx, ht * 0.35f, cz, 0.55f, ht * 0.72f, 0.55f, tr[0], tr[1], tr[2], 1.0f);      // lower trunk
+        B(cx + 0.5f, ht * 0.82f, cz + 0.25f, 0.5f, ht * 0.5f, 0.5f, tr[0], tr[1], tr[2], 1.0f); // leaning upper trunk
+        const float tx = cx + 0.8f, ty = ht + 0.2f, tz = cz + 0.4f;
+        B(tx, ty, tz, 1.5f, 0.8f, 1.5f, fr[0], fr[1], fr[2], MAT_FLAT);                   // crown core
+        const float fo = 2.7f, fy = ty - 0.6f;
+        B(tx + fo, fy, tz, 3.6f, 0.28f, 1.2f, fr[0], fr[1], fr[2], MAT_FLAT);             // 4 long fronds
+        B(tx - fo, fy, tz, 3.6f, 0.28f, 1.2f, fr[0], fr[1], fr[2], MAT_FLAT);
+        B(tx, fy, tz + fo, 1.2f, 0.28f, 3.6f, fr[0], fr[1], fr[2], MAT_FLAT);
+        B(tx, fy, tz - fo, 1.2f, 0.28f, 3.6f, fr[0], fr[1], fr[2], MAT_FLAT);
+        const float fd = 1.7f, fyd = fy - 0.4f;
+        B(tx + fd, fyd, tz + fd, 2.4f, 0.26f, 2.4f, fr[0], fr[1], fr[2], MAT_FLAT);       // 4 diagonal fronds (drooping)
+        B(tx - fd, fyd, tz - fd, 2.4f, 0.26f, 2.4f, fr[0], fr[1], fr[2], MAT_FLAT);
+        B(tx + fd, fyd, tz - fd, 2.4f, 0.26f, 2.4f, fr[0], fr[1], fr[2], MAT_FLAT);
+        B(tx - fd, fyd, tz + fd, 2.4f, 0.26f, 2.4f, fr[0], fr[1], fr[2], MAT_FLAT);
+    };
+    // Shore-line palms flanking the town, and a grove dotting the green slopes.
+    palm(-56, -28, 10); palm(-52, -36, 9);  palm(54, -30, 11); palm(58, -22, 9);
+    palm(-44, -8, 12);  palm(46, -6, 10);
+    palm(-40, 12, 11);  palm(-22, 22, 10);  palm(-6, 30, 12);  palm(16, 24, 11);
+    palm(34, 18, 10);   palm(44, 26, 9);    palm(8, 34, 11);    palm(-30, 30, 10);
 
     // --- Shipyard (large, on the east shore, kept inside the shore line) ---
     B(38, 9, 6, 36, 18, 32, timber[0], timber[1], timber[2]);      // great ship hall
