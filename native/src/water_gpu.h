@@ -18,8 +18,11 @@ void shutdown();
 
 // Submit the water surface on `viewId` (which must already have its camera set).
 // `eye*` feeds the fresnel/specular term; `offset*` is the ship's virtual world
-// position so the ocean scrolls as it sails.
+// position so the ocean scrolls as it sails. `cut*` carves a circular hole in
+// the sea (world XZ centre + radius) so land isn't drawn over water — pass a
+// radius <= 0 for open ocean with no cutout.
 void render(uint16_t viewId, const std::vector<sea::Wave>& waves, float timeSec,
-            float eyeX, float eyeY, float eyeZ, float offsetX, float offsetZ);
+            float eyeX, float eyeY, float eyeZ, float offsetX, float offsetZ,
+            float cutX = 0.0f, float cutZ = 0.0f, float cutR = 0.0f);
 
 } // namespace water_gpu

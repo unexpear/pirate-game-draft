@@ -219,6 +219,36 @@ std::vector<int> buildOrder(const Ship& ship, BuildTradition t);
 // Ordered, human-readable build steps for `t` (with per-tradition joinery flavor).
 std::vector<std::string> buildSequence(BuildTradition t);
 
+// --- Difficulty zones: a shifting-level sea map -----------------------------
+// The open sea is banded into difficulty LEVELS by distance from the home
+// harbour: a combat-free truce ring (level 0), then successive danger bands of
+// rising level outward. Bands OVERLAP slightly at their frontier, so a tougher
+// ship from the next band out can prowl a little way into the calmer territory
+// (you meet the odd heavy near a border). See decisions in next-steps.md.
+struct ZoneMap {
+    double harborX = 0.0, harborZ = 0.0; // home port centre (safe waters)
+    double safeRadius = 95.0;            // level 0: no combat inside this ring
+    double bandWidth  = 260.0;          // radial width of each danger band
+    double overlap    = 60.0;           // how far a higher band's ships reach inward
+    int    maxLevel   = 6;               // deepest danger band
+};
+
+// Base danger level at a world point (0 = safe harbour, rising outward).
+int zoneLevel(const ZoneMap& m, double x, double z);
+
+// The level of an enemy that spawns at (x,z): usually the base level, but inside
+// the overlap strip just inward of a frontier a `roll` in [0,1) can bump it one
+// level higher — a heavy from the next zone out, spilling into softer waters.
+// Returns 0 in the safe ring (spawn nothing there).
+int spawnLevel(const ZoneMap& m, double x, double z, double roll);
+
+// A short flavour name for a danger level (Sloop .. Flagship).
+const char* zoneShipName(int level);
+
+// An enemy ShipConfig scaled to a danger level: bigger, more guns, tougher as
+// the level rises. Level <= 1 is the light raider; the reference sloop is L0.
+ShipConfig enemyConfigForLevel(int level);
+
 std::vector<TestResult> runSelfTest();
 
 } // namespace sea

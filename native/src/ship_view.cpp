@@ -7,6 +7,7 @@
 
 #include "ship_model.hpp"
 #include "water_gpu.h"
+#include "island_gpu.h"
 #include "ship_mesh.h"
 
 #include <bgfx/bgfx.h>
@@ -16,18 +17,21 @@ namespace ship_view {
 
 void init() {
     water_gpu::init();
+    island_gpu::init();
     ship_mesh::init();
 }
 
 void shutdown() {
     ship_mesh::shutdown();
+    island_gpu::shutdown();
     water_gpu::shutdown();
 }
 
 void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>& waves,
             const sea::FloatPose& pose, float timeSec, float heading,
             float worldX, float worldZ, float windDir, float sailFullness,
-            int width, int height, float heelScale) {
+            int width, int height, float heelScale,
+            float cutWorldX, float cutWorldZ, float cutR) {
     // Chase camera behind the ship's heading (ship stays at the origin; the
     // ocean scrolls past via worldX/worldZ).
     const float dist = 24.0f;
@@ -46,7 +50,8 @@ void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>
     bgfx::setViewTransform(viewId, view, proj);
     bgfx::setViewRect(viewId, 0, 0, uint16_t(width), uint16_t(height));
 
-    water_gpu::render(viewId, waves, timeSec, eye.x, eye.y, eye.z, worldX, worldZ);
+    water_gpu::render(viewId, waves, timeSec, eye.x, eye.y, eye.z, worldX, worldZ,
+                      cutWorldX, cutWorldZ, cutR);
     ship_mesh::render(viewId, ship, pose, heading, windDir, sailFullness, timeSec, 0.0f, 0.0f, heelScale);
 }
 
@@ -64,15 +69,16 @@ void renderTracer(uint16_t viewId, float x, float y, float z, float size,
 void renderIsland(uint16_t viewId, float relX, float relZ) {
     // Composed from lit boxes (matching the ship art). Island local frame: player
     // approaches from -z (the south), so the port + shipyard face that way.
+    // Structures sit ON the terrain: lift each by the ground height at its
+    // footprint (0 offshore, so piers/slipways stay at the waterline).
     auto B = [&](float cx, float cy, float cz, float sx, float sy, float sz,
-                 float r, float g, float b) {
-        ship_mesh::renderBoxSized(viewId, relX + cx, cy, relZ + cz, sx, sy, sz, r, g, b);
+                 float r, float g, float b, float mat = 1.0f) {
+        const float gh = island_gpu::heightAt(cx, cz);
+        const float lift = gh > 0.0f ? gh : 0.0f;
+        ship_mesh::renderBoxSized(viewId, relX + cx, cy + lift, relZ + cz, sx, sy, sz, r, g, b, mat);
     };
-    // Palette
-    const float sand[3]  = { 0.82f, 0.74f, 0.52f };
-    const float grass[3] = { 0.30f, 0.46f, 0.22f };
-    const float grassD[3]= { 0.22f, 0.37f, 0.16f };
-    const float rock[3]  = { 0.46f, 0.44f, 0.40f };
+    const float MAT_STONE = 2.0f, MAT_FLAT = 0.0f;
+    // Palette (the landmass itself is now the coloured terrain heightfield)
     const float wood[3]  = { 0.42f, 0.28f, 0.15f };
     const float timber[3]= { 0.52f, 0.40f, 0.27f };
     const float roof[3]  = { 0.35f, 0.20f, 0.14f };
@@ -82,16 +88,14 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     const float crate[3] = { 0.55f, 0.42f, 0.24f };
     const float metal[3] = { 0.25f, 0.22f, 0.20f };
 
-    // --- Landmass (beach shelf, grass plateau, hill, rocky peak) ---
-    // Land rises clearly above the wave tops (~1) and runs deep below the
-    // waterline, so it OCCLUDES the ocean instead of sitting flush in it.
-    B(0, -0.4f, -2, 132, 5.2f, 110, sand[0], sand[1], sand[2]);   // beach: top ~2.2, base -3.0
-    B(0, 1.5f, 8, 104, 9.4f, 78, grass[0], grass[1], grass[2]);   // grass: top ~6.2, base -3.2
-    B(10, 6.5f, 24, 54, 8, 44, grassD[0], grassD[1], grassD[2]);
-    B(-14, 8.5f, 30, 26, 10, 24, rock[0], rock[1], rock[2]);
+    // --- Landmass: a real procedural island (coloured heightfield), rising from
+    // the sea with an irregular coastline, beach, meadow and rocky heights. It
+    // occludes the ocean where it stands above the waves; the sea is also carved
+    // out under it (water_gpu land cut) so nothing floats on a flat sheet. ---
+    island_gpu::render(viewId, relX, relZ);
 
     // --- Port (south shore) ---
-    B(-6, 1.2f, -40, 78, 1.4f, 6, stone[0], stone[1], stone[2]);   // stone quay
+    B(-6, 1.2f, -40, 78, 1.4f, 6, stone[0], stone[1], stone[2], MAT_STONE);   // stone quay
     B(-26, 1.1f, -54, 4.5f, 0.8f, 30, wood[0], wood[1], wood[2]);  // pier 1
     B(-2, 1.1f, -56, 4.5f, 0.8f, 34, wood[0], wood[1], wood[2]);   // pier 2
     B(22, 1.1f, -52, 4.5f, 0.8f, 26, wood[0], wood[1], wood[2]);   // pier 3
@@ -99,9 +103,9 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     B(-34, 8.4f, -26, 17, 1.2f, 14, roof[0], roof[1], roof[2]);
     B(-14, 4.5f, -24, 15, 9, 12, timber[0], timber[1], timber[2]); // warehouse B
     B(-14, 9.3f, -24, 16, 1.2f, 13, roof[0], roof[1], roof[2]);
-    B(-50, 7, -34, 6, 14, 6, stone[0], stone[1], stone[2]);        // harbourmaster tower
+    B(-50, 7, -34, 6, 14, 6, stone[0], stone[1], stone[2], MAT_STONE); // harbourmaster tower
     B(-50, 14.5f, -34, 7, 1.5f, 7, roof[0], roof[1], roof[2]);
-    B(40, 10, -62, 5, 20, 5, white[0], white[1], white[2]);        // lighthouse
+    B(40, 10, -62, 5, 20, 5, white[0], white[1], white[2], MAT_STONE); // lighthouse
     B(40, 20.5f, -62, 6, 2, 6, red[0], red[1], red[2]);
     B(-8, 2.1f, -40, 2.4f, 2, 2.4f, crate[0], crate[1], crate[2]); // crates on the quay
     B(-4, 2.1f, -41, 2.4f, 2, 2.4f, crate[0], crate[1], crate[2]);
@@ -114,10 +118,10 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     B(24, 1.4f, -46, 11, 0.8f, 34, wood[0], wood[1], wood[2]);     // slipway 1
     B(40, 1.4f, -44, 11, 0.8f, 32, wood[0], wood[1], wood[2]);     // slipway 2
     B(54, 1.4f, -40, 9, 0.8f, 28, wood[0], wood[1], wood[2]);      // slipway 3
-    B(30, 9, -48, 2, 18, 2, metal[0], metal[1], metal[2]);         // gantry crane 1
-    B(30, 17.5f, -40, 2, 2, 20, metal[0], metal[1], metal[2]);
-    B(46, 9, -46, 2, 18, 2, metal[0], metal[1], metal[2]);         // gantry crane 2
-    B(46, 17.5f, -38, 2, 2, 20, metal[0], metal[1], metal[2]);
+    B(30, 9, -48, 2, 18, 2, metal[0], metal[1], metal[2], MAT_FLAT);  // gantry crane 1
+    B(30, 17.5f, -40, 2, 2, 20, metal[0], metal[1], metal[2], MAT_FLAT);
+    B(46, 9, -46, 2, 18, 2, metal[0], metal[1], metal[2], MAT_FLAT);  // gantry crane 2
+    B(46, 17.5f, -38, 2, 2, 20, metal[0], metal[1], metal[2], MAT_FLAT);
     // scaffolding frame around slipway 1
     B(19, 4, -38, 1, 8, 1, wood[0], wood[1], wood[2]);
     B(29, 4, -38, 1, 8, 1, wood[0], wood[1], wood[2]);
@@ -162,9 +166,10 @@ void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
     bgfx::setViewRect(viewId, 0, 0, uint16_t(width), uint16_t(height));
 
     auto box = [&](float x, float y, float z, float sx, float sy, float sz,
-                   float r, float g, float b) {
-        ship_mesh::renderBoxSized(viewId, x, y, z, sx, sy, sz, r, g, b);
+                   float r, float g, float b, float mat = 1.0f) {
+        ship_mesh::renderBoxSized(viewId, x, y, z, sx, sy, sz, r, g, b, mat);
     };
+    const float FLAT = 0.0f;
     const float sand[3]  = { 0.82f, 0.74f, 0.52f };
     const float grass[3] = { 0.30f, 0.46f, 0.22f };
     const float dark[3]  = { 0.24f, 0.16f, 0.10f };
@@ -176,21 +181,24 @@ void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
     // The sea, then the coastal yard: an island in the distance behind, a stone
     // dock the stocks sit on, a great ship hall + flanking gantry cranes behind
     // the berth (so the hull stays the clear foreground focus).
-    water_gpu::render(viewId, waves, timeSec, eye.x, eye.y, eye.z, 24.0f, 76.0f);
-    box(0.0f, 5.0f, 96.0f, 180.0f, 16.0f, 74.0f, grass[0], grass[1], grass[2]);   // island (distance, deep base)
-    box(0.0f, 0.0f, 58.0f, 200.0f, 5.0f, 20.0f, sand[0], sand[1], sand[2]);       // shore/beach: top ~2.5
-    box(0.0f, -0.6f, 6.0f, 56.0f, 4.8f, 46.0f, sand[0], sand[1], sand[2]);        // dock ground: top ~1.8, base -3.0
+    // Carve the sea out under the dock berth so the ground reads as land, not a
+    // box on the water. Dock centre scene (0,6) + water offset (24,76) = world (24,82).
+    water_gpu::render(viewId, waves, timeSec, eye.x, eye.y, eye.z, 24.0f, 76.0f,
+                      24.0f, 82.0f, 30.0f);
+    box(0.0f, 5.0f, 96.0f, 180.0f, 16.0f, 74.0f, grass[0], grass[1], grass[2], FLAT); // island (distance, deep base)
+    box(0.0f, 0.0f, 58.0f, 200.0f, 5.0f, 20.0f, sand[0], sand[1], sand[2], FLAT);     // shore/beach: top ~2.5
+    box(0.0f, -0.6f, 6.0f, 56.0f, 4.8f, 46.0f, sand[0], sand[1], sand[2], FLAT);      // dock ground: top ~1.8, base -3.0
     box(0.0f, 10.0f, 40.0f, 48.0f, 20.0f, 22.0f, timber[0], timber[1], timber[2]); // great ship hall
     box(0.0f, 20.6f, 40.0f, 50.0f, 1.6f, 24.0f, roof[0], roof[1], roof[2]);
     for (int s = -1; s <= 1; s += 2) {                                            // gantry cranes
-        box(float(s) * 15.0f, 10.0f, -2.0f, 1.8f, 20.0f, 1.8f, metal[0], metal[1], metal[2]);
-        box(float(s) * 15.0f, 19.0f, 4.0f, 1.8f, 1.8f, 22.0f, metal[0], metal[1], metal[2]);
+        box(float(s) * 15.0f, 10.0f, -2.0f, 1.8f, 20.0f, 1.8f, metal[0], metal[1], metal[2], FLAT);
+        box(float(s) * 15.0f, 19.0f, 4.0f, 1.8f, 1.8f, 22.0f, metal[0], metal[1], metal[2], FLAT);
     }
     box(26.0f, 2.0f, 8.0f, 4.0f, 3.0f, 16.0f, wood[0], wood[1], wood[2]);          // timber stacks
     box(-26.0f, 2.0f, 8.0f, 4.0f, 3.0f, 16.0f, timber[0], timber[1], timber[2]);
     // A spar hoisted on the port crane: rope from the arm -> block (pulley) -> spar.
-    box(-15.0f, 12.5f, 6.0f, 0.12f, 12.0f, 0.12f, dark[0], dark[1], dark[2]);       // rope
-    box(-15.0f, 6.2f, 6.0f, 0.5f, 0.7f, 0.5f, dark[0], dark[1], dark[2]);           // block
+    box(-15.0f, 12.5f, 6.0f, 0.12f, 12.0f, 0.12f, dark[0], dark[1], dark[2], FLAT);  // rope
+    box(-15.0f, 6.2f, 6.0f, 0.5f, 0.7f, 0.5f, dark[0], dark[1], dark[2], FLAT);      // block
     box(-15.0f, 5.2f, 6.0f, 0.45f, 0.45f, 7.0f, wood[0], wood[1], wood[2]);         // suspended spar
 
     // The building stand: two ground ways, keel blocks along the spine, and a row

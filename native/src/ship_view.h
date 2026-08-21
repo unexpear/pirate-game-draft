@@ -21,10 +21,13 @@ void shutdown();
 // position (worldX/worldZ), and the ship riding the surface at `pose`, yawed to
 // `heading`. The sail trims toward `windDir` and is reefed to `sailFullness`
 // (0 = furled .. 1 = full canvas). `timeSec` drives the wave animation.
+// `cut*` (world XZ centre + radius) carves the sea out under the island so land
+// reads as land, not a box floating on the water; pass radius <= 0 for none.
 void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>& waves,
             const sea::FloatPose& pose, float timeSec, float heading,
             float worldX, float worldZ, float windDir, float sailFullness,
-            int width, int height, float heelScale = 1.0f);
+            int width, int height, float heelScale = 1.0f,
+            float cutWorldX = 0.0f, float cutWorldZ = 0.0f, float cutR = 0.0f);
 
 // Draw another ship into the same view (camera already set by render()), placed
 // at scene position (posX,posZ) relative to our ship at the origin.

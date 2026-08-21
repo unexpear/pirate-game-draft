@@ -28,9 +28,11 @@ void renderBox(uint16_t viewId, float x, float y, float z, float size,
                float r, float g, float b);
 
 // Draw a lit box with independent x/y/z dimensions at world (x,y,z) — the
-// building block for scenery (land, docks, warehouses, shipyard).
+// building block for scenery (land, docks, warehouses, shipyard). `mat` picks the
+// procedural surface: 0 = flat, 1 = timber planks (default), 2 = stone courses.
 void renderBoxSized(uint16_t viewId, float x, float y, float z,
-                    float sx, float sy, float sz, float r, float g, float b);
+                    float sx, float sy, float sz, float r, float g, float b,
+                    float mat = 1.0f);
 
 // Draw a simple box-figure human standing at (x,y,z) (y = feet on the ground),
 // facing `heading` (radians); `walkPhase` animates the stride when moving.

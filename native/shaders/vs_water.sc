@@ -1,5 +1,5 @@
 $input a_position
-$output v_normal, v_wpos
+$output v_normal, v_wpos, v_worldxz
 
 // Water vertex shader: displaces a flat grid by the same multi-frequency sine
 // sum the CPU model uses (sea::sampleWater), and derives the analytic normal.
@@ -41,5 +41,6 @@ void main()
 	p.y = height;
 	v_normal = normalize(vec3(-dhdx, 1.0, -dhdz) );
 	v_wpos = p;
+	v_worldxz = vec3(wx, wz, 0.0); // true world XZ, for cutting the sea out under land
 	gl_Position = mul(u_modelViewProj, vec4(p, 1.0) );
 }

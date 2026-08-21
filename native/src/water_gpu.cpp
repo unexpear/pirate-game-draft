@@ -28,6 +28,7 @@ bgfx::UniformHandle u_waveTime = BGFX_INVALID_HANDLE;
 bgfx::UniformHandle u_waveOffset = BGFX_INVALID_HANDLE;
 bgfx::UniformHandle u_lightDir = BGFX_INVALID_HANDLE;
 bgfx::UniformHandle u_camPos = BGFX_INVALID_HANDLE;
+bgfx::UniformHandle u_landCut = BGFX_INVALID_HANDLE;
 
 void destroyIfValid(bgfx::UniformHandle& h) { if (bgfx::isValid(h)) { bgfx::destroy(h); h = BGFX_INVALID_HANDLE; } }
 
@@ -74,6 +75,7 @@ void init() {
     u_waveOffset = bgfx::createUniform("u_waveOffset", bgfx::UniformType::Vec4);
     u_lightDir = bgfx::createUniform("u_lightDir", bgfx::UniformType::Vec4);
     u_camPos = bgfx::createUniform("u_camPos", bgfx::UniformType::Vec4);
+    u_landCut = bgfx::createUniform("u_landCut", bgfx::UniformType::Vec4);
 }
 
 void shutdown() {
@@ -83,13 +85,15 @@ void shutdown() {
     destroyIfValid(u_waveOffset);
     destroyIfValid(u_lightDir);
     destroyIfValid(u_camPos);
+    destroyIfValid(u_landCut);
     if (bgfx::isValid(s_program)) { bgfx::destroy(s_program); s_program = BGFX_INVALID_HANDLE; }
     if (bgfx::isValid(s_ibh)) { bgfx::destroy(s_ibh); s_ibh = BGFX_INVALID_HANDLE; }
     if (bgfx::isValid(s_vbh)) { bgfx::destroy(s_vbh); s_vbh = BGFX_INVALID_HANDLE; }
 }
 
 void render(uint16_t viewId, const std::vector<sea::Wave>& waves, float t,
-            float eyeX, float eyeY, float eyeZ, float offsetX, float offsetZ) {
+            float eyeX, float eyeY, float eyeZ, float offsetX, float offsetZ,
+            float cutX, float cutZ, float cutR) {
     float waveA[3][4] = {};
     float waveB[3][4] = {};
     const int n = int(waves.size() < 3 ? waves.size() : 3);
@@ -112,6 +116,8 @@ void render(uint16_t viewId, const std::vector<sea::Wave>& waves, float t,
     bgfx::setUniform(u_lightDir, lightV);
     const float camV[4] = { eyeX, eyeY, eyeZ, 0.0f };
     bgfx::setUniform(u_camPos, camV);
+    const float cutV[4] = { cutX, cutZ, cutR, 0.0f };
+    bgfx::setUniform(u_landCut, cutV);
 
     bgfx::setVertexBuffer(0, s_vbh);
     bgfx::setIndexBuffer(s_ibh);

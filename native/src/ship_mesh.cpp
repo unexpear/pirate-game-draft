@@ -43,6 +43,16 @@ bgfx::IndexBufferHandle s_ibh = BGFX_INVALID_HANDLE;
 bgfx::ProgramHandle s_prog = BGFX_INVALID_HANDLE;
 bgfx::UniformHandle u_color = BGFX_INVALID_HANDLE;
 bgfx::UniformHandle u_lightDir = BGFX_INVALID_HANDLE;
+bgfx::UniformHandle u_mat = BGFX_INVALID_HANDLE;
+
+void setMat(float m) { const float v[4] = { m, 0.0f, 0.0f, 0.0f }; bgfx::setUniform(u_mat, v); }
+
+// Which procedural surface a hull piece wears: rope/blocks stay flat, the rest
+// is planked timber.
+float pieceMat(const sea::Piece& p) {
+    if (p.type == "line" || p.type == "block") return 0.0f;
+    return 1.0f;
+}
 
 void pieceColor(const sea::Piece& p, float out[4]) {
     auto set = [&](float r, float g, float b) { out[0] = r; out[1] = g; out[2] = b; out[3] = 1.0f; };
@@ -75,14 +85,17 @@ void init() {
         true);
     u_color = bgfx::createUniform("u_color", bgfx::UniformType::Vec4);
     u_lightDir = bgfx::createUniform("u_lightDir", bgfx::UniformType::Vec4);
+    u_mat = bgfx::createUniform("u_mat", bgfx::UniformType::Vec4);
 }
 
 void shutdown() {
+    if (bgfx::isValid(u_mat)) bgfx::destroy(u_mat);
     if (bgfx::isValid(u_lightDir)) bgfx::destroy(u_lightDir);
     if (bgfx::isValid(u_color)) bgfx::destroy(u_color);
     if (bgfx::isValid(s_prog)) bgfx::destroy(s_prog);
     if (bgfx::isValid(s_ibh)) bgfx::destroy(s_ibh);
     if (bgfx::isValid(s_vbh)) bgfx::destroy(s_vbh);
+    u_mat = BGFX_INVALID_HANDLE;
     u_lightDir = BGFX_INVALID_HANDLE;
     u_color = BGFX_INVALID_HANDLE;
     s_prog = BGFX_INVALID_HANDLE;
@@ -123,6 +136,7 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
         float col[4];
         pieceColor(p, col);
         bgfx::setUniform(u_color, col);
+        setMat(pieceMat(p));
         bgfx::setTransform(model);
         bgfx::setVertexBuffer(0, s_vbh);
         bgfx::setIndexBuffer(s_ibh);
@@ -155,6 +169,7 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
         bx::mtxMul(model, local, shipRoot);
         const float sailCol[4] = { 0.90f, 0.87f, 0.80f, 1.0f };
         bgfx::setUniform(u_color, sailCol);
+        setMat(0.0f); // canvas: flat, no plank texture
         bgfx::setTransform(model);
         bgfx::setVertexBuffer(0, s_vbh);
         bgfx::setIndexBuffer(s_ibh);
@@ -164,13 +179,15 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
 }
 
 void renderBoxSized(uint16_t viewId, float x, float y, float z,
-                    float sx, float sy, float sz, float r, float g, float b) {
+                    float sx, float sy, float sz, float r, float g, float b,
+                    float mat) {
     const float lightV[4] = { 0.4f, 0.85f, 0.35f, 0.0f };
     bgfx::setUniform(u_lightDir, lightV);
     float m[16];
     bx::mtxSRT(m, sx, sy, sz, 0.0f, 0.0f, 0.0f, x, y, z);
     const float col[4] = { r, g, b, 1.0f };
     bgfx::setUniform(u_color, col);
+    setMat(mat);
     bgfx::setTransform(m);
     bgfx::setVertexBuffer(0, s_vbh);
     bgfx::setIndexBuffer(s_ibh);
@@ -181,7 +198,7 @@ void renderBoxSized(uint16_t viewId, float x, float y, float z,
 
 void renderBox(uint16_t viewId, float x, float y, float z, float size,
                float r, float g, float b) {
-    renderBoxSized(viewId, x, y, z, size, size, size, r, g, b);
+    renderBoxSized(viewId, x, y, z, size, size, size, r, g, b, 0.0f); // markers: flat
 }
 
 void renderCharacter(uint16_t viewId, float x, float y, float z, float heading, float walkPhase) {
@@ -198,6 +215,7 @@ void renderCharacter(uint16_t viewId, float x, float y, float z, float heading, 
         bx::mtxMul(model, local, root);
         const float col[4] = { r, g, b, 1.0f };
         bgfx::setUniform(u_color, col);
+        setMat(0.0f); // person: flat, no plank texture
         bgfx::setTransform(model);
         bgfx::setVertexBuffer(0, s_vbh);
         bgfx::setIndexBuffer(s_ibh);

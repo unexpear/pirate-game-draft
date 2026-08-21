@@ -185,17 +185,18 @@ int main(int argc, char** argv) {
     float windDir = 2.1f;             // wind blows toward this heading (radians); drifts
 
     // Gunnery + an AI enemy warship that maneuvers for a broadside and fires back.
-    // A big, beamy, heavily-gunned Man-o'-War: its own hull profile makes it sail
-    // and turn like the ponderous warship it is.
-    sea::ShipConfig enemyCfg;
-    enemyCfg.name = "Man-o'-War";
-    enemyCfg.length = 17.0; enemyCfg.width = 6.5; enemyCfg.depth = 3.2; enemyCfg.cannonCount = 4;
+    // The enemy is drawn from the difficulty ZONE the player is in: a light raider
+    // near the harbour, heavier ships the further out you sail (see sea::ZoneMap).
+    // Each ship's own hull profile makes it sail and turn to its class.
+    int enemyLevel = 1;
+    sea::ShipConfig enemyCfg = sea::enemyConfigForLevel(enemyLevel);
     sea::Ship enemy = sea::makeShipFromConfig(enemyCfg);
-    enemy.display_name = "Man-o'-War";
+    enemy.display_name = sea::zoneShipName(enemyLevel);
     sea::HullProfile enemyProfile = sea::bakeHullProfile(enemy);
     float enemyWorldX = 10.0f, enemyWorldZ = 60.0f; // starts off the starboard bow
     float enemyHeading = 3.0f, enemySink = 0.0f;
     float enemySpeed = 0.0f, enemyReload = 0.0f;
+    float respawnTimer = 0.0f; // delay before the next zone-scaled enemy sails in
     std::vector<sea::Projectile> shots;      // ours -> hit the enemy
     std::vector<sea::Projectile> enemyShots; // theirs -> hit us
     float reload = 0.0f;
@@ -223,8 +224,14 @@ int main(int argc, char** argv) {
     // A large island with a port + shipyard, moored at a fixed spot to the north.
     const float islandX = 0.0f, islandZ = 120.0f;
     const float kLandRadius = 56.0f;  // run aground here
+    const float kLandCutRadius = 40.0f; // sea carved out inside this (< min coastline ~42, so no dry moat)
     const float kSafeRadius = 95.0f;  // combat-free harbour truce inside this ring
     bool wasAground = false;          // edge-trigger the run-aground penalty
+
+    // The shifting-level sea map: danger rises in bands out from the harbour, with
+    // a little overlap at each frontier so a heavier ship can prowl inward.
+    sea::ZoneMap zones;
+    zones.harborX = islandX; zones.harborZ = islandZ; zones.safeRadius = kSafeRadius;
     sea::Ship yardShip = sea::makeShipFromConfig(cfg); // a half-built hull on the stocks
     {
         const std::vector<int> ord = sea::buildOrder(yardShip, sea::BuildTradition::English);
@@ -248,13 +255,37 @@ int main(int argc, char** argv) {
             if (isHull(p) && p.damage < 1.0 && k++ == target) { p.damage = p.damage + 0.25 > 1.0 ? 1.0 : p.damage + 0.25; return; }
     };
     auto repairAll = [&]() { for (auto& p : ship.pieces) p.damage = 0.0; };
+    // Deterministic pseudo-random in [0,1) — no rand(), seeded by time + position.
+    auto pseudoRand = [&](double salt) {
+        double v = std::sin((timeSec * 1.37 + salt) * 12.9898 + worldX * 0.0719 + worldZ * 0.1237) * 43758.5453;
+        return v - std::floor(v);
+    };
+    // Sail a fresh enemy in, scaled to the zone the player is in (heavier ships
+    // deeper out; near a frontier a heavier one may spill in from the next band).
+    auto spawnEnemyForZone = [&]() {
+        const double ang = pseudoRand(1.0) * 6.2831853;
+        const double dist = 120.0 + pseudoRand(2.0) * 70.0;
+        double sx = double(worldX) + std::cos(ang) * dist;
+        double sz = double(worldZ) + std::sin(ang) * dist;
+        sea::keepOutsideCircle(sx, sz, islandX, islandZ, double(kSafeRadius) + 10.0); // never in the truce
+        int lvl = sea::spawnLevel(zones, sx, sz, pseudoRand(3.0));
+        if (lvl < 1) lvl = 1;
+        enemyLevel = lvl;
+        enemyCfg = sea::enemyConfigForLevel(lvl);
+        enemy = sea::makeShipFromConfig(enemyCfg);
+        enemy.display_name = sea::zoneShipName(lvl);
+        enemyProfile = sea::bakeHullProfile(enemy);
+        enemyWorldX = float(sx); enemyWorldZ = float(sz);
+        enemyHeading = float(ang + 3.14159);
+        enemySink = 0.0f; enemySpeed = 0.0f; enemyReload = 1.0f; respawnTimer = 0.0f;
+        enemyStruck = false; boarding = false; captured = false; boardTimer = 0.0f;
+        enemyShots.clear();
+    };
     auto resetShip = [&]() {
         ship = sea::makeShipFromConfig(cfg);
         sinkDepth = 0.0f; sailTier = 1; wHoldTime = 0.0f; speed = 0.0f; heading = 0.0f; worldX = 0.0f; worldZ = 0.0f;
-        enemy = sea::makeShipFromConfig(enemyCfg); enemy.display_name = "Man-o'-War";
-        enemyWorldX = 10.0f; enemyWorldZ = 60.0f; enemyHeading = 3.0f; enemySink = 0.0f;
-        enemySpeed = 0.0f; enemyReload = 0.0f; shots.clear(); enemyShots.clear();
-        enemyStruck = false; boarding = false; captured = false; boardTimer = 0.0f;
+        shots.clear();
+        spawnEnemyForZone();
     };
 
     bool running = true;
@@ -460,6 +491,17 @@ int main(int argc, char** argv) {
         if (enemyStats.sinking && !captured) enemySink += dt * clampf(std::fabs(float(enemyStats.floatMargin)) / 1200.0f, 0.3f, 3.0f);
         enemyPose.heaveY -= enemySink;
 
+        // Endless zone patrol: once the current enemy is sunk or taken, a fresh one
+        // scaled to the player's zone sails in after a beat — but never while the
+        // player is holed up in the harbour truce (peace holds there).
+        const bool enemyResolved = enemyGone || captured;
+        if (enemyResolved && !buildMode) {
+            respawnTimer += dt;
+            if (respawnTimer > 4.0f && !inSafeZone) spawnEnemyForZone();
+        } else if (!enemyResolved) {
+            respawnTimer = 0.0f;
+        }
+
         // Boarding: pull alongside a struck (surrendered) enemy at low speed, press B.
         const float bdx = enemyWorldX - worldX, bdz = enemyWorldZ - worldZ;
         const float enemyRange = std::sqrt(bdx * bdx + bdz * bdz);
@@ -516,8 +558,8 @@ int main(int argc, char** argv) {
         ImGui::TextUnformatted("Engineless native C++ build");
         ImGui::Text("Renderer: %s", bgfx::getRendererName(bgfx::getRendererType()));
         ImGui::TextColored(stats.sinking ? kRed : kGreen, stats.sinking ? "Status: SINKING" : "Status: afloat");
-        if (captured)      ImGui::TextColored(kGreen, ">>> VICTORY - enemy boarded & captured <<<");
-        else if (enemyGone) ImGui::TextColored(kGreen, ">>> VICTORY - enemy sunk <<<");
+        if (captured)      ImGui::TextColored(kGreen, ">>> PRIZE TAKEN - enemy boarded & captured <<<");
+        else if (enemyGone) ImGui::TextColored(kGreen, ">>> ENEMY SUNK <<<");
         else if (weSank)   ImGui::TextColored(kRed, ">>> DEFEAT - you sank <<<");
         ImGui::Separator();
         if (ImGui::CollapsingHeader("Controls", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -614,6 +656,11 @@ int main(int argc, char** argv) {
                                windFactor * 100.0f, windFactor < 0.08f ? "   in irons - bear away!" : "");
             ImGui::Text("Port:    %.0f m", islandDist);
             if (inSafeZone) ImGui::TextColored(kGreen, ">> SAFE ZONE - harbour truce <<");
+            else {
+                const int zlvl = sea::zoneLevel(zones, worldX, worldZ);
+                ImGui::TextColored(zlvl >= 4 ? kRed : kGreen, "Zone:    level %d waters (%s patrol)",
+                                   zlvl, sea::zoneShipName(zlvl));
+            }
             const char* hs = activeProfile.gm < 0.0 ? "tender" : (activeProfile.gm < 0.4 ? "lively"
                             : (activeProfile.gm < 1.0 ? "stable" : "stiff"));
             ImGui::Text("Hull:    %.0f%% speed, %.0f%% turn (%s)",
@@ -622,9 +669,11 @@ int main(int argc, char** argv) {
         if (ImGui::CollapsingHeader("Gunnery & boarding", ImGuiTreeNodeFlags_DefaultOpen)) {
             const char* est = captured ? "captured" : (enemyGone ? "sunk"
                             : (enemyStruck ? "STRUCK - boardable" : (enemyStats.sinking ? "SINKING" : "afloat")));
+            ImGui::Text("Enemy:   %s (level %d)", enemy.display_name.c_str(), enemyLevel);
             ImGui::TextColored(captured ? kGreen
                                : ((enemyGone || enemyStruck || enemyStats.sinking) ? kRed : kGreen),
-                               "Enemy:   %s (dmg %.0f%%)", est, enemyStats.damageRatio * 100.0);
+                               "         %s (dmg %.0f%%)", est, enemyStats.damageRatio * 100.0);
+            if (enemyResolved && !inSafeZone) ImGui::Text("         next patrol inbound...");
             ImGui::Text("Range:   %.0f m", enemyRange);
             ImGui::Text("Incoming: %d shots", int(enemyShots.size()));
             if (inSafeZone)     ImGui::TextColored(kGreen, "Safe zone - no combat");
@@ -685,7 +734,7 @@ int main(int argc, char** argv) {
             ship_view::renderBuildScene(kClearView, shown, waves, timeSec, timeSec * 0.12f, width, height,
                                         walkMode, charX, charY, charZ, charHeading, walkPhase);
         } else {
-            ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height, float(activeProfile.heelFactor));
+            ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height, float(activeProfile.heelFactor), islandX, islandZ, kLandCutRadius);
             if (!enemyGone)
                 ship_view::renderShip(kClearView, enemy, enemyPose, enemyHeading, windDir,
                                       enemyStruck ? 0.0f : 0.75f, timeSec, // furled sails once she strikes

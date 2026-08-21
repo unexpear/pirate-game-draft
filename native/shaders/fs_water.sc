@@ -1,14 +1,19 @@
-$input v_normal, v_wpos
+$input v_normal, v_wpos, v_worldxz
 
 // Water fragment shader: depth-shaded blue with a fresnel rim and foam on the
-// crests. Deliberately simple — a readable ocean, not a AAA one.
+// crests. The sea is CUT OUT where land is (u_landCut), with foam at the shore.
 #include <bgfx_shader.sh>
 
 uniform vec4 u_lightDir; // xyz = direction to the sun
 uniform vec4 u_camPos;   // xyz = eye position
+uniform vec4 u_landCut;  // xy = land centre (world), z = radius, w unused
 
 void main()
 {
+	// Carve the ocean out under the island so land isn't drawn over water.
+	float landD = length(v_worldxz.xy - u_landCut.xy);
+	if (u_landCut.z > 0.5 && landD < u_landCut.z) discard;
+
 	vec3 N = normalize(v_normal);
 	vec3 L = normalize(u_lightDir.xyz);
 	float ndl = max(dot(N, L), 0.0);
@@ -24,6 +29,13 @@ void main()
 	// Foam near the crests.
 	float foam = smoothstep(0.55, 0.90, v_wpos.y);
 	col = mix(col, vec3(0.85, 0.92, 1.0), foam * 0.7);
+
+	// Foam ring where the sea meets the shore.
+	if (u_landCut.z > 0.5)
+	{
+		float shore = 1.0 - smoothstep(u_landCut.z, u_landCut.z + 4.0, landD);
+		col = mix(col, vec3(0.82, 0.90, 0.98), shore * 0.65);
+	}
 
 	gl_FragColor = vec4(col, 1.0);
 }

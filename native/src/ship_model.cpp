@@ -589,6 +589,57 @@ bool keepOutsideCircle(double& px, double& pz, double cx, double cz, double radi
     return true;
 }
 
+// --- Difficulty zones -------------------------------------------------------
+int zoneLevel(const ZoneMap& m, double x, double z) {
+    const double dx = x - m.harborX, dz = z - m.harborZ;
+    const double d = std::sqrt(dx * dx + dz * dz);
+    if (d <= m.safeRadius) return 0;
+    const int lvl = 1 + int((d - m.safeRadius) / m.bandWidth);
+    return lvl < m.maxLevel ? lvl : m.maxLevel;
+}
+
+int spawnLevel(const ZoneMap& m, double x, double z, double roll) {
+    const int base = zoneLevel(m, x, z);
+    if (base == 0) return 0;             // harbour truce: nothing spawns
+    if (base >= m.maxLevel) return base; // already at the cap, no higher tier to spill in
+    const double dx = x - m.harborX, dz = z - m.harborZ;
+    const double d = std::sqrt(dx * dx + dz * dz);
+    // Distance from this band's OUTER frontier (0 at the border, bandWidth deep in).
+    const double into = (d - m.safeRadius) - double(base - 1) * m.bandWidth;
+    const double toBorder = m.bandWidth - into;
+    if (m.overlap > 1e-9 && toBorder < m.overlap) {
+        // Nearer the frontier, likelier a heavy from the next band has strayed in.
+        const double t = (m.overlap - toBorder) / m.overlap; // 0 at strip edge .. 1 at border
+        if (roll < 0.65 * t) return base + 1;
+    }
+    return base;
+}
+
+const char* zoneShipName(int level) {
+    switch (level) {
+        case 0: return "Fishing Smack";
+        case 1: return "Sloop";
+        case 2: return "Brig";
+        case 3: return "Frigate";
+        case 4: return "Man-o'-War";
+        case 5: return "Ship of the Line";
+        default: return "Flagship";
+    }
+}
+
+ShipConfig enemyConfigForLevel(int level) {
+    const int L = level < 1 ? 1 : (level > 6 ? 6 : level);
+    ShipConfig c;
+    c.name = zoneShipName(L);
+    c.length = 13.0 + 2.4 * L;   // L1 ~15.4 m .. L6 ~27.4 m
+    c.width  = 5.0 + 0.7 * L;
+    c.depth  = 2.7 + 0.28 * L;
+    c.cannonCount = 2 * (1 + L); // L1: 4 guns (2/side) .. L6: 14 guns
+    c.hasHelm = true;
+    c.hasSail = true;
+    return c;
+}
+
 HullProfile bakeHullProfile(const Ship& ship) {
     HullProfile p;
     const double L = std::max(1.0, ship.bounds.length);
@@ -992,6 +1043,42 @@ std::vector<TestResult> runSelfTest() {
         const bool accel = bakeHullProfile(makeShipFromConfig(bigCfg)).accelFactor
                          < bakeHullProfile(makeShipFromConfig(smallCfg)).accelFactor;
         push("A bigger hull gathers way more slowly", accel);
+    }
+
+    // --- Difficulty zones -----------------------------------------------------
+    {
+        ZoneMap zm; // harbour at origin, safe 95, bands of 260, overlap 60
+        push("The harbour is a level-0 safe zone", zoneLevel(zm, 0, 0) == 0);
+        push("Just past the truce ring is level 1", zoneLevel(zm, zm.safeRadius + 5.0, 0) == 1);
+        // Level rises monotonically with distance out to sea.
+        const int lA = zoneLevel(zm, zm.safeRadius + 100.0, 0);
+        const int lB = zoneLevel(zm, zm.safeRadius + 100.0 + zm.bandWidth, 0);
+        const int lC = zoneLevel(zm, zm.safeRadius + 100.0 + 2 * zm.bandWidth, 0);
+        push("Danger level rises band by band outward", lA < lB && lB < lC,
+             num(lA) + " < " + num(lB) + " < " + num(lC));
+        push("Danger level is capped at maxLevel", zoneLevel(zm, 100000.0, 0) == zm.maxLevel);
+        push("Nothing spawns in the safe harbour", spawnLevel(zm, 0, 0, 0.0) == 0);
+
+        // Deep inside a band (far from either frontier), spawns are the base level
+        // regardless of the roll.
+        const double midBand1 = zm.safeRadius + zm.bandWidth * 0.5;
+        push("Mid-band spawns match the base level", spawnLevel(zm, midBand1, 0, 0.0) == 1
+             && spawnLevel(zm, midBand1, 0, 0.99) == 1);
+
+        // Right at a band's outer frontier, a lucky roll pulls a heavier ship in
+        // from the next zone; an unlucky roll leaves the local level.
+        const double atBorder = zm.safeRadius + zm.bandWidth - 1.0; // just inside band 1's frontier
+        push("A heavy from the next zone spills over the border", spawnLevel(zm, atBorder, 0, 0.0) == 2,
+             "got L" + num(spawnLevel(zm, atBorder, 0, 0.0)));
+        push("Not every ship near a border is a heavy", spawnLevel(zm, atBorder, 0, 0.99) == 1);
+
+        // Config scaling: tougher ships in deeper waters.
+        const ShipConfig l1 = enemyConfigForLevel(1);
+        const ShipConfig l5 = enemyConfigForLevel(5);
+        push("Higher-level enemies carry more guns", l5.cannonCount > l1.cannonCount,
+             num(l1.cannonCount) + " -> " + num(l5.cannonCount));
+        push("Higher-level enemies are larger", l5.length > l1.length && l5.width > l1.width);
+        push("Enemy broadsides are even (guns split per side)", (l1.cannonCount % 2) == 0 && (l5.cannonCount % 2) == 0);
     }
 
     return r;
