@@ -17,8 +17,8 @@
 namespace ship_view {
 
 // Shared sky/atmosphere palette (sky gradient + water horizon fog match).
-static const float kSkyTop[3]     = { 0.12f, 0.19f, 0.34f }; // deep navy zenith
-static const float kSkyHorizon[3] = { 0.86f, 0.76f, 0.62f }; // warm pale haze
+static const float kSkyTop[3]     = { 0.28f, 0.45f, 0.68f }; // clear day-blue zenith
+static const float kSkyHorizon[3] = { 0.90f, 0.85f, 0.74f }; // warm pale daylight haze
 
 void init() {
     sky_gpu::init();
@@ -60,7 +60,13 @@ void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>
     sky_gpu::render(viewId, kSkyTop, kSkyHorizon);
     water_gpu::render(viewId, waves, timeSec, eye.x, eye.y, eye.z, worldX, worldZ,
                       cutWorldX, cutWorldZ, cutR);
+    ship_mesh::renderShadow(viewId, 0.0f, 0.32f, 0.0f,
+                            float(ship.bounds.width) * 0.55f, float(ship.bounds.length) * 0.52f);
     ship_mesh::render(viewId, ship, pose, heading, windDir, sailFullness, timeSec, 0.0f, 0.0f, heelScale);
+}
+
+void renderShadow(uint16_t viewId, float relX, float relZ, float halfWid, float halfLen) {
+    ship_mesh::renderShadow(viewId, relX, 0.32f, relZ, halfWid, halfLen);
 }
 
 void renderShip(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
@@ -196,19 +202,19 @@ void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
                       24.0f, 82.0f, 30.0f);
     box(0.0f, 5.0f, 96.0f, 180.0f, 16.0f, 74.0f, grass[0], grass[1], grass[2], FLAT); // island (distance, deep base)
     box(0.0f, 0.0f, 58.0f, 200.0f, 5.0f, 20.0f, sand[0], sand[1], sand[2], FLAT);     // shore/beach: top ~2.5
-    box(0.0f, -0.6f, 6.0f, 56.0f, 4.8f, 46.0f, sand[0], sand[1], sand[2], FLAT);      // dock ground: top ~1.8, base -3.0
+    box(0.0f, -0.6f, 6.0f, 56.0f, 4.8f, 46.0f, 0.56f, 0.43f, 0.28f, 1.0f);            // planked dry-dock deck (timber, seams)
     box(0.0f, 10.0f, 40.0f, 48.0f, 20.0f, 22.0f, timber[0], timber[1], timber[2]); // great ship hall
     box(0.0f, 20.6f, 40.0f, 50.0f, 1.6f, 24.0f, roof[0], roof[1], roof[2]);
-    for (int s = -1; s <= 1; s += 2) {                                            // gantry cranes
-        box(float(s) * 15.0f, 10.0f, -2.0f, 1.8f, 20.0f, 1.8f, metal[0], metal[1], metal[2], FLAT);
-        box(float(s) * 15.0f, 19.0f, 4.0f, 1.8f, 1.8f, 22.0f, metal[0], metal[1], metal[2], FLAT);
+    for (int s = -1; s <= 1; s += 2) {                                            // gantry cranes (set wide so they frame, not block, the berth)
+        box(float(s) * 23.0f, 10.0f, -2.0f, 1.8f, 20.0f, 1.8f, metal[0], metal[1], metal[2], FLAT);
+        box(float(s) * 23.0f, 19.0f, 4.0f, 1.8f, 1.8f, 22.0f, metal[0], metal[1], metal[2], FLAT);
     }
-    box(26.0f, 2.0f, 8.0f, 4.0f, 3.0f, 16.0f, wood[0], wood[1], wood[2]);          // timber stacks
-    box(-26.0f, 2.0f, 8.0f, 4.0f, 3.0f, 16.0f, timber[0], timber[1], timber[2]);
+    box(28.0f, 2.0f, 8.0f, 4.0f, 3.0f, 16.0f, wood[0], wood[1], wood[2]);          // timber stacks
+    box(-28.0f, 2.0f, 8.0f, 4.0f, 3.0f, 16.0f, timber[0], timber[1], timber[2]);
     // A spar hoisted on the port crane: rope from the arm -> block (pulley) -> spar.
-    box(-15.0f, 12.5f, 6.0f, 0.12f, 12.0f, 0.12f, dark[0], dark[1], dark[2], FLAT);  // rope
-    box(-15.0f, 6.2f, 6.0f, 0.5f, 0.7f, 0.5f, dark[0], dark[1], dark[2], FLAT);      // block
-    box(-15.0f, 5.2f, 6.0f, 0.45f, 0.45f, 7.0f, wood[0], wood[1], wood[2]);         // suspended spar
+    box(-23.0f, 12.5f, 6.0f, 0.12f, 12.0f, 0.12f, dark[0], dark[1], dark[2], FLAT); // rope
+    box(-23.0f, 6.2f, 6.0f, 0.5f, 0.7f, 0.5f, dark[0], dark[1], dark[2], FLAT);     // block
+    box(-23.0f, 5.2f, 6.0f, 0.45f, 0.45f, 7.0f, wood[0], wood[1], wood[2]);        // suspended spar
 
     // The building stand: two ground ways, keel blocks along the spine, and a row
     // of shoring posts each side.
@@ -220,13 +226,26 @@ void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
     const float blockTop = 2.9f;
     for (int i = 0; i < nb; ++i) {
         const float z = -len * 0.42f + (len * 0.84f) * i / float(nb - 1);
-        box(0.0f, 1.9f, z, 1.6f, 2.0f, 1.0f, dark[0], dark[1], dark[2]); // keel blocks (top at 2.9)
+        box(0.0f, 1.9f, z, 1.7f, 2.0f, 1.1f, timber[0], timber[1], timber[2]); // keel blocks (top at 2.9)
     }
-    for (int i = 0; i < 4; ++i) {
-        const float z = -len * 0.30f + (len * 0.60f) * i / 3.0f;
-        box(-wid * 0.64f, 2.7f, z, 0.5f, 4.6f, 0.5f, wood[0], wood[1], wood[2]);
-        box( wid * 0.64f, 2.7f, z, 0.5f, 4.6f, 0.5f, wood[0], wood[1], wood[2]);
+    // Shoring cradle: a row of posts each side, tied together by a fore-and-aft
+    // scaffold rail and topped by angled shores bearing against the hull, so the
+    // berth reads as a ship under construction on the stocks.
+    const int np = 5;
+    for (int i = 0; i < np; ++i) {
+        const float z = -len * 0.34f + (len * 0.68f) * i / float(np - 1);
+        box(-wid * 0.66f, 2.7f, z, 0.45f, 4.6f, 0.45f, wood[0], wood[1], wood[2]);
+        box( wid * 0.66f, 2.7f, z, 0.45f, 4.6f, 0.45f, wood[0], wood[1], wood[2]);
+        // angled shore bracing inward toward the hull
+        box(-wid * 0.5f, 4.4f, z, 0.35f, 0.35f, wid * 0.42f, timber[0], timber[1], timber[2]);
+        box( wid * 0.5f, 4.4f, z, 0.35f, 0.35f, wid * 0.42f, timber[0], timber[1], timber[2]);
     }
+    // Fore-and-aft scaffold rails tying the shore posts together.
+    box(-wid * 0.66f, 4.9f, 0.0f, 0.28f, 0.28f, len * 0.7f, timber[0], timber[1], timber[2]);
+    box( wid * 0.66f, 4.9f, 0.0f, 0.28f, 0.28f, len * 0.7f, timber[0], timber[1], timber[2]);
+    // Ground ways running out toward the water (the slipway the hull launches down).
+    box(-1.6f, 0.7f, -len * 0.2f, 0.9f, 0.6f, len * 1.35f, wood[0], wood[1], wood[2]);
+    box( 1.6f, 0.7f, -len * 0.2f, 0.9f, 0.6f, len * 1.35f, wood[0], wood[1], wood[2]);
 
     // Gangplank: a stair of timber steps up to the deck at the stern.
     {
@@ -241,9 +260,10 @@ void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
         }
     }
 
-    // The hull, keel resting on the blocks.
+    // The hull, keel resting on the blocks (with a contact shadow on the dock).
     sea::FloatPose bp;
     bp.heaveY = blockTop + float(ship.bounds.depth) * 0.55; // keel local y = -depth*0.55
+    ship_mesh::renderShadow(viewId, 0.0f, 1.95f, 0.0f, wid * 0.7f, len * 0.55f);
     ship_mesh::render(viewId, ship, bp, 0.0f, 0.0f, 0.0f, timeSec, 0.0f, 0.0f);
 
     if (walk) ship_mesh::renderCharacter(viewId, cx, cy, cz, cheading, walkPhase);

@@ -70,8 +70,8 @@ void init() {
         bgfx::createShader(bgfx::copy(fs_water_dxbc, sizeof(fs_water_dxbc))),
         true);
 
-    u_waveA = bgfx::createUniform("u_waveA", bgfx::UniformType::Vec4, 3);
-    u_waveB = bgfx::createUniform("u_waveB", bgfx::UniformType::Vec4, 3);
+    u_waveA = bgfx::createUniform("u_waveA", bgfx::UniformType::Vec4, 6);
+    u_waveB = bgfx::createUniform("u_waveB", bgfx::UniformType::Vec4, 6);
     u_waveTime = bgfx::createUniform("u_waveTime", bgfx::UniformType::Vec4);
     u_waveOffset = bgfx::createUniform("u_waveOffset", bgfx::UniformType::Vec4);
     u_lightDir = bgfx::createUniform("u_lightDir", bgfx::UniformType::Vec4);
@@ -97,9 +97,9 @@ void shutdown() {
 void render(uint16_t viewId, const std::vector<sea::Wave>& waves, float t,
             float eyeX, float eyeY, float eyeZ, float offsetX, float offsetZ,
             float cutX, float cutZ, float cutR) {
-    float waveA[3][4] = {};
-    float waveB[3][4] = {};
-    const int n = int(waves.size() < 3 ? waves.size() : 3);
+    float waveA[6][4] = {};
+    float waveB[6][4] = {};
+    const int n = int(waves.size() < 6 ? waves.size() : 6);
     for (int i = 0; i < n; ++i) {
         const sea::Wave& w = waves[size_t(i)];
         waveA[i][0] = std::cos(float(w.direction));
@@ -109,8 +109,11 @@ void render(uint16_t viewId, const std::vector<sea::Wave>& waves, float t,
         waveB[i][0] = float(w.speed);
         waveB[i][1] = float(w.phase);
     }
-    bgfx::setUniform(u_waveA, waveA, 3);
-    bgfx::setUniform(u_waveB, waveB, 3);
+    // Any unused slots (n < 6) stay zero-amplitude; give them wavelength 1 so the
+    // shader's k = 2*pi/wavelength stays finite (amp 0 contributes nothing).
+    for (int i = n; i < 6; ++i) waveA[i][3] = 1.0f;
+    bgfx::setUniform(u_waveA, waveA, 6);
+    bgfx::setUniform(u_waveB, waveB, 6);
     const float timeV[4] = { t, 0.0f, 0.0f, 0.0f };
     bgfx::setUniform(u_waveTime, timeV);
     const float offV[4] = { offsetX, offsetZ, 0.0f, 0.0f };
@@ -122,7 +125,7 @@ void render(uint16_t viewId, const std::vector<sea::Wave>& waves, float t,
     const float cutV[4] = { cutX, cutZ, cutR, 0.0f };
     bgfx::setUniform(u_landCut, cutV);
     // Horizon fog: colour matches the sky horizon (sky_gpu), far ~ grid reach.
-    const float fogV[4] = { 0.86f, 0.76f, 0.62f, 300.0f };
+    const float fogV[4] = { 0.88f, 0.84f, 0.75f, 300.0f };
     bgfx::setUniform(u_fog, fogV);
 
     bgfx::setVertexBuffer(0, s_vbh);

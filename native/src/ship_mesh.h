@@ -27,6 +27,10 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
 void renderBox(uint16_t viewId, float x, float y, float z, float size,
                float r, float g, float b);
 
+// Draw a soft translucent contact shadow (flattened dark quad) at (x,y,z) to
+// ground a hull on the water/dock; sx/sz are the footprint extents.
+void renderShadow(uint16_t viewId, float x, float y, float z, float sx, float sz, float alpha = 0.34f);
+
 // Draw a lit box with independent x/y/z dimensions at world (x,y,z) — the
 // building block for scenery (land, docks, warehouses, shipyard). `mat` picks the
 // procedural surface: 0 = flat, 1 = timber planks (default), 2 = stone courses.

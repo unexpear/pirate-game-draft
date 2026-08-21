@@ -56,10 +56,10 @@ float hill(float x, float z, float cx, float cz, float sig, float amp) {
 uint32_t colorFor(float x, float z, float h, float slopeUp) {
     float r, g, b;
     const float tint = fbm(x * 0.09f, z * 0.09f) - 0.5f; // ±0.5 mottling
-    if (h < 0.3f) {                 // wet sand at the waterline
-        r = 0.60f; g = 0.55f; b = 0.42f;
-    } else if (h < 2.6f) {          // dry beach
-        r = 0.80f; g = 0.72f; b = 0.51f;
+    if (h < 0.8f) {                 // wet sand / shallows at the waterline (wide band)
+        r = 0.68f; g = 0.62f; b = 0.49f;
+    } else if (h < 3.4f) {          // dry beach (widened so the shore reads)
+        r = 0.82f; g = 0.74f; b = 0.53f;
     } else if (slopeUp < 0.62f) {   // steep faces -> exposed rock
         r = 0.44f; g = 0.41f; b = 0.37f;
     } else if (h < 12.0f) {         // meadow
@@ -89,8 +89,8 @@ float heightAt(float x, float z) {
                        + 3.0f * std::cos(2.0f * ang - 1.0f);
     const float d = coastR - r; // metres inland of the shore (negative = offshore)
     float h;
-    if (d < 0.0f) h = d * 0.45f;                          // submerged shelf sloping away
-    else          h = 4.5f * (1.0f - std::exp(-d / 9.0f)); // beach rising to a ~4.5 ft shelf
+    if (d < 0.0f) h = d * 0.40f;                           // submerged shelf sloping away
+    else          h = 3.8f * (1.0f - std::exp(-d / 13.0f)); // gentle wide beach ramp to a shelf
     // Inland relief: real hills toward the interior (rising well above the
     // shore-line buildings so the land reads as having mass, not a flat pad).
     h += hill(x, z, 4.0f, 28.0f, 24.0f, 30.0f);   // main peak

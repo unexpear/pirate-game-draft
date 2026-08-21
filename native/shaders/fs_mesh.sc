@@ -8,6 +8,8 @@ $input v_normal, v_wpos
 uniform vec4 u_color;    // rgb = piece colour
 uniform vec4 u_lightDir; // xyz = direction to the sun
 uniform vec4 u_mat;      // x: 0 = flat, 1 = timber planks, 2 = stone courses, 3 = canvas sail
+uniform vec4 u_camPos;   // xyz = eye position (for distance fog)
+uniform vec4 u_fog;      // xyz = horizon fog colour, w = fog far distance
 
 float hash21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vnoise(vec2 p) {
@@ -67,9 +69,19 @@ void main()
 	}
 	else
 	{
-		vec3 sun = vec3(1.20, 1.02, 0.78);
-		vec3 skyfill = vec3(0.50, 0.56, 0.64);
-		col = base * (skyfill * 0.62 + sun * ndl * 0.90); // stronger key -> more form
+		vec3 sun = vec3(1.25, 1.12, 0.92);                 // brighter daylight sun
+		vec3 skyfill = vec3(0.55, 0.63, 0.74);             // brighter cool sky fill
+		col = base * (skyfill * 0.78 + sun * ndl * 0.90);  // lift shadows out of near-black, keep a strong key
 	}
-	gl_FragColor = vec4(col, 1.0);
+
+	// Aerial-perspective fog: distant structures/land recede into the horizon
+	// colour (matches the water + sky), so depth reads and nothing sits flat.
+	if (u_fog.w > 1.0)
+	{
+		float dist = length(u_camPos.xyz - v_wpos);
+		float fog = smoothstep(u_fog.w * 0.5, u_fog.w, dist);
+		col = mix(col, u_fog.xyz, fog);
+	}
+
+	gl_FragColor = vec4(col, u_color.w); // w<1 for translucent contact shadows
 }

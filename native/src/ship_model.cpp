@@ -118,16 +118,20 @@ Ship makeShipFromConfig(const ShipConfig& cfg) {
 
     // Ribs
     for (int i = 0; i < ribCount; ++i) {
-        const double z = lerp(-length / 2, length / 2, i / static_cast<double>(std::max(1, ribCount - 1)));
-        const double curve = std::sin((i / static_cast<double>(std::max(1, ribCount - 1))) * PI);
-        const double ribWidth = width * (0.55 + curve * 0.36);
+        const double u = i / static_cast<double>(std::max(1, ribCount - 1)); // 0 stern .. 1 bow
+        const double z = lerp(-length / 2, length / 2, u);
+        // Beam profile: near-points at bow/stern, max beam slightly aft of centre
+        // (the pow(u,0.82) skews the peak toward the stern) — a boat, not a box.
+        const double beam = std::sin(PI * std::pow(u, 0.82));
+        const double ribWidth = width * (0.10 + 0.82 * beam);
+        const double sheer = depth * 0.16 * (1.0 - std::sin(PI * u)); // gunwale rises at the ends
         Piece p;
         p.id = "rib_" + pad3(i + 1);
         p.type = "rib";
         p.material = cfg.material;
         p.volume = ribWidth * depth * 0.014;
         p.mass = p.volume * density;
-        p.position = { 0, -depth * 0.16, z };
+        p.position = { 0, -depth * 0.16 + sheer, z };
         p.bounds = { ribWidth, depth * 0.75, 0.07 };
         ship.pieces.push_back(p);
     }
@@ -135,10 +139,18 @@ Ship makeShipFromConfig(const ShipConfig& cfg) {
     // Planks (port then starboard)
     for (int side = -1; side <= 1; side += 2) {
         for (int i = 0; i < plankCount; ++i) {
-            const double z = lerp(-length / 2, length / 2, i / static_cast<double>(std::max(1, plankCount - 1)));
-            const double curve = std::sin((i / static_cast<double>(std::max(1, plankCount - 1))) * PI);
-            const double x = side * (width * 0.32 + curve * width * 0.12);
-            const double y = -depth * 0.25 + curve * depth * 0.18;
+            const double u = i / static_cast<double>(std::max(1, plankCount - 1)); // 0 stern .. 1 bow
+            const double z = lerp(-length / 2, length / 2, u);
+            // Same skewed beam profile as the ribs: the strakes taper to a stem
+            // point at the bow and a fine stern, widest slightly aft of amidships.
+            const double beam = std::sin(PI * std::pow(u, 0.82));
+            const double halfBeam = width * (0.05 + 0.42 * beam);
+            const double x = side * halfBeam;
+            const double sheer = depth * 0.16 * (1.0 - std::sin(PI * u)); // sheer rises to bow/stern
+            const double y = -depth * 0.22 + sheer;
+            // Toe the strakes inward toward the ends so they follow the converging
+            // hull instead of standing square (sharper the nearer the stem).
+            const double toeIn = -side * (u - 0.5) * 1.3;
             Piece p;
             p.id = std::string("plank_") + (side > 0 ? "starboard_" : "port_") + pad3(i + 1);
             p.type = "plank";
@@ -146,7 +158,7 @@ Ship makeShipFromConfig(const ShipConfig& cfg) {
             p.volume = (length / plankCount) * depth * 0.04;
             p.mass = p.volume * density;
             p.position = { x, y, z };
-            p.rotation = { 0, side * 0.18, side * 0.16 };
+            p.rotation = { 0, side * 0.18 + toeIn, side * 0.16 };
             p.bounds = { 0.12, depth * 0.58, length / plankCount };
             ship.pieces.push_back(p);
         }
@@ -161,8 +173,8 @@ Ship makeShipFromConfig(const ShipConfig& cfg) {
         p.material = cfg.material;
         p.volume = deckVolume;
         p.mass = deckVolume * density;
-        p.position = { 0, depth * 0.03, 0 };
-        p.bounds = { width * 0.78, 0.08, length * 0.82 };
+        p.position = { 0, depth * 0.03, -length * 0.02 };
+        p.bounds = { width * 0.60, 0.08, length * 0.66 }; // fits within the tapered hull
         ship.pieces.push_back(p);
     }
 
@@ -292,10 +304,17 @@ std::vector<Wave> makeWaveField(const std::string& seed) {
         double x = std::sin(static_cast<double>(base) + n * 999.331) * 10000.0;
         return x - std::floor(x);
     };
+    // Six trains with NON-HARMONIC wavelengths and directions SPREAD around a
+    // dominant swell — so crests don't line up on a lattice (the "tiled grid"
+    // read). A long dominant swell plus shorter cross-chop. { dir, amplitude,
+    // wavelength, speed, phase }. Total amplitude ~1.07 (a modest sea).
     return {
-        { 0.15 + rnd(1) * 0.5, 0.55, 15, 1.4, rnd(2) * PI * 2 },
-        { 1.25 + rnd(3) * 0.6, 0.28, 8, 2.0, rnd(4) * PI * 2 },
-        { 2.6 + rnd(5) * 0.5, 0.14, 5, 2.7, rnd(6) * PI * 2 },
+        { 0.35 + rnd(1) * 0.15,  0.40, 22.7, 1.05, rnd(2)  * PI * 2 }, // long dominant swell
+        { 0.05 + rnd(3) * 0.20,  0.26, 15.3, 1.35, rnd(4)  * PI * 2 },
+        { 0.85 + rnd(5) * 0.20,  0.17, 10.1, 1.70, rnd(6)  * PI * 2 }, // cross chop
+        { 0.20 + rnd(7) * 0.25,  0.11,  6.7, 2.10, rnd(8)  * PI * 2 },
+        { 1.15 + rnd(9) * 0.30,  0.075, 4.3, 2.50, rnd(10) * PI * 2 },
+        { 0.55 + rnd(11) * 0.30, 0.05,  2.9, 3.00, rnd(12) * PI * 2 },
     };
 }
 
@@ -351,8 +370,10 @@ FloatPose computeFloatPose(const Ship& ship, const std::vector<Wave>& waves, dou
 
     FloatPose p;
     p.heaveY = avg + freeboard;
-    p.pitch = std::atan2(front / std::max(1, fc) - rear / std::max(1, rc), std::max(1.0, ship.bounds.length));
-    p.heel = std::atan2(right / std::max(1, rr) - left / std::max(1, lc), std::max(1.0, ship.bounds.width));
+    // Clamp trim so a steep swell rocks the hull without spearing the bow under
+    // (a boat rides the wave; it doesn't dive into it).
+    p.pitch = clampd(std::atan2(front / std::max(1, fc) - rear / std::max(1, rc), std::max(1.0, ship.bounds.length)), -0.14, 0.14);
+    p.heel = clampd(std::atan2(right / std::max(1, rr) - left / std::max(1, lc), std::max(1.0, ship.bounds.width)), -0.22, 0.22);
     return p;
 }
 

@@ -765,14 +765,18 @@ int main(int argc, char** argv) {
                 shown.pieces.push_back(ship.pieces[border[i]]);
             const bool complete = reveal >= int(border.size());
             if (!complete) { shown.systems.mast_count = 0; shown.systems.sail_count = 0; }
-            ship_view::renderBuildScene(kClearView, shown, waves, timeSec, timeSec * 0.12f, width, height,
+            const float buildOrbit = shotMode ? shotHead : timeSec * 0.12f; // --head frames the shot
+            ship_view::renderBuildScene(kClearView, shown, waves, timeSec, buildOrbit, width, height,
                                         walkMode, charX, charY, charZ, charHeading, walkPhase);
         } else {
             ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height, float(activeProfile.heelFactor), islandX, islandZ, kLandCutRadius);
-            if (!enemyGone)
+            if (!enemyGone) {
+                ship_view::renderShadow(kClearView, enemyWorldX - worldX, enemyWorldZ - worldZ,
+                                        float(enemy.bounds.width) * 0.55f, float(enemy.bounds.length) * 0.52f);
                 ship_view::renderShip(kClearView, enemy, enemyPose, enemyHeading, windDir,
                                       enemyStruck ? 0.0f : 0.75f, timeSec, // furled sails once she strikes
                                       enemyWorldX - worldX, enemyWorldZ - worldZ);
+            }
             for (const auto& p : shots)
                 ship_view::renderTracer(kClearView, float(p.x) - worldX, float(p.y), float(p.z) - worldZ, 0.35f);
             for (const auto& p : enemyShots)

@@ -159,22 +159,39 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
         const bool luffing = awa < 0.75f || power < 0.08f; // ~43 deg no-go
         const float flap = luffing ? std::sin(timeSec * 20.0f) * 0.30f : 0.0f;
         const float trim = lee * (1.57079633f - awa * 0.5f) + flap;
-        const float fullH = depth * 0.75f + 2.6f;
-        const float yardTop = depth * 0.5f + 2.5f + fullH * 0.5f; // top edge sits on the yard
-        const float h = fullH * sailFullness * (luffing ? 0.82f : 1.0f); // slack when luffing
-        float local[16];
-        bx::mtxSRT(local, wid * 1.35f, h, 0.06f, 0.0f, trim, 0.0f,
+        const float mastH = depth * 0.9f + 6.0f;              // matches ship_model's mast
+        const float fullH = mastH * 0.66f;                    // sail fills ~2/3 of the mast height
+        const float yardTop = depth * 0.03f + mastH * 0.94f;  // top edge just below the masthead
+        const float h = fullH * sailFullness * (luffing ? 0.85f : 1.0f); // slack when luffing
+        const float sailW = wid * 1.7f;                       // broad enough to be the hero shape
+        // Sail root: trimmed + positioned; strips billow within this frame.
+        float sailRoot[16];
+        bx::mtxSRT(sailRoot, 1.0f, 1.0f, 1.0f, 0.0f, trim, 0.0f,
                    0.0f, yardTop - h * 0.5f, -len * 0.05f);
-        float model[16];
-        bx::mtxMul(model, local, shipRoot);
+        float sailModel[16];
+        bx::mtxMul(sailModel, sailRoot, shipRoot);
         const float sailCol[4] = { 0.95f, 0.90f, 0.76f, 1.0f }; // warm canvas cream
         bgfx::setUniform(u_color, sailCol);
         setMat(3.0f); // canvas: bright warm cloth shading
-        bgfx::setTransform(model);
-        bgfx::setVertexBuffer(0, s_vbh);
-        bgfx::setIndexBuffer(s_ibh);
-        bgfx::setState(baseState); // no cull: sail visible from both sides
-        bgfx::submit(viewId, s_prog);
+        // Billow: draw the canvas as vertical strips bellied to leeward in a
+        // parabola, so it reads as a filled, curved sail instead of a flat slab.
+        const int kStrips = 7;
+        const float belly = lee * (0.16f * sailW) * sailFullness * (luffing ? 0.35f : 1.0f);
+        for (int s = 0; s < kStrips; ++s) {
+            const float sc = (s + 0.5f) / float(kStrips); // 0..1 across the width
+            const float lx = (sc - 0.5f) * sailW;
+            const float t01 = 2.0f * sc - 1.0f;
+            const float bz = belly * (1.0f - t01 * t01); // max belly mid-sail
+            float strip[16];
+            bx::mtxSRT(strip, sailW / float(kStrips) * 1.06f, h, 0.05f, 0.0f, 0.0f, 0.0f, lx, 0.0f, bz);
+            float model[16];
+            bx::mtxMul(model, strip, sailModel);
+            bgfx::setTransform(model);
+            bgfx::setVertexBuffer(0, s_vbh);
+            bgfx::setIndexBuffer(s_ibh);
+            bgfx::setState(baseState); // no cull: sail visible from both sides
+            bgfx::submit(viewId, s_prog);
+        }
     }
 }
 
@@ -199,6 +216,23 @@ void renderBoxSized(uint16_t viewId, float x, float y, float z,
 void renderBox(uint16_t viewId, float x, float y, float z, float size,
                float r, float g, float b) {
     renderBoxSized(viewId, x, y, z, size, size, size, r, g, b, 0.0f); // markers: flat
+}
+
+void renderShadow(uint16_t viewId, float x, float y, float z, float sx, float sz, float alpha) {
+    const float lightV[4] = { 0.5f, 0.6f, 0.62f, 0.0f };
+    bgfx::setUniform(u_lightDir, lightV);
+    float m[16];
+    bx::mtxSRT(m, sx, 0.2f, sz, 0.0f, 0.0f, 0.0f, x, y, z);
+    const float col[4] = { 0.03f, 0.05f, 0.08f, alpha }; // dark, translucent
+    bgfx::setUniform(u_color, col);
+    setMat(0.0f);
+    bgfx::setTransform(m);
+    bgfx::setVertexBuffer(0, s_vbh);
+    bgfx::setIndexBuffer(s_ibh);
+    // Alpha-blended, no depth write, so it darkens the surface without occluding.
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_DEPTH_TEST_LESS
+                   | BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA));
+    bgfx::submit(viewId, s_prog);
 }
 
 void renderCharacter(uint16_t viewId, float x, float y, float z, float heading, float walkPhase) {

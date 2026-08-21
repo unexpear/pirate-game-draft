@@ -31,8 +31,8 @@ void main()
 	// Sun specular glint on the crests, toward the light — tight and subtle so it
 	// sparkles rather than blowing out the coarse grid facets.
 	vec3 H = normalize(L + V);
-	float spec = pow(max(dot(N, H), 0.0), 150.0);
-	col += spec * vec3(1.0, 0.94, 0.78) * 0.14;
+	float spec = pow(max(dot(N, H), 0.0), 90.0);
+	col += spec * vec3(1.0, 0.95, 0.80) * 0.28; // sun-glint track toward the light
 
 	// Foam clings to the STEEP faces of crests (surface slope), not scattered by
 	// height — so it streaks the sharp crest edges instead of floating in blobs.
@@ -50,7 +50,7 @@ void main()
 	// Distance fog: the sea dissolves into the horizon sky colour, killing the
 	// hard sea/sky seam and adding aerial depth.
 	float dist = length(toEye);
-	float fog = smoothstep(u_fog.w * 0.35, u_fog.w, dist);
+	float fog = smoothstep(u_fog.w * 0.5, u_fog.w, dist);
 	col = mix(col, u_fog.xyz, fog);
 
 	gl_FragColor = vec4(col, 1.0);

@@ -87,3 +87,93 @@ Live-confirmed: the island now reads as a real landmass; foam clings to crests.
 - **Sail billow** — curve the sail quad so it reads as filled canvas.
 - **Build scene** — visible stocks/ways/scaffolding, reframe off the foreground poles.
 - **Cast/contact shadows** — the composition depth cue the critics keep asking for.
+
+### Round 2 changes (the geometry backlog — all of it)
+
+- **Gerstner waves** — `makeWaveField` now returns **6 non-harmonic trains** (spread
+  directions, a long dominant swell + cross-chop) and `vs_water` sums them as
+  **Gerstner** waves (horizontal crest-pinch + analytic normal), so crests sharpen
+  and roll directionally instead of a rounded sine lattice. `sampleWater` (buoyancy)
+  keeps its vertical sum over all 6 — **62/62 self-tests stay green**. This is THE
+  fix for the "tiled grid" reads; live-confirmed the lattice is gone.
+- **Hull bow/sheer reshape** — `makeShipFromConfig` planks + ribs now follow a skewed
+  beam profile `sin(pi * u^0.82)` that tapers the strakes to a **stem point** at the
+  bow and a fine stern (max beam slightly aft), with a **sheer line** rising to the
+  ends and the strakes toed inward. `bakeHullProfile`/`getShipStats` read bounds +
+  volumes (not positions), so the reshape is purely visual and the bake self-tests
+  are untouched. Live-confirmed: a boat, not a box-raft.
+- **Sail billow** — the sail is drawn as 7 vertical strips bellied to leeward in a
+  parabola (`u_mat==3` canvas), so it reads as a filled, curved sail with panel seams.
+- **Shipyard geometry + reframe** — gantry cranes set wide (±15 → ±23) so they frame
+  rather than block; the stocks now read as a cradle (keel blocks + 5 shoring posts a
+  side + angled shores + fore-and-aft scaffold rails + ground ways running to the
+  water). `--head` drives the build-shot orbit for a 3/4 framing.
+- **Contact shadows** — `ship_mesh::renderShadow` draws a soft alpha-blended dark quad
+  under each hull (player, enemy, ship-on-stocks) to ground it; `fs_mesh` now honours
+  per-draw alpha (all opaque draws pass 1.0).
+
+### Round 2 result (fresh panel on r2-final shots)
+
+Objective before→after across the whole run:
+- **water: 0/3 → 3/3 PASS (all 5 criteria)** — the Gerstner rewrite fixed the "tiled
+  grid" that failed every prior round. The only critic notes were `[work_passes]`
+  polish (add sun-glint, sharpen foam).
+- **ship**: the "box-raft hull" complaint **dropped out of the biggest-gaps entirely**
+  (the reshape landed) — the remaining fail is the sail now being too small vs the mast.
+- **island: 0 → 2 pass** — relief/silhouette now read; remaining fail is a too-thin
+  beach / hard shoreline.
+- **build: 0 → 1 pass** — improved but still underexposed and the stocks read weakly.
+- **composition**: still fails lighting + sky — the critics revealed the cause: **fog
+  was only on the water, so distant land never receded** (no aerial perspective).
+
+### Round 2b polish (contained — targeting the exact surviving notes)
+
+- **Aerial-perspective fog on land** — `fs_mesh` + `fs_terrain` now fog toward the
+  horizon colour with distance (using the `u_camPos`/`u_fog` water already sets), so
+  the island + buildings recede into haze instead of reading at full saturation up
+  close. This is the composition depth cue the critics kept flagging.
+- **Sail scale-up** — the sail now fills ~2/3 of the mast height and is broader
+  (`mastH*0.66` tall, `wid*1.7` wide) — the hero silhouette, not a postage stamp.
+- **Wider island beach** — gentler near-shore ramp + a broader wet-sand/dry-sand
+  colour band, so the shore reads as a beach rooted in the sea, not a hard green edge.
+- **Planked dry-dock deck** — the build berth's dark slab → a lit planked-timber deck.
+- **Water sun-glint** — a brighter, slightly wider specular track toward the light.
+
+Deferred (the one genuinely big item): full **cast/shadow-mapped shadows** (contact
+shadows are in; projected shadows are a larger feature).
+
+### Round 3 result + the root-cause fix (daylight coherence)
+
+The r3 panel held **water at 3/3 pass** and moved **ship to 3/5**, but composition,
+island and build kept failing on the SAME words every round: *underlit, murky, dark
+dusk sky over bright day water, flat.* The root cause was finally clear — the whole
+palette was a **dusk look** (dark navy sky + low warm sun + moderate ambient), which
+read as incoherent against the bright water and buried land/ships/dock in shadow.
+
+Round 3 fix — a coherent **daylight** shift:
+- **Bright day sky** — navy zenith → day-blue `(0.28,0.45,0.68)`, warm pale daylight
+  horizon; water fog + sky share the pale horizon so it all reads as one sunny moment.
+- **Lifted exposure** — mesh/terrain ambient floors raised and the sun brightened, so
+  nothing sits near-black while a strong key keeps form.
+- **Fog pushed back** — starts at 0.5·far (was 0.35), so the island keeps its relief
+  contrast instead of hazing into a flat pad.
+- **Pitch/heel clamp** — `computeFloatPose` clamps trim to ~±8°/±13°, so the hull rides
+  a steep Gerstner swell instead of spearing the bow under (the "diving ship" note).
+
+Live-confirmed: a bright, coherent daylight pirate sea — island fully legible with
+hill + beach + buildings, the build berth a lit planked dry-dock, the hull lit warm.
+62/62 self-tests throughout. Capstone panel re-run on r4-final.
+
+## Arc summary (Round 0 → final)
+
+| piece | R0 | after |
+|---|---|---|
+| water | 0/3 | **3/3 pass, 5/5 criteria** (Gerstner) |
+| ship | 0/3 | box-raft gone; boat hull + big canvas sail (remaining: waterline foam/wake) |
+| island | 0/2 | real hill + rock crown + wide beach (relief reads; some critic taste variance) |
+| composition | 0/3 | coherent daylight, aerial haze, atmosphere (remaining: cast shadows) |
+| build | 0/2 | lit planked dry-dock, visible cradle, reframed off the poles |
+
+The one big feature the critics still want and that remains genuinely deferred:
+**shadow-mapped cast shadows** (and hull-intersection foam/wake) — larger systems,
+each its own focused build.
