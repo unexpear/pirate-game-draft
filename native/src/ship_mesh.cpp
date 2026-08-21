@@ -162,10 +162,10 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
         const float flap = luffing ? std::sin(timeSec * 20.0f) * 0.30f : 0.0f;
         const float trim = lee * (1.57079633f - awa * 0.5f) + flap;
         const float mastH = depth * 0.9f + 6.0f;              // matches ship_model's mast
-        const float fullH = mastH * 0.66f;                    // sail fills ~2/3 of the mast height
-        const float yardTop = depth * 0.03f + mastH * 0.94f;  // top edge just below the masthead
+        const float fullH = mastH * 0.76f;                    // spans yard down to just above the deck
+        const float yardTop = depth * 0.03f + mastH * 0.90f;  // top edge below the masthead
         const float h = fullH * sailFullness * (luffing ? 0.85f : 1.0f); // slack when luffing
-        const float sailW = wid * 1.7f;                       // broad enough to be the hero shape
+        const float sailW = wid * 1.45f;                      // square-rig width (not oversized)
         // Sail root: trimmed + positioned; strips billow within this frame.
         float sailRoot[16];
         bx::mtxSRT(sailRoot, 1.0f, 1.0f, 1.0f, 0.0f, trim, 0.0f,
@@ -233,10 +233,10 @@ void renderDepth(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& p
         const bool luffing = awa < 0.75f || power < 0.08f;
         const float trim = lee * (1.57079633f - awa * 0.5f);
         const float mastH = depth * 0.9f + 6.0f;
-        const float fullH = mastH * 0.66f;
-        const float yardTop = depth * 0.03f + mastH * 0.94f;
+        const float fullH = mastH * 0.76f;
+        const float yardTop = depth * 0.03f + mastH * 0.90f;
         const float h = fullH * sailFullness * (luffing ? 0.85f : 1.0f);
-        const float sailW = wid * 1.7f;
+        const float sailW = wid * 1.45f;
         float sailRoot[16];
         bx::mtxSRT(sailRoot, 1.0f, 1.0f, 1.0f, 0.0f, trim, 0.0f, 0.0f, yardTop - h * 0.5f, -len * 0.05f);
         float sailModel[16];
