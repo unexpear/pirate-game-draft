@@ -67,8 +67,8 @@ uint32_t colorFor(float x, float z, float h, float slopeUp) {
     const float rock[3]  = { 0.55f, 0.50f, 0.42f };
     float r = wet[0], g = wet[1], b = wet[2];
     float t;
-    t = ss(0.2f, 1.6f, h);  r = r + (sand[0]-r)*t;  g = g + (sand[1]-g)*t;  b = b + (sand[2]-b)*t;  // wet->dry sand
-    t = ss(2.2f, 5.0f, h);  r = r + (grass[0]-r)*t; g = g + (grass[1]-g)*t; b = b + (grass[2]-b)*t; // sand->grass
+    t = ss(0.2f, 1.4f, h);  r = r + (sand[0]-r)*t;  g = g + (sand[1]-g)*t;  b = b + (sand[2]-b)*t;  // wet->dry sand
+    t = ss(2.8f, 5.5f, h);  r = r + (grass[0]-r)*t; g = g + (grass[1]-g)*t; b = b + (grass[2]-b)*t; // wide sand->grass
     t = ss(9.0f, 17.0f, h); r = r + (up[0]-r)*t;    g = g + (up[1]-g)*t;    b = b + (up[2]-b)*t;    // grass->upland
     t = ss(19.0f, 28.0f, h); r = r + (rock[0]-r)*t; g = g + (rock[1]-g)*t;  b = b + (rock[2]-b)*t;  // upland->rock
     // Steep faces above the beach turn to exposed rock.
@@ -106,7 +106,9 @@ float heightAt(float x, float z) {
     // so the land reads as rising FROM the sea, not sitting ON it.
     float base;
     if (d < 0.0f) base = d * 0.60f;                                       // steeper submerged skirt
-    else          base = 2.2f * (1.0f - std::exp(-d / 8.0f)) + d * 0.15f; // beach ramp + steady climb
+    // A wide, gentle SAND BEACH for the first ~9 units inland, then the land
+    // climbs steadily into the hills — so there's a real beach ring at the shore.
+    else          base = 2.4f * (1.0f - std::exp(-d / 6.0f)) + std::max(0.0f, d - 9.0f) * 0.17f;
     base += hill(x, z, 4.0f, 28.0f, 24.0f, 26.0f);   // main peak
     base += hill(x, z, -22.0f, 12.0f, 16.0f, 16.0f); // western shoulder
     base += hill(x, z, 26.0f, 36.0f, 15.0f, 15.0f);  // northern secondary summit

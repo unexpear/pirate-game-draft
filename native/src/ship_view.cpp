@@ -129,6 +129,27 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
         B(cx, 0.3f, cz + len * 0.5f, 1.4f, 0.7f, 1.2f, 0.44f, 0.30f, 0.17f, 1.0f);
         B(cx, 3.2f, cz, 0.2f, 5.0f, 0.2f, 0.36f, 0.26f, 0.16f, MAT_FLAT);
     };
+    // A big MOORED SAILING SHIP alongside the quay — the pirate-port anchor. A
+    // weathered plank hull with a raised stern, three masts with furled off-white
+    // sails on yards, and a bowsprit; the masts rise above the town rooflines.
+    auto mooredShip = [&](float cx, float cz, float len) {
+        const float hull[3] = { 0.34f, 0.24f, 0.15f };
+        const float deck[3] = { 0.46f, 0.33f, 0.20f };
+        const float spar[3] = { 0.38f, 0.28f, 0.17f };
+        const float canv[3] = { 0.86f, 0.82f, 0.70f };
+        B(cx, 1.4f, cz, 6.0f, 3.6f, len, hull[0], hull[1], hull[2], 1.0f);           // hull
+        B(cx, 3.4f, cz, 5.2f, 1.2f, len * 0.94f, deck[0], deck[1], deck[2], 1.0f);   // gunwale/deck
+        B(cx, 5.0f, cz + len * 0.42f, 5.6f, 3.4f, len * 0.18f, hull[0], hull[1], hull[2], 1.0f); // raised stern castle
+        B(cx, 2.6f, cz - len * 0.5f - 3.0f, 0.5f, 0.5f, 6.0f, spar[0], spar[1], spar[2], MAT_FLAT); // bowsprit
+        for (int m = -1; m <= 1; ++m) {
+            const float mz = cz + m * len * 0.26f;
+            const float mh = 20.0f - float(m + 1) * 1.5f;
+            B(cx, mh * 0.5f + 3.0f, mz, 0.55f, mh, 0.55f, spar[0], spar[1], spar[2], MAT_FLAT); // mast
+            const float yy = 3.0f + mh * 0.62f;
+            B(cx, yy + 0.6f, mz, 7.0f, 0.4f, 0.4f, spar[0], spar[1], spar[2], MAT_FLAT);        // yard
+            B(cx, yy, mz + 0.3f, 6.4f, 3.0f, 0.3f, canv[0], canv[1], canv[2], MAT_FLAT);        // furled/set sail
+        }
+    };
 
     // --- Landmass: a real procedural island (coloured heightfield), rising from
     // the sea with an irregular coastline, beach, meadow and rocky heights. It
@@ -142,7 +163,8 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     B(-2, 1.1f, -56, 4.5f, 0.8f, 34, wood[0], wood[1], wood[2]);   // pier 2
     B(22, 1.1f, -52, 4.5f, 0.8f, 26, wood[0], wood[1], wood[2]);   // pier 3
     pilings(-26, -54, 30, 1.7f, 1.5f); pilings(-2, -56, 34, 1.7f, 1.5f); pilings(22, -52, 26, 1.7f, 1.5f);
-    mooredBoat(-30, -52, 7); mooredBoat(6, -54, 8); mooredBoat(18, -50, 6); // boats tied along the piers
+    mooredBoat(-32, -50, 7); mooredBoat(-8, -52, 8);         // small boats tied along the piers
+    mooredShip(31, -56, 22);                                 // the hero: a moored galleon alongside the east pier
     B(-34, 2.5f, -26, 16, 11, 13, timber[0], timber[1], timber[2]); // warehouse A (base sunk)
     B(-34, 8.4f, -26, 17, 1.2f, 14, roof[0], roof[1], roof[2]);
     B(-14, 3.0f, -24, 15, 12, 12, timber[0], timber[1], timber[2]); // warehouse B (base sunk)
@@ -199,7 +221,7 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
             const float bx2 = cx + w * 0.30f;
             B(bx2, hgt - 0.6f, front - 0.5f, 0.2f, 0.2f, 1.3f, darkW[0], darkW[1], darkW[2], MAT_FLAT); // bracket
             B(bx2, hgt - 1.0f, front - 1.1f, 2.6f, 1.7f, 0.22f, sc[0], sc[1], sc[2], MAT_FLAT);          // board
-            B(bx2, hgt - 1.0f, front - 1.22f, 1.0f, 1.0f, 0.1f, darkW[0], darkW[1], darkW[2], MAT_FLAT); // trade device on the board
+            B(bx2, hgt - 1.0f, front - 1.22f, 1.1f, 1.1f, 0.1f, 0.94f, 0.90f, 0.80f, MAT_FLAT);          // painted trade glyph (light, reads on the board)
         }
     };
     auto stall = [&](float cx, float cz, const float* awn) {
