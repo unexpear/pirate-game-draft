@@ -38,6 +38,19 @@ void shutdown() {
 }
 
 // Optional fixed screenshot camera (scene space).
+// Wall-audit debug: tint each of a building's four wall panels a distinct colour
+// and paint its number on it, and drop a walkable character into the town, so
+// every wall can be inspected individually.
+static bool s_wallDebug = false;
+static bool s_auditOnly = false;
+static bool s_charOn = false;
+static float s_charX = 0.0f, s_charZ = 0.0f, s_charH = 0.0f, s_charY = 0.0f;
+void setWallDebug(bool on) { s_wallDebug = on; }
+void setAuditOnly(bool on) { s_auditOnly = on; }
+void setDebugCharacter(bool on, float x, float z, float heading, float yOffset) {
+    s_charOn = on; s_charX = x; s_charZ = z; s_charH = heading; s_charY = yOffset;
+}
+
 static bool s_freeCam = false;
 static bx::Vec3 s_freeEye = { 0, 0, 0 }, s_freeAt = { 0, 0, 0 };
 void setFreeCamera(bool enabled, float ex, float ey, float ez, float ax, float ay, float az) {
@@ -356,6 +369,33 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     const float shutTeal[3]  = { 0.24f, 0.46f, 0.48f };
     const float* curShutter = nullptr;
 
+    // A 7-SEGMENT DIGIT painted on a wall face with outward normal (nx,0,nz) —
+    // used by wall-debug mode to number each wall so an audit can name exactly
+    // which wall it is looking at.
+    auto digitOn = [&](int v, float cx, float cy, float cz, float nx, float nz, float s, const float* c) {
+        const bool face = (nz != 0.0f);
+        auto seg = [&](float ax, float ay, float lw, float lh) {
+            const float x = face ? cx + ax * s : cx + nx * 0.12f;
+            const float z = face ? cz + nz * 0.12f : cz + ax * s;
+            BL(x, cy + ay * s, z, face ? lw * s : 0.14f, lh * s, face ? 0.14f : lw * s, c, MAT_FLAT);
+        };
+        const bool A = (v != 1 && v != 4);
+        const bool B = (v != 5 && v != 6);
+        const bool C = (v != 2);
+        const bool D = (v != 1 && v != 4 && v != 7);
+        const bool E = (v == 0 || v == 2 || v == 6 || v == 8);
+        const bool F = (v != 1 && v != 2 && v != 3 && v != 7);
+        const bool G = (v != 0 && v != 1 && v != 7);
+        const float hw = 0.52f, t = 0.18f;
+        if (A) seg(0.0f,  1.0f, 1.0f, t);      // top
+        if (G) seg(0.0f,  0.0f, 1.0f, t);      // middle
+        if (D) seg(0.0f, -1.0f, 1.0f, t);      // bottom
+        if (F) seg(-hw,   0.5f, t, 1.0f);      // upper-left
+        if (B) seg( hw,   0.5f, t, 1.0f);      // upper-right
+        if (E) seg(-hw,  -0.5f, t, 1.0f);      // lower-left
+        if (C) seg( hw,  -0.5f, t, 1.0f);      // lower-right
+    };
+
     // All kit helpers place via BL/BLr (the current shelf) so a building is rigid.
     // A framed WINDOW on a wall face with outward normal (nx,0,nz) (one is +/-1).
     auto windowOn = [&](float cx, float cy, float cz, float nx, float nz, float w, float h, bool shut) {
@@ -490,7 +530,36 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
         curShutter = shutC;
         const float topY = stories * storyH;
         BL(cx, -1.5f, cz, w + 0.8f, 6.0f, d + 0.8f, sillC, MAT_STONE);   // modest stone plinth at the front
-        BL(cx, (topY - 8.0f) * 0.5f, cz, w, topY + 8.0f, d, wall, wmat); // walls sunk deep so the rear grips the slope
+        // FOUR SEPARATE WALL PANELS (1 front / 2 right / 3 back / 4 left) rather
+        // than one solid block, so each wall can be inspected — and tinted and
+        // numbered in wall-debug mode. Front/back span the full width and the
+        // sides span the full depth, so the panels overlap at every corner and
+        // cannot leave a seam. Sunk deep so the rear grips the rising slope.
+        {
+            const float H = topY + 8.0f, wy = (topY - 8.0f) * 0.5f, tw = 0.9f;
+            const float* w1 = wall; const float* w2 = wall;
+            const float* w3 = wall; const float* w4 = wall;
+            float m1 = wmat, m2 = wmat, m3 = wmat, m4 = wmat;
+            const float dbg1[3] = { 0.85f, 0.20f, 0.18f }; // 1 front  red
+            const float dbg2[3] = { 0.20f, 0.52f, 0.88f }; // 2 right  blue
+            const float dbg3[3] = { 0.95f, 0.78f, 0.15f }; // 3 back   yellow
+            const float dbg4[3] = { 0.24f, 0.70f, 0.32f }; // 4 left   green
+            if (s_wallDebug) { w1 = dbg1; w2 = dbg2; w3 = dbg3; w4 = dbg4;
+                               m1 = m2 = m3 = m4 = MAT_FLAT; }
+            BL(cx, wy, cz - d * 0.5f + tw * 0.5f, w,  H, tw, w1, m1); // 1 front  (-z)
+            BL(cx + w * 0.5f - tw * 0.5f, wy, cz, tw, H, d,  w2, m2); // 2 right  (+x)
+            BL(cx, wy, cz + d * 0.5f - tw * 0.5f, w,  H, tw, w3, m3); // 3 back   (+z)
+            BL(cx - w * 0.5f + tw * 0.5f, wy, cz, tw, H, d,  w4, m4); // 4 left   (-x)
+            BL(cx, 0.25f, cz, w - 1.4f, 0.6f, d - 1.4f, sillC, MAT_STONE); // floor to stand on inside
+            if (s_wallDebug) {   // wall numbers, floated clear of the wall so they stay legible
+                const float lbl[3] = { 0.99f, 0.99f, 0.99f };
+                const float ly = storyH * 1.15f, g = 1.9f, o = 3.0f;
+                digitOn(1, cx, ly, cz - d * 0.5f - o,  0, -1, g, lbl);
+                digitOn(2, cx + w * 0.5f + o, ly, cz,  1,  0, g, lbl);
+                digitOn(3, cx, ly, cz + d * 0.5f + o,  0,  1, g, lbl);
+                digitOn(4, cx - w * 0.5f - o, ly, cz, -1,  0, g, lbl);
+            }
+        }
         for (int s = 1; s < stories; ++s)                               // belt courses
             BL(cx, s * storyH, cz, w + 0.3f, 0.5f, d + 0.3f, sillC, MAT_STONE);
         if (style == 0) quoins(cx, cz, w, d, topY);
@@ -645,6 +714,20 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
         BLr(cx, py, cz - half * 0.5f, w + 0.6f, 0.4f, sl,  ang, 0, 0, rc, MAT_FLAT);
         BLr(cx, py, cz + half * 0.5f, w + 0.6f, 0.4f, sl, -ang, 0, 0, rc, MAT_FLAT);
     };
+
+    // Wall-audit character: a person standing in the town for scale, and to walk
+    // around and inside the audited building.
+    if (s_charOn) {
+        const float cgh = std::max(0.0f, island_gpu::heightAt(s_charX, s_charZ));
+        ship_mesh::renderCharacter(viewId, relX + s_charX, cgh + s_charY, relZ + s_charZ, s_charH, 0.0f);
+    }
+
+    // AUDIT MODE: render one isolated building on open ground (nothing else in the
+    // way), so every wall can be inspected head-on along its whole length.
+    if (s_auditOnly) {
+        house(0, 0, 14, 12, 2, 4.0f, cream, redRoof, 1.0f, 0, 3, nullptr, false, false);
+        return;
+    }
 
     // ---- GROUND: paved terraces so the town steps up the hill on stone, not bare
     // grass. Cobble bands run wide along the contours (narrow in z) so each rides

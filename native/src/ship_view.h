@@ -48,6 +48,16 @@ void renderTracer(uint16_t viewId, float x, float y, float z, float size,
 // Draw a contact shadow on the water at scene (relX,relZ) with the given footprint.
 void renderShadow(uint16_t viewId, float relX, float relZ, float halfWid, float halfLen);
 
+// Wall-audit debug. setWallDebug tints each building's four wall panels a
+// distinct colour (1 front red, 2 right blue, 3 back yellow, 4 left green) and
+// paints its number on it. setDebugCharacter drops a box-figure person into the
+// town at island-local (x,z) so you can walk around and inside a building.
+void setWallDebug(bool on);
+// Render ONE isolated building on open ground (no town around it) so each wall
+// can be inspected head-on along its whole length.
+void setAuditOnly(bool on);
+void setDebugCharacter(bool on, float x, float z, float heading, float yOffset = 0.0f);
+
 // Draw the island (land + port + large shipyard) with its centre at scene
 // offset (relX,relZ) relative to our ship at the origin.
 void renderIsland(uint16_t viewId, float relX, float relZ);
