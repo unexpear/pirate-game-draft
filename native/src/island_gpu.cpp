@@ -17,9 +17,9 @@ namespace {
 
 struct TVert { float x, y, z, nx, ny, nz; uint32_t rgba; };
 
-constexpr float kR = 78.0f;   // heightfield half-extent (reaches out past the shore)
-constexpr int   kN = 120;     // grid resolution (kN+1 verts per side)
-constexpr float kMeanCoast = 50.0f; // mean above-water radius
+constexpr float kR = 92.0f;   // heightfield half-extent (reaches out past the shore)
+constexpr int   kN = 140;     // grid resolution (kN+1 verts per side)
+constexpr float kMeanCoast = 56.0f; // mean above-water radius (a bigger island)
 
 bgfx::VertexLayout s_layout;
 bgfx::VertexBufferHandle s_vbh = BGFX_INVALID_HANDLE;
@@ -109,27 +109,25 @@ float heightAt(float x, float z) {
                  + 3.0f * std::cos(2.0f * ang - 1.0f)
                  + 4.0f * std::sin(7.0f * ang + 1.3f)
                  + (fbm(std::cos(ang) * 2.6f + 4.0f, std::sin(ang) * 2.6f + 7.0f) - 0.5f) * 9.0f;
-    coastR = std::max(43.0f, coastR);
+    coastR += 12.0f * std::max(0.0f, std::sin(ang)); // grow NORTHWARD (away from the harbour) for a bigger landmass
+    coastR = std::max(48.0f, coastR);
     const float d = coastR - r; // metres inland of the shore (negative = offshore)
-    // Smooth base: a beach that KEEPS RISING inland (a continuous slope, not a
-    // flat shelf) up into the hills, plus a steeper skirt continuing underwater
-    // so the land reads as rising FROM the sea, not sitting ON it.
+    // Smooth base: a wide gentle SAND BEACH then a GENTLE rise inland (flatter than
+    // before, but still natural rolling ground — not a flat pad), plus a submerged
+    // skirt so the land reads as rising from the sea.
     float base;
-    if (d < 0.0f) base = d * 0.60f;                                       // steeper submerged skirt
-    // A wide, gentle SAND BEACH for the first ~9 units inland, then the land
-    // climbs steadily into the hills — so there's a real beach ring at the shore.
-    else          base = 2.4f * (1.0f - std::exp(-d / 6.0f)) + std::max(0.0f, d - 9.0f) * 0.17f;
-    base += hill(x, z, 4.0f, 28.0f, 24.0f, 26.0f);   // main peak
-    base += hill(x, z, -22.0f, 12.0f, 16.0f, 16.0f); // western shoulder
-    base += hill(x, z, 26.0f, 36.0f, 15.0f, 15.0f);  // northern secondary summit
-    // Roughness: rolling + RIDGED noise so the hills read as sculpted ground, not
-    // a smooth dome. Scaled up with height so the low shore shelf stays flat
-    // enough to build the town on, while the interior gets broken relief.
-    const float landFrac = std::min(1.0f, std::max(0.0f, d / 8.0f));
-    const float roughAmt = std::min(1.0f, std::max(0.0f, (base - 3.0f) / 9.0f));
-    const float rolling = (fbm(x * 0.06f, z * 0.06f) - 0.5f) * 3.0f;
-    const float ridged = (1.0f - std::fabs(2.0f * fbm(x * 0.11f, z * 0.11f) - 1.0f)) * 4.5f - 1.5f;
-    return base + (rolling + ridged) * roughAmt * landFrac + (fbm(x * 0.05f, z * 0.05f) - 0.5f) * 1.5f * landFrac;
+    if (d < 0.0f) base = d * 0.55f;                                       // submerged skirt
+    else          base = 2.2f * (1.0f - std::exp(-d / 7.0f)) + std::max(0.0f, d - 10.0f) * 0.10f; // gentle climb
+    base += hill(x, z, 6.0f, 34.0f, 30.0f, 15.0f);   // main peak (lower + wider = gentler)
+    base += hill(x, z, -26.0f, 16.0f, 22.0f, 9.0f);  // western shoulder
+    base += hill(x, z, 32.0f, 44.0f, 24.0f, 9.0f);   // northern secondary summit
+    // Gentle rolling relief (kept for a natural, not-flat look) — scaled up with
+    // height so the low shore shelf stays buildable and the interior rolls softly.
+    const float landFrac = std::min(1.0f, std::max(0.0f, d / 9.0f));
+    const float roughAmt = std::min(1.0f, std::max(0.0f, (base - 3.0f) / 12.0f));
+    const float rolling = (fbm(x * 0.055f, z * 0.055f) - 0.5f) * 2.2f;
+    const float ridged = (1.0f - std::fabs(2.0f * fbm(x * 0.10f, z * 0.10f) - 1.0f)) * 2.6f - 0.9f;
+    return base + (rolling + ridged) * roughAmt * landFrac + (fbm(x * 0.05f, z * 0.05f) - 0.5f) * 1.2f * landFrac;
 }
 
 float landRadius() { return kMeanCoast; }

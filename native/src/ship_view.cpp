@@ -117,7 +117,14 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
                    float rx, float ry, float rz, const float* c, float mat) {
         ship_mesh::renderBoxRot(viewId, relX + cx, cy + curLift, relZ + cz, sx, sy, sz, rx, ry, rz, c[0], c[1], c[2], mat);
     };
-    auto setShelf = [&](float cx, float cz) { curLift = std::max(0.0f, island_gpu::heightAt(cx, cz)); };
+    // Seat a structure on the HIGHEST terrain in its neighbourhood, so the rising
+    // hill never cuts up through the walls (a deep plinth hides the downhill gap).
+    auto setShelf = [&](float cx, float cz) {
+        float gh = island_gpu::heightAt(cx, cz);
+        for (int sx = -1; sx <= 1; ++sx) for (int sz = -1; sz <= 1; ++sz)
+            gh = std::max(gh, island_gpu::heightAt(cx + sx * 7.0f, cz + sz * 7.0f));
+        curLift = std::max(0.0f, gh);
+    };
     const float MAT_STONE = 2.0f, MAT_FLAT = 0.0f;
     // Palette (the landmass itself is now the coloured terrain heightfield)
     const float wood[3]  = { 0.42f, 0.28f, 0.15f };
@@ -190,8 +197,8 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
         const float ang   = std::atan2(rise, halfW);
         const float py    = wallTopY + lift + rise * 0.5f;
         const float pl    = slope * 1.1f;                          // panels overlap at the ridge (no gap) + deeper eave
-        BRabs(cx - halfW * 0.5f, py, cz, pl, 0.4f, depth, 0.0f, 0.0f,  ang, rc, MAT_FLAT); // left slope
-        BRabs(cx + halfW * 0.5f, py, cz, pl, 0.4f, depth, 0.0f, 0.0f, -ang, rc, MAT_FLAT); // right slope
+        BRabs(cx - halfW * 0.5f, py, cz, pl, 0.4f, depth, 0.0f, 0.0f, -ang, rc, MAT_FLAT); // left slope (/\ peak)
+        BRabs(cx + halfW * 0.5f, py, cz, pl, 0.4f, depth, 0.0f, 0.0f,  ang, rc, MAT_FLAT); // right slope
         const float ridge[3] = { rc[0] * 0.68f, rc[1] * 0.68f, rc[2] * 0.68f };
         BRabs(cx, wallTopY + lift + rise + 0.08f, cz, 1.1f, 0.42f, depth, 0.0f, 0.0f, 0.0f, ridge, MAT_FLAT); // ridge cap covers the seam
         for (int e = -1; e <= 1; e += 2) {                         // gable-end triangles (front & back)
@@ -213,10 +220,10 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
         const float slope = std::sqrt(half * half + rise * rise);
         const float ang   = std::atan2(rise, half);
         const float py    = wallTopY + lift + rise * 0.5f;
-        BRabs(cx - half * 0.5f, py, cz, slope, 0.4f, w + 0.8f, 0.0f, 0.0f,  ang, rc, MAT_FLAT); // -x
-        BRabs(cx + half * 0.5f, py, cz, slope, 0.4f, w + 0.8f, 0.0f, 0.0f, -ang, rc, MAT_FLAT); // +x
-        BRabs(cx, py, cz - half * 0.5f, w + 0.8f, 0.4f, slope, -ang, 0.0f, 0.0f, rc, MAT_FLAT); // -z
-        BRabs(cx, py, cz + half * 0.5f, w + 0.8f, 0.4f, slope,  ang, 0.0f, 0.0f, rc, MAT_FLAT); // +z
+        BRabs(cx - half * 0.5f, py, cz, slope, 0.4f, w + 0.8f, 0.0f, 0.0f, -ang, rc, MAT_FLAT); // -x (apex peak)
+        BRabs(cx + half * 0.5f, py, cz, slope, 0.4f, w + 0.8f, 0.0f, 0.0f,  ang, rc, MAT_FLAT); // +x
+        BRabs(cx, py, cz - half * 0.5f, w + 0.8f, 0.4f, slope,  ang, 0.0f, 0.0f, rc, MAT_FLAT); // -z
+        BRabs(cx, py, cz + half * 0.5f, w + 0.8f, 0.4f, slope, -ang, 0.0f, 0.0f, rc, MAT_FLAT); // +z
     };
 
     // --- Landmass: a real procedural island (coloured heightfield), rising from
@@ -230,11 +237,14 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     auto crag = [&](float cx, float cy, float cz, float sx, float sy, float sz) {
         ship_mesh::renderBoxSized(viewId, relX + cx, cy, relZ + cz, sx, sy, sz, 0.50f, 0.47f, 0.43f, MAT_STONE);
     };
-    crag(4, 30, 28, 9, 11, 8);   crag(-4, 26, 23, 6, 9, 6);   crag(13, 27, 33, 7, 8, 6);
-    crag(0, 33, 31, 5, 7, 4);    crag(10, 24, 22, 5, 6, 5);
+    crag(6, 18, 34, 8, 9, 7);   crag(-1, 15, 30, 5, 7, 5);   crag(15, 16, 38, 6, 7, 5);
+    crag(2, 20, 37, 5, 7, 4);   crag(11, 14, 30, 4, 6, 4);
 
     // --- Port (south shore) ---
-    B(-6, 1.2f, -40, 78, 1.4f, 6, stone[0], stone[1], stone[2], MAT_STONE);   // stone quay
+    // Solid stone quay: the block extends well BELOW the waterline (no floating
+    // slab underside) and back INTO the beach, so it reads as a masonry quay wall
+    // rising from the water rather than a plate hovering over it.
+    B(-6, -1.55f, -40, 82, 6.9f, 10, stone[0], stone[1], stone[2], MAT_STONE);   // stone quay (deep face)
     B(-26, 1.1f, -54, 4.5f, 0.8f, 30, wood[0], wood[1], wood[2]);  // pier 1
     B(-2, 1.1f, -56, 4.5f, 0.8f, 34, wood[0], wood[1], wood[2]);   // pier 2
     B(22, 1.1f, -52, 4.5f, 0.8f, 26, wood[0], wood[1], wood[2]);   // pier 3
@@ -416,8 +426,8 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
         BL(cx, baseY + 1.1f, cz, w, 2.2f, 1.6f, wall, 1.0f);
         const float hw = w * 0.5f + 0.3f, ris = 1.2f;
         const float sl = std::sqrt(hw * hw + ris * ris), ang = std::atan2(ris, hw);
-        BLr(cx - hw * 0.5f, baseY + 2.2f + ris * 0.5f, cz, sl, 0.34f, 1.9f, 0, 0,  ang, darkRoof, MAT_FLAT);
-        BLr(cx + hw * 0.5f, baseY + 2.2f + ris * 0.5f, cz, sl, 0.34f, 1.9f, 0, 0, -ang, darkRoof, MAT_FLAT);
+        BLr(cx - hw * 0.5f, baseY + 2.2f + ris * 0.5f, cz, sl, 0.34f, 1.9f, 0, 0, -ang, darkRoof, MAT_FLAT);
+        BLr(cx + hw * 0.5f, baseY + 2.2f + ris * 0.5f, cz, sl, 0.34f, 1.9f, 0, 0,  ang, darkRoof, MAT_FLAT);
         windowOn(cx, baseY + 1.2f, cz - 0.85f, 0, -1, 1.0f, 1.1f, false);
     };
 
@@ -428,8 +438,8 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
         const float halfW = w * 0.5f + 0.05f, depth = d + 0.1f;   // roof stays WITHIN the footprint (no splay into neighbours)
         const float slope = std::sqrt(halfW * halfW + rise * rise), ang = std::atan2(rise, halfW);
         const float py = wallTopY + rise * 0.5f, pl = slope * 1.02f;
-        BLr(cx - halfW * 0.5f, py, cz, pl, 0.42f, depth, 0, 0,  ang, rc, MAT_FLAT);
-        BLr(cx + halfW * 0.5f, py, cz, pl, 0.42f, depth, 0, 0, -ang, rc, MAT_FLAT);
+        BLr(cx - halfW * 0.5f, py, cz, pl, 0.42f, depth, 0, 0, -ang, rc, MAT_FLAT); // /\ peak (was inverted)
+        BLr(cx + halfW * 0.5f, py, cz, pl, 0.42f, depth, 0, 0,  ang, rc, MAT_FLAT);
         const float ridge[3] = { rc[0] * 0.68f, rc[1] * 0.68f, rc[2] * 0.68f };
         BLr(cx, wallTopY + rise + 0.06f, cz, 0.9f, 0.42f, depth, 0, 0, 0, ridge, MAT_FLAT);
         BL(cx, wallTopY + 0.2f, cz, w + 0.15f, 0.5f, d + 0.15f, ridge, MAT_FLAT); // eave fascia (thickness, tight)
@@ -448,12 +458,19 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     auto house = [&](float cx, float cz, float w, float d, int stories, float storyH,
                      const float* wall, const float* rf, float wmat, int style,
                      int cols, const float* sign, bool chim, bool dorm, const float* shutC = nullptr) {
-        setShelf(cx, cz);
+        // Seat the building's FRONT (the side the player sees from the sea) on the
+        // terrain, so ground-floor windows sit on the ground — not stranded in the
+        // air on a tall pedestal. The terrain rising behind is hidden by the walls
+        // and the terrace's retaining wall; a modest plinth smooths the front edge.
+        const float front = cz - d * 0.5f;
+        float gh = island_gpu::heightAt(cx, front + d * 0.12f);
+        gh = std::max(gh, island_gpu::heightAt(cx - w * 0.42f, front + d * 0.12f));
+        gh = std::max(gh, island_gpu::heightAt(cx + w * 0.42f, front + d * 0.12f));
+        curLift = std::max(0.0f, gh);
         curShutter = shutC;
         const float topY = stories * storyH;
-        const float front = cz - d * 0.5f;
-        BL(cx, -2.0f, cz, w + 1.1f, 6.0f, d + 1.1f, sillC, MAT_STONE); // stone plinth (deep, sunk into the shelf)
-        BL(cx, (topY - 3.0f) * 0.5f, cz, w, topY + 3.0f, d, wall, wmat); // walls
+        BL(cx, -1.5f, cz, w + 0.8f, 6.0f, d + 0.8f, sillC, MAT_STONE);   // modest stone plinth at the front
+        BL(cx, (topY - 8.0f) * 0.5f, cz, w, topY + 8.0f, d, wall, wmat); // walls sunk deep so the rear grips the slope
         for (int s = 1; s < stories; ++s)                               // belt courses
             BL(cx, s * storyH, cz, w + 0.3f, 0.5f, d + 0.3f, sillC, MAT_STONE);
         if (style == 0) quoins(cx, cz, w, d, topY);
@@ -603,10 +620,10 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     auto spire = [&](float cx, float cz, float w, float baseY, float rise, const float* rc) {
         const float half = w * 0.5f + 0.3f, sl = std::sqrt(half * half + rise * rise), ang = std::atan2(rise, half);
         const float py = baseY + rise * 0.5f;
-        BLr(cx - half * 0.5f, py, cz, sl, 0.4f, w + 0.6f, 0, 0,  ang, rc, MAT_FLAT);
-        BLr(cx + half * 0.5f, py, cz, sl, 0.4f, w + 0.6f, 0, 0, -ang, rc, MAT_FLAT);
-        BLr(cx, py, cz - half * 0.5f, w + 0.6f, 0.4f, sl, -ang, 0, 0, rc, MAT_FLAT);
-        BLr(cx, py, cz + half * 0.5f, w + 0.6f, 0.4f, sl,  ang, 0, 0, rc, MAT_FLAT);
+        BLr(cx - half * 0.5f, py, cz, sl, 0.4f, w + 0.6f, 0, 0, -ang, rc, MAT_FLAT); // 4 panels to an apex (was inverted funnel)
+        BLr(cx + half * 0.5f, py, cz, sl, 0.4f, w + 0.6f, 0, 0,  ang, rc, MAT_FLAT);
+        BLr(cx, py, cz - half * 0.5f, w + 0.6f, 0.4f, sl,  ang, 0, 0, rc, MAT_FLAT);
+        BLr(cx, py, cz + half * 0.5f, w + 0.6f, 0.4f, sl, -ang, 0, 0, rc, MAT_FLAT);
     };
 
     // ---- GROUND: paved terraces so the town steps up the hill on stone, not bare
@@ -652,7 +669,7 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     cannon(-35, -30, -1); shotPile(-32, -31);
     // KING'S BONDED WAREHOUSE — tall dark tarred-timber, hoist beam + cargo.
     house(-26, -24, 13, 11, 3, 4.0f, tarred, darkRoof, 1.0f, 2, 3, nullptr, false, false, shutDark);
-    hoistBeam(-26, -29.5f, 11.5f);
+    BL(-26, 8.5f, -30.3f, 5.0f, 6.0f, 0.3f, darkW, MAT_FLAT);   // tall plank cargo doors (flush, not a protruding crane)
     crateAt(-20, -31, 2.4f); crateAt(-31, -31, 2.4f); tarBarrel(-33, -31.5f);
     // TRADING POST / general store — ochre, terracotta, awning.
     house(-11, -25, 11, 9, 2, 4.0f, ochre, redRoof, 1.0f, 0, 3, green, false, false, shutGreen);
@@ -666,8 +683,7 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     flagstaff(5, -20, 25, flagC);
     // THE CHANDLERY — teal timber, hoist beam, rope + tar spilling out.
     house(20, -25, 10, 9, 2, 4.0f, tealW, redRoof, 1.0f, 0, 2, wood, false, false, shutDark);
-    hoistBeam(20, -30, 7.5f);
-    ropeCoil(24, -31); tarBarrel(16, -31);
+    ropeCoil(24, -31); tarBarrel(16, -31); crateAt(23, -32, 1.8f);
     // THE SALT KRAKEN TAVERN — biggest block: terracotta-red timber-frame, two-tier
     // gallery, dormers, two chimneys, amber windows.
     house(36, -24, 15, 12, 3, 4.0f, tavW, darkRoof, 1.0f, 1, 3, amberC, false, true, shutDark);
@@ -719,7 +735,7 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     // COOPER open work-shed + casks + saw-pit (west end of the terrace).
     setShelf(-44, 6);
     for (int i = -1; i <= 1; ++i) BL(-44 + i * 3.5f, 2.4f, 7.5f, 0.6f, 5, 0.6f, wood, MAT_FLAT);
-    BLr(-44, 5.2f, 6.0f, 9.0f, 0.4f, 6.5f, 0.35f, 0, 0, darkRoof, MAT_FLAT);
+    BLr(-44, 5.2f, 6.0f, 9.0f, 0.4f, 6.5f, -0.35f, 0, 0, darkRoof, MAT_FLAT);
     for (int i = 0; i < 3; ++i) barrelAt(-47 + i * 1.8f, 8.5f);
 
     // ---- BAND D: RESIDENTIAL TERRACE (behind retaining wall 2) — pastel row ----
@@ -756,8 +772,8 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     house(48, -16, 9, 8, 2, 4.0f, tarred, darkRoof, 1.0f, 2, 2, wood, false, false);
     setShelf(58, -14);
     BL(58, 3.0f, -14, 20, 6, 6, tarred, 1.0f);                   // long ropewalk shed
-    BLr(58, 6.6f, -14, 21, 0.4f, 5.0f, 0.28f, 0, 0, darkRoof, MAT_FLAT);
     BLr(58, 6.6f, -14, 21, 0.4f, 5.0f, -0.28f, 0, 0, darkRoof, MAT_FLAT);
+    BLr(58, 6.6f, -14, 21, 0.4f, 5.0f, 0.28f, 0, 0, darkRoof, MAT_FLAT);
 
     // --- Palm trees: the Caribbean signature — a leaning trunk and a drooping
     // green crown, clustered on the sandy shore and dotting the green slopes. ---
