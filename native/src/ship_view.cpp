@@ -202,14 +202,14 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
         const float ridge[3] = { rc[0] * 0.68f, rc[1] * 0.68f, rc[2] * 0.68f };
         BRabs(cx, wallTopY + lift + rise + 0.08f, cz, 1.1f, 0.42f, depth, 0.0f, 0.0f, 0.0f, ridge, MAT_FLAT); // ridge cap covers the seam
         for (int e = -1; e <= 1; e += 2) {                         // gable-end triangles (front & back)
-            const float ez = cz + e * (d * 0.5f - 0.15f);          // inset so the roof panels overhang it
-            const int steps = 5;
+            const float ez = cz + e * (d * 0.5f - 0.2f);           // inset so the roof panels overhang it
+            const int steps = 16;                                  // enough steps that no sky shows through
             for (int s = 0; s < steps; ++s) {
-                const float t  = (s + 0.5f) / float(steps);        // 0..1 up the triangle
-                const float fy = wallTopY + lift + rise * t;
-                const float fw = w * std::max(0.0f, 1.0f - t * 1.12f); // tapers to nothing BELOW the ridge
-                if (fw < 0.3f) continue;                           // (so it never pokes through the roof)
-                BRabs(cx, fy, ez, fw, rise / steps + 0.1f, 0.4f, 0.0f, 0.0f, 0.0f, wc, wmat);
+                const float tTop = float(s + 1) / float(steps);    // width at the step's TOP edge follows
+                const float fw = 2.0f * halfW * (1.0f - tTop);     // the roof line (never pokes past it)
+                if (fw < 0.25f) continue;
+                const float fy = wallTopY + lift + rise * (float(s) / float(steps)) + rise / (2.0f * steps);
+                BRabs(cx, fy, ez, fw, rise / steps * 1.35f, 0.45f, 0.0f, 0.0f, 0.0f, wc, wmat);
             }
         }
     };
@@ -344,7 +344,8 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     // corner quoins, framed windows with sills/lintels/shutters, exposed timber
     // framing, belt courses, chimneys and dormers — composed by house().
     const float beam[3]   = { 0.30f, 0.21f, 0.14f };  // dark oak framing timber
-    const float glassC[3] = { 0.46f, 0.56f, 0.62f };  // cool window glass
+    const float glassC[3] = { 0.66f, 0.76f, 0.82f };  // sky-reflecting glass (lifted: the panes sit
+                                                      // in a shaded reveal, so they need to read bright)
     const float sillC[3]  = { 0.82f, 0.74f, 0.57f };  // warm sandstone (sills, lintels, steps, plinths)
     const float quoinC[3] = { 0.83f, 0.75f, 0.59f };  // warm corner stone
     // Shutter-colour variety: windowOn uses curShutter when a building sets one,
@@ -364,16 +365,20 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
             const float z = front ? cz + nz * out : cz + along;
             BL(x, cy + up, z, front ? ew : ed, eh, front ? ed : ew, c, MAT_FLAT);
         };
-        place(0, 0, 0.03f, w + 0.5f, h + 0.5f, 0.16f, beam);        // dark reveal / frame
-        place(0, 0, 0.10f, w, h, 0.10f, glassC);                    // glass
-        place(0, 0, 0.15f, 0.12f, h, 0.10f, beam);                  // vertical muntin
-        place(0, 0, 0.15f, w, 0.12f, 0.10f, beam);                  // horizontal muntin
-        place(0, -h * 0.5f - 0.2f, 0.18f, w + 0.9f, 0.24f, 0.42f, sillC); // sill
-        place(0,  h * 0.5f + 0.2f, 0.12f, w + 0.7f, 0.24f, 0.30f, sillC); // lintel
+        // Depth order matters: the walls are solid boxes, so a pane can't truly be
+        // recessed — instead the SURROUND projects furthest and the pane sits back
+        // inside it, which reads as a window cut INTO the wall. (Getting this
+        // backwards makes every window look stuck on the outside like a sticker.)
+        place(0, 0, 0.09f, w + 0.44f, h + 0.44f, 0.26f, beam);       // stone/timber surround (outermost)
+        place(0, 0, 0.00f, w, h, 0.12f, glassC);                     // glazing, set back in the reveal
+        place(0, 0, 0.04f, 0.10f, h, 0.08f, beam);                   // vertical muntin (just proud of the glass)
+        place(0, 0, 0.04f, w, 0.10f, 0.08f, beam);                   // horizontal muntin
+        place(0, -h * 0.5f - 0.30f, 0.13f, w + 0.66f, 0.20f, 0.34f, sillC); // sill (modest shelf under the opening)
+        place(0,  h * 0.5f + 0.30f, 0.10f, w + 0.60f, 0.18f, 0.26f, sillC); // lintel
         if (shut) {
-            const float* sc = curShutter ? curShutter : shutter;
-            place(-w * 0.5f - 0.33f, 0, 0.2f, 0.52f, h, 0.14f, sc);
-            place( w * 0.5f + 0.33f, 0, 0.2f, 0.52f, h, 0.14f, sc);
+            const float* sc = curShutter ? curShutter : shutter;      // shutters hinge on the face, flanking the surround
+            place(-w * 0.5f - 0.42f, 0, 0.12f, 0.40f, h + 0.1f, 0.13f, sc);
+            place( w * 0.5f + 0.42f, 0, 0.12f, 0.40f, h + 0.1f, 0.13f, sc);
         }
     };
     // A framed DOOR on the front face (normal -z), dressed-stone step, optional lantern.
@@ -397,10 +402,13 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     // Alternating CORNER QUOINS up all four corners.
     auto quoins = [&](float cx, float cz, float w, float d, float topY) {
         for (int sx = -1; sx <= 1; sx += 2) for (int sz = -1; sz <= 1; sz += 2) {
-            const float qx = cx + sx * w * 0.5f, qz = cz + sz * d * 0.5f;
             const int n = std::max(2, int(topY / 1.3f));
             for (int i = 0; i < n; ++i) {
+                // Inset so each stone only steps ~0.1 proud of the two wall faces it
+                // wraps — a dressed corner, not blocks hanging off the building.
                 const float s = (i % 2 == 0) ? 1.5f : 1.0f;
+                const float qx = cx + sx * (w * 0.5f - s * 0.5f + 0.10f);
+                const float qz = cz + sz * (d * 0.5f - s * 0.5f + 0.10f);
                 BL(qx, 0.7f + i * 1.3f, qz, s, 1.1f, s, quoinC, MAT_STONE);
             }
         }
@@ -443,13 +451,25 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
         const float ridge[3] = { rc[0] * 0.68f, rc[1] * 0.68f, rc[2] * 0.68f };
         BLr(cx, wallTopY + rise + 0.06f, cz, 0.9f, 0.42f, depth, 0, 0, 0, ridge, MAT_FLAT);
         BL(cx, wallTopY + 0.2f, cz, w + 0.15f, 0.5f, d + 0.15f, ridge, MAT_FLAT); // eave fascia (thickness, tight)
+        // GABLE-END WALL: fill the triangle under each roof slope. The step widths
+        // follow the actual roof line (half-width shrinks to nothing at the ridge)
+        // and use enough steps that no sky shows through — getting this wrong left
+        // open gaps you could see straight through the building.
         for (int e = -1; e <= 1; e += 2) {
-            const float ez = cz + e * (d * 0.5f - 0.15f);
-            for (int s = 0; s < 5; ++s) {
-                const float t = (s + 0.5f) / 5.0f, fw = w * std::max(0.0f, 1.0f - t * 1.12f);
-                if (fw < 0.3f) continue;
-                BLr(cx, wallTopY + rise * t, ez, fw, rise / 5.0f + 0.1f, 0.4f, 0, 0, 0, wc, wmat);
+            const float ez = cz + e * (d * 0.5f - 0.2f);
+            const int N = 16;
+            for (int s = 0; s < N; ++s) {
+                const float tTop = float(s + 1) / float(N);         // width at the step's TOP edge,
+                const float fw = 2.0f * halfW * (1.0f - tTop);      // so it never pokes out past the roof
+                if (fw < 0.25f) continue;
+                const float yb = wallTopY + rise * (float(s) / float(N));
+                BLr(cx, yb + rise / (2.0f * N), ez, fw, rise / N * 1.35f, 0.45f, 0, 0, 0, wc, wmat);
             }
+            // Bargeboards: trim laid along each gable slope, capping the stepped
+            // edge so no sliver of sky shows between the fill and the roof.
+            const float bez = cz + e * (d * 0.5f + 0.02f);
+            BLr(cx - halfW * 0.5f, wallTopY + rise * 0.5f, bez, slope * 1.04f, 0.62f, 0.42f, 0, 0, -ang, ridge, MAT_FLAT);
+            BLr(cx + halfW * 0.5f, wallTopY + rise * 0.5f, bez, slope * 1.04f, 0.62f, 0.42f, 0, 0,  ang, ridge, MAT_FLAT);
         }
     };
 
@@ -669,7 +689,13 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     cannon(-35, -30, -1); shotPile(-32, -31);
     // KING'S BONDED WAREHOUSE — tall dark tarred-timber, hoist beam + cargo.
     house(-26, -24, 13, 11, 3, 4.0f, tarred, darkRoof, 1.0f, 2, 3, nullptr, false, false, shutDark);
-    BL(-26, 8.5f, -30.3f, 5.0f, 6.0f, 0.3f, darkW, MAT_FLAT);   // tall plank cargo doors (flush, not a protruding crane)
+    // Tall loading doors: timber surround + two leaves with a centre stile and iron
+    // straps, so it reads as cargo doors rather than a flat black hole in the wall.
+    BL(-26, 8.5f, -30.15f, 5.6f, 6.6f, 0.30f, beam, MAT_FLAT);   // surround
+    BL(-26, 8.5f, -30.32f, 5.0f, 6.0f, 0.22f, wood, 1.0f);       // door leaves (planked)
+    BL(-26, 8.5f, -30.46f, 0.22f, 6.0f, 0.10f, beam, MAT_FLAT);  // centre stile
+    BL(-26, 10.6f, -30.46f, 4.6f, 0.18f, 0.10f, ironC, MAT_FLAT); // iron straps
+    BL(-26, 6.4f, -30.46f, 4.6f, 0.18f, 0.10f, ironC, MAT_FLAT);
     crateAt(-20, -31, 2.4f); crateAt(-31, -31, 2.4f); tarBarrel(-33, -31.5f);
     // TRADING POST / general store — ochre, terracotta, awning.
     house(-11, -25, 11, 9, 2, 4.0f, ochre, redRoof, 1.0f, 0, 3, green, false, false, shutGreen);
