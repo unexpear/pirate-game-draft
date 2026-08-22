@@ -297,7 +297,7 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     const float shutter[3] = { 0.30f, 0.45f, 0.60f };  // blue colonial shutters
     const float amberC[3]  = { 0.99f, 0.76f, 0.30f };  // lantern amber
     const float glow[3]    = { 1.00f, 0.52f, 0.16f };  // forge glow
-    const float smoke[3]   = { 0.58f, 0.58f, 0.60f };  // chimney smoke
+    const float smoke[3]   = { 0.82f, 0.82f, 0.84f };  // chimney smoke (pale, so it reads as smoke not stone)
     const float cloth[3]   = { 0.56f, 0.30f, 0.64f };  // dyer's purple
     const float green[3]   = { 0.28f, 0.56f, 0.30f };  // grocer green
     const float barrel[3]  = { 0.46f, 0.32f, 0.18f };  // barrel wood
@@ -436,8 +436,11 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
         BL(cx, topY + 0.2f, cz, 2.3f, 0.5f, 2.3f, darkW, MAT_FLAT);      // cap
         BL(cx - 0.5f, topY + 0.6f, cz - 0.5f, 0.5f, 0.7f, 0.5f, darkW, MAT_FLAT); // pots
         BL(cx + 0.5f, topY + 0.6f, cz + 0.5f, 0.5f, 0.7f, 0.5f, darkW, MAT_FLAT);
+        // Smoke: overlapping and pale, rising straight from the pot. (Spaced grey
+        // blocks read as detached lumps of chimney floating over the roof.)
         if (smoking) for (int s = 0; s < 4; ++s)
-            BL(cx + s * 0.5f, topY + 1.4f + s * 2.0f, cz + s * 0.3f, 1.6f - s * 0.22f, 1.7f, 1.6f - s * 0.22f, smoke, MAT_FLAT);
+            BL(cx + s * 0.28f, topY + 1.0f + s * 1.35f, cz + s * 0.18f,
+               1.5f - s * 0.28f, 1.6f, 1.5f - s * 0.28f, smoke, MAT_FLAT);
     };
     // Alternating CORNER QUOINS up all four corners.
     auto quoins = [&](float cx, float cz, float w, float d, float topY) {
@@ -518,18 +521,21 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     auto house = [&](float cx, float cz, float w, float d, int stories, float storyH,
                      const float* wall, const float* rf, float wmat, int style,
                      int cols, const float* sign, bool chim, bool dorm, const float* shutC = nullptr) {
-        // Seat the building's FRONT (the side the player sees from the sea) on the
-        // terrain, so ground-floor windows sit on the ground — not stranded in the
-        // air on a tall pedestal. The terrain rising behind is hidden by the walls
-        // and the terrace's retaining wall; a modest plinth smooths the front edge.
+        // Seat the building on the HIGHEST terrain under its footprint, so the
+        // rising hill can never cut up through a wall (which buried walls while
+        // their windows and trim still poked out of the grass). The gap that
+        // leaves on the downhill side is filled by a deep stone FOUNDATION that
+        // reaches well below grade — reading as the terraced stone base a real
+        // hillside town is built on, not a building perched on stilts.
         const float front = cz - d * 0.5f;
-        float gh = island_gpu::heightAt(cx, front + d * 0.12f);
-        gh = std::max(gh, island_gpu::heightAt(cx - w * 0.42f, front + d * 0.12f));
-        gh = std::max(gh, island_gpu::heightAt(cx + w * 0.42f, front + d * 0.12f));
+        float gh = 0.0f;
+        for (int sx = -1; sx <= 1; ++sx)
+            for (int sz = -1; sz <= 1; ++sz)
+                gh = std::max(gh, island_gpu::heightAt(cx + sx * w * 0.5f, cz + sz * d * 0.5f));
         curLift = std::max(0.0f, gh);
         curShutter = shutC;
         const float topY = stories * storyH;
-        BL(cx, -1.5f, cz, w + 0.8f, 6.0f, d + 0.8f, sillC, MAT_STONE);   // modest stone plinth at the front
+        BL(cx, -6.5f, cz, w + 1.0f, 14.0f, d + 1.0f, sillC, MAT_STONE); // deep stone foundation to grade
         // FOUR SEPARATE WALL PANELS (1 front / 2 right / 3 back / 4 left) rather
         // than one solid block, so each wall can be inspected — and tinted and
         // numbered in wall-debug mode. Front/back span the full width and the
@@ -601,11 +607,20 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     const float cobble[3] = { 0.60f, 0.54f, 0.44f };   // warm cobbled/dirt street (less grey)
     const float wallStone[3] = { 0.56f, 0.54f, 0.50f };// fort/curtain stone
 
-    auto retWall = [&](float x0, float x1, float z, float topY) {           // capstoned retaining wall
-        const float cx = (x0 + x1) * 0.5f, w = x1 - x0;
-        setShelf(cx, z);
-        BL(cx, topY * 0.5f - 2.0f, z, w, topY + 4.0f, 1.7f, wallStone, MAT_STONE);
-        BL(cx, topY + 0.25f, z, w + 0.5f, 0.5f, 2.2f, sillC, MAT_STONE);
+    // Capstoned retaining wall, TILED along its length so each segment sits on its
+    // own patch of ground. (As one long box it hung in mid-air wherever the slope
+    // fell away — a stone slab cantilevered into open sky.)
+    auto retWall = [&](float x0, float x1, float z, float topY) {
+        const int n = std::max(1, int((x1 - x0) / 6.0f));
+        const float tw = (x1 - x0) / float(n);
+        for (int i = 0; i < n; ++i) {
+            const float tx = x0 + tw * (float(i) + 0.5f);
+            const float g = std::max(0.0f, island_gpu::heightAt(tx, z));
+            ship_mesh::renderBoxSized(viewId, relX + tx, g + topY * 0.5f - 4.0f, relZ + z,
+                                      tw + 0.3f, topY + 8.0f, 1.7f, wallStone[0], wallStone[1], wallStone[2], MAT_STONE);
+            ship_mesh::renderBoxSized(viewId, relX + tx, g + topY + 0.25f, relZ + z,
+                                      tw + 0.5f, 0.5f, 2.2f, sillC[0], sillC[1], sillC[2], MAT_STONE);
+        }
     };
     auto stairUp = [&](float cx, float cz, float w, float dep, float rise) { // external stone stair up-slope
         setShelf(cx, cz);
@@ -675,7 +690,7 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     auto fort = [&](float cx, float cz) {
         setShelf(cx, cz);
         const float R = 14.0f, wt = 9.0f;
-        BL(cx, -1.5f, cz, 2 * R + 4, 5.0f, 2 * R + 4, wallStone, MAT_STONE); // platform
+        BL(cx, -8.0f, cz, 2 * R + 4, 18.0f, 2 * R + 4, wallStone, MAT_STONE); // platform, deep enough to reach grade all round
         auto curtain = [&](float mx, float mz, float lx, float lz) {
             BL(mx, wt * 0.5f, mz, lx, wt, lz, wallStone, MAT_STONE);
             const bool ax = lx > lz; const int n = int((ax ? lx : lz) / 2.6f);
@@ -695,7 +710,7 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     // SEA BASTION water battery on the west headland.
     auto battery = [&](float cx, float cz) {
         setShelf(cx, cz);
-        BL(cx, 1.0f, cz, 24, 4.0f, 14, wallStone, MAT_STONE);             // gun platform
+        BL(cx, -4.0f, cz, 24, 14.0f, 14, wallStone, MAT_STONE);           // gun platform, carried down to grade
         for (int i = -4; i <= 4; i += 2) BL(cx + i * 2.6f, 4.2f, cz - 6.5f, 2.2f, 2.4f, 1.6f, wallStone, MAT_STONE); // merlons
         for (int i = -2; i <= 2; ++i) { cannon(cx + i * 5.0f, cz - 5.0f, -1); shotPile(cx + i * 5.0f + 2.3f, cz - 2.6f); }
         flagstaff(cx - 10, cz + 3, 16, redRoof);
@@ -708,7 +723,7 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     // landmarks (customs tower LOW, church MID, fort HIGH) on the central sightline.
     auto spire = [&](float cx, float cz, float w, float baseY, float rise, const float* rc) {
         const float half = w * 0.5f + 0.3f, sl = std::sqrt(half * half + rise * rise), ang = std::atan2(rise, half);
-        const float py = baseY + rise * 0.5f;
+        const float py = baseY + rise * 0.5f - 0.45f; // overlap the tower top (a gap left the roof hovering)
         BLr(cx - half * 0.5f, py, cz, sl, 0.4f, w + 0.6f, 0, 0, -ang, rc, MAT_FLAT); // 4 panels to an apex (was inverted funnel)
         BLr(cx + half * 0.5f, py, cz, sl, 0.4f, w + 0.6f, 0, 0,  ang, rc, MAT_FLAT);
         BLr(cx, py, cz - half * 0.5f, w + 0.6f, 0.4f, sl,  ang, 0, 0, rc, MAT_FLAT);
@@ -736,16 +751,31 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     // Cobble stays well INLAND (narrower than the buildings' span) so no flat slab
     // overhangs the coast — the sloped dirt-toned terrain shows between/around the
     // buildings, so the town sits on the island's landform, not a floating tray.
-    B(-4, -0.5f, -30, 76, 2.4f, 7, cobble[0], cobble[1], cobble[2], MAT_STONE);   // Harbour Street
-    B(-4, -0.7f, -23, 72, 2.6f, 11, cobble[0], cobble[1], cobble[2], MAT_STONE);  // waterfront apron (inland)
-    B(-2, -0.3f, -22, 9, 2.8f, 14, cobble[0], cobble[1], cobble[2], MAT_STONE);   // Grand Stair base run
-    stairUp(-2, -16, 9, 24, 11);                                                  // the climbing stair
-    retWall(-32, 14, -15, 4.5f);                                                  // plaza retaining wall
-    B(-8, -0.2f, -9, 54, 3.0f, 13, cobble[0], cobble[1], cobble[2], MAT_STONE);   // plaza deck
-    retWall(-32, 18, 3, 6.0f);                                                    // terrace wall 1
-    B(-6, 0.4f, 4, 54, 3.0f, 12, cobble[0], cobble[1], cobble[2], MAT_STONE);     // trades terrace
-    retWall(-28, 18, 13, 7.0f);                                                   // terrace wall 2
-    B(-2, 1.0f, 13, 48, 3.0f, 11, cobble[0], cobble[1], cobble[2], MAT_STONE);    // residential terrace
+    // Paving is TILED and each tile rides its own patch of ground. As single long
+    // boxes these streets were lifted by the terrain height at one point, so where
+    // the land rose they drove a horizontal slab of pavement straight THROUGH the
+    // buildings' facades. Tiled, the paving hugs the hill instead.
+    auto pavedStrip = [&](float x0, float x1, float z0, float z1) {
+        const int nx = std::max(1, int((x1 - x0) / 6.0f));
+        const int nz = std::max(1, int((z1 - z0) / 6.0f));
+        const float tw = (x1 - x0) / float(nx), td = (z1 - z0) / float(nz);
+        for (int i = 0; i < nx; ++i) for (int j = 0; j < nz; ++j) {
+            const float tx = x0 + tw * (float(i) + 0.5f), tz = z0 + td * (float(j) + 0.5f);
+            const float g = std::max(0.0f, island_gpu::heightAt(tx, tz));
+            ship_mesh::renderBoxSized(viewId, relX + tx, g - 0.85f, relZ + tz,
+                                      tw + 0.3f, 2.0f, td + 0.3f, cobble[0], cobble[1], cobble[2], MAT_STONE);
+        }
+    };
+    pavedStrip(-42, 34, -33.5f, -26.5f);   // Harbour Street
+    pavedStrip(-40, 32, -28.5f, -17.5f);   // waterfront apron
+    pavedStrip(-6.5f, 2.5f, -29, -15);     // Grand Stair base run
+    stairUp(-2, -16, 9, 24, 11);           // the climbing stair
+    retWall(-32, 14, -15, 4.5f);           // plaza retaining wall
+    pavedStrip(-35, 19, -15.5f, -2.5f);    // plaza deck
+    retWall(-32, 18, 3, 6.0f);             // terrace wall 1
+    pavedStrip(-33, 21, -2, 10);           // trades terrace
+    retWall(-28, 18, 13, 7.0f);            // terrace wall 2
+    pavedStrip(-26, 22, 7.5f, 18.5f);      // residential terrace
     lamp(-34, -30); lamp(-16, -30); lamp(2, -30); lamp(22, -30); lamp(-2, -12);
 
     // ---- QUAY-FRONT BATTERY + cargo: the waterfront defence + working life the
