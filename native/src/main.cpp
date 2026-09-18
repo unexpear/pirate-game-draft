@@ -141,6 +141,9 @@ int main(int argc, char** argv) {
     bool useCam = false;
     bool wallDebug = false;                  // --walldebug: colour + number each wall panel
     bool auditOnly = false;                  // --audit: one isolated building, walls coloured + numbered
+    int isoId = -1, isoView = 0;             // --isolate N [--iview V]: building N alone, orbit view V
+    bool listBuildings = false;              // --list-buildings: print the numbered building registry
+    bool noShadow = false;                   // --noshadow: skip every caster (A/B the shadow map)
     bool charOn = false;                     // --char x z heading [y]: a person in the town
     float charDX = 0.0f, charDZ = 0.0f, charDH = 0.0f, charDY = 0.0f;
     for (int i = 1; i < argc; ++i) {
@@ -154,6 +157,10 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--shot-frames") == 0 && i + 1 < argc) shotFrames = std::atoi(argv[++i]);
         else if (std::strcmp(argv[i], "--walldebug") == 0) wallDebug = true;
         else if (std::strcmp(argv[i], "--audit") == 0) { wallDebug = true; auditOnly = true; }
+        else if (std::strcmp(argv[i], "--isolate") == 0 && i + 1 < argc) isoId = std::atoi(argv[++i]);
+        else if (std::strcmp(argv[i], "--iview") == 0 && i + 1 < argc) isoView = std::atoi(argv[++i]);
+        else if (std::strcmp(argv[i], "--list-buildings") == 0) listBuildings = true;
+        else if (std::strcmp(argv[i], "--noshadow") == 0) noShadow = true;
         else if (std::strcmp(argv[i], "--char") == 0 && i + 3 < argc) {
             charOn = true;
             charDX = float(std::atof(argv[++i]));
@@ -162,6 +169,7 @@ int main(int argc, char** argv) {
             if (i + 1 < argc && argv[i + 1][0] != '-') charDY = float(std::atof(argv[++i]));
         }
     }
+    if (listBuildings) return ship_view::printBuildings() == 0 ? 0 : 3; // no window needed
     const bool shotMode = !shotPath.empty();
     const bool hideUI = shotMode;      // clean frame for the critic — no debug panel
     if (shotMode && maxFrames < 0) maxFrames = shotFrames;
@@ -210,7 +218,7 @@ int main(int argc, char** argv) {
     const std::vector<sea::Wave> waves = sea::makeWaveField("sea-trial-native");
 
     ship_view::init();
-    shadow::init(1024);
+    shadow::init(2048); // covers the whole town when it's in view, so needs the texels
 
     std::printf("self-tests: %d / %d passing\n", passing, total);
     std::printf("renderer: %s\n", bgfx::getRendererName(bgfx::getRendererType()));
@@ -343,6 +351,7 @@ int main(int argc, char** argv) {
     }
     ship_view::setWallDebug(wallDebug);
     ship_view::setAuditOnly(auditOnly);
+    ship_view::setIsolate(isoId, isoView);
     ship_view::setDebugCharacter(charOn, charDX, charDZ, charDH, charDY);
     const int shotAt = shotMode ? (maxFrames > 3 ? maxFrames - 3 : 0) : -1; // request a few frames before exit
     bool shotRequested = false;
@@ -802,24 +811,37 @@ int main(int argc, char** argv) {
         } else {
             // Shadow depth pass: the sun renders the ship(s) into the shadow map
             // (view 0, before the scene) so they cast real shadows on the sea.
-            shadow::beginPass(kShadowView, kSunX, kSunY, kSunZ, 0.0f, 0.0f, 30.0f);
-            ship_mesh::renderDepth(kShadowView, ship, pose, heading, windDir, sailFullness, 0.0f, 0.0f, float(activeProfile.heelFactor));
-            if (!enemyGone)
-                ship_mesh::renderDepth(kShadowView, enemy, enemyPose, enemyHeading, windDir,
-                                       enemyStruck ? 0.0f : 0.75f, enemyWorldX - worldX, enemyWorldZ - worldZ);
+            // The map covers the ship at sea, and widens over the town when the
+            // island is near, so buildings shadow the streets, each other and
+            // themselves (eaves over walls, towers across roofs).
+            const bool iso = ship_view::isolating();
+            float shCx = 0.0f, shCz = 0.0f, shR = 30.0f; bool shIsland = false;
+            ship_view::shadowFrame(islX, islZ, shCx, shCz, shR, shIsland);
+            shadow::beginPass(kShadowView, kSunX, kSunY, kSunZ, shCx, shCz, shR);
+            if (!iso && !noShadow) {
+                ship_mesh::renderDepth(kShadowView, ship, pose, heading, windDir, sailFullness, 0.0f, 0.0f, float(activeProfile.heelFactor));
+                if (!enemyGone)
+                    ship_mesh::renderDepth(kShadowView, enemy, enemyPose, enemyHeading, windDir,
+                                           enemyStruck ? 0.0f : 0.75f, enemyWorldX - worldX, enemyWorldZ - worldZ);
+            }
+            if (shIsland && !noShadow) {
+                ship_mesh::setDepthPass(true);
+                ship_view::renderIsland(kShadowView, islX, islZ);
+                ship_mesh::setDepthPass(false);
+            }
             ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height, float(activeProfile.heelFactor), islandX, islandZ, kLandCutRadius, speed);
-            if (!enemyGone) {
+            if (!enemyGone && !iso) {
                 ship_view::renderShip(kClearView, enemy, enemyPose, enemyHeading, windDir,
                                       enemyStruck ? 0.0f : 0.75f, timeSec, // furled sails once she strikes
                                       enemyWorldX - worldX, enemyWorldZ - worldZ);
             }
-            for (const auto& p : shots)
+            if (!iso) for (const auto& p : shots)
                 ship_view::renderTracer(kClearView, float(p.x) - worldX, float(p.y), float(p.z) - worldZ, 0.35f);
-            for (const auto& p : enemyShots)
+            if (!iso) for (const auto& p : enemyShots)
                 ship_view::renderTracer(kClearView, float(p.x) - worldX, float(p.y), float(p.z) - worldZ, 0.35f, 1.0f, 0.25f, 0.2f);
             // The island, the safe-zone buoy ring, and a half-built hull on the slipway.
             ship_view::renderIsland(kClearView, islX, islZ);
-            const int kBuoys = 36;
+            const int kBuoys = iso ? 0 : 36;
             for (int i = 0; i < kBuoys; ++i) {
                 const float a = 6.2831853f * i / kBuoys;
                 const float bxo = islandX + kSafeRadius * std::cos(a) - worldX;
@@ -828,7 +850,7 @@ int main(int argc, char** argv) {
                 ship_view::renderTracer(kClearView, bxo, byo, bzo, 0.6f, 0.86f, 0.42f, 0.12f); // weathered nav-buoy orange
             }
             sea::FloatPose yardPose; yardPose.heaveY = 1.9f;
-            ship_view::renderShip(kClearView, yardShip, yardPose, 0.15f, windDir, 0.0f, timeSec,
+            if (!iso) ship_view::renderShip(kClearView, yardShip, yardPose, 0.15f, windDir, 0.0f, timeSec,
                                   islX + 24.0f, islZ - 44.0f);
         }
         imgui_bgfx::endFrame(kImGuiView);

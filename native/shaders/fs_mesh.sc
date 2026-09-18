@@ -1,8 +1,9 @@
 $input v_normal, v_wpos
 
-// Lit-mesh fragment shader: directional N.L + ambient, tinted by u_color, with a
-// procedural surface texture (u_mat): plank courses for timber, block courses
-// for stone/masonry. Keeps the flat-shaded look but breaks up the solid colours.
+// Lit-mesh fragment shader: a warm sun gated by the shadow map, plus a
+// hemispheric sky/ground ambient, tinted by u_color, with a procedural surface
+// texture (u_mat): plank courses for timber, block courses for stone/masonry.
+// Keeps the flat-shaded look but breaks up the solid colours.
 #include <bgfx_shader.sh>
 
 uniform vec4 u_color;    // rgb = piece colour
@@ -13,8 +14,10 @@ uniform vec4 u_fog;      // xyz = horizon fog colour, w = fog far distance
 uniform mat4 u_lightMtx; // light view-proj, for shadow lookup
 SAMPLER2D(s_shadowMap, 4);
 
-// Compare the fragment's light-space depth to the shadow map (3x3 PCF).
-float shadowFactor(vec3 wpos) {
+// How much of the SUN reaches this point (1 = full sun, 0 = fully shadowed),
+// from the shadow map with a 3x3 PCF. Shadowing removes only the sun term — the
+// sky still fills a shadow — so shade reads as real shade, not a grey wash.
+float sunVisibility(vec3 wpos) {
 	vec4 lc = mul(u_lightMtx, vec4(wpos, 1.0));
 	vec3 ndc = lc.xyz / lc.w;
 	vec2 uv = ndc.xy * 0.5 + 0.5;
@@ -22,13 +25,21 @@ float shadowFactor(vec3 wpos) {
 	uv.y = 1.0 - uv.y;
 #endif
 	if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 1.0;
-	float cur = ndc.z - 0.0025;
-	float texel = 1.0 / 1024.0;
+	float cur = ndc.z - 0.0006;
+	float texel = 1.0 / 2048.0;
 	float sh = 0.0;
 	for (int y = -1; y <= 1; ++y)
 	for (int x = -1; x <= 1; ++x)
 		sh += (cur > texture2DLod(s_shadowMap, uv + vec2(float(x), float(y)) * texel, 0.0).x) ? 1.0 : 0.0;
-	return 1.0 - (sh / 9.0) * 0.30;
+	return 1.0 - sh / 9.0;
+}
+
+// Soft highlight shoulder: everything below 0.82 is left exactly as-is (so sky,
+// fog and shade match), and brighter values roll smoothly toward 1 instead of
+// clipping sunlit whitewash to a flat, detail-less white.
+vec3 shoulder(vec3 c) {
+	vec3 over = max(c - vec3_splat(0.82), vec3_splat(0.0));
+	return min(c, vec3_splat(0.82)) + vec3_splat(0.18) * (vec3_splat(1.0) - exp(-over / 0.18));
 }
 
 float hash21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -79,8 +90,6 @@ void main()
 		}
 	}
 
-	// Hemispheric light: a warm sun keys the lit faces, a cool sky fills shadow
-	// (lifts the near-black scenes and gives objects warm/cool form).
 	vec3 col;
 	if (u_mat.x > 2.5)
 	{
@@ -89,12 +98,18 @@ void main()
 	}
 	else
 	{
-		vec3 sun = vec3(1.25, 1.12, 0.92);                 // brighter daylight sun
-		vec3 skyfill = vec3(0.55, 0.63, 0.74);             // brighter cool sky fill
-		col = base * (skyfill * 0.84 + sun * ndl * 0.90);  // lift shadows out of near-black, keep a strong key
+		// Warm afternoon sun, gated by the shadow map (sampled with a small normal
+		// offset so lit faces don't self-shadow), plus a HEMISPHERIC ambient: cool
+		// sky light from above, warm bounce off the sand and stone from below — so
+		// roofs, walls and eaves each get a different fill and read as form.
+		float vis = sunVisibility(v_wpos + N * 0.30);
+		vec3 sun = vec3(1.30, 1.16, 0.94);
+		vec3 sky = vec3(0.52, 0.64, 0.82);
+		vec3 gnd = vec3(0.50, 0.44, 0.35);
+		vec3 amb = mix(gnd, sky, N.y * 0.5 + 0.5) * 0.90;
+		col = base * (amb + sun * (ndl * vis * 0.95));
 	}
-
-	if (u_mat.x < 2.5) col *= shadowFactor(v_wpos); // cast + self shadows (not the sail)
+	col = shoulder(col);
 
 	// Aerial-perspective fog: distant structures/land recede into the horizon
 	// colour (matches the water + sky), so depth reads and nothing sits flat.

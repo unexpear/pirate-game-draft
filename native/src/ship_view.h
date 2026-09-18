@@ -56,6 +56,27 @@ void setWallDebug(bool on);
 // Render ONE isolated building on open ground (no town around it) so each wall
 // can be inspected head-on along its whole length.
 void setAuditOnly(bool on);
+
+// ISOLATION TEST: render ONLY building `id` (1..isolateCount()), alone on flat
+// ground with nothing else in the scene (no neighbours, sea, ships or props),
+// and frame the camera on it from orbit view `view` (0 front-left, 1 front-right,
+// 2 back-left, 3 back-right, 4 high). id < 0 turns isolation off.
+void setIsolate(int id, int view);
+bool isolating();
+int isolateCount();
+const char* isolateName(int id);
+// --list-buildings: MEASURE the town from the geometry it really draws (a
+// no-GPU capture of every box): each building's envelope, a 4 m plan map over
+// the terrain, and three defect checks — CLASH (two buildings / scenery groups
+// interpenetrating above ground), HOVER (a building's base left in the air over
+// the slope) and BURIED (the hill rising through a floor). Returns the defect
+// count, so 0 = a clean town.
+int printBuildings();
+
+// Where the sun's shadow map should look this frame (scene space): around the
+// ship, and — when the island is near or in view — over the town too.
+// `withIsland` says whether the island's scenery belongs in the shadow pass.
+void shadowFrame(float relX, float relZ, float& cx, float& cz, float& radius, bool& withIsland);
 void setDebugCharacter(bool on, float x, float z, float heading, float yOffset = 0.0f);
 
 // Draw the island (land + port + large shipyard) with its centre at scene

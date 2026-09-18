@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 namespace sea { struct Ship; struct FloatPose; }
 
@@ -56,5 +57,18 @@ void renderBoxRot(uint16_t viewId, float x, float y, float z,
 // facing `heading` (radians); `walkPhase` animates the stride when moving.
 void renderCharacter(uint16_t viewId, float x, float y, float z,
                      float heading, float walkPhase);
+
+// Scenery shadow pass. While on, renderBoxSized / renderBoxRot / renderCharacter
+// submit depth-only casters to `viewId` (the shadow view) instead of lit
+// geometry, and renderShadow (contact decals) is skipped — so the whole town can
+// be drawn into the shadow map with the same code that draws it lit.
+void setDepthPass(bool on);
+bool depthPass();
+
+// Geometry capture, for measurement (needs no GPU). While `out` is set,
+// renderBoxSized / renderBoxRot append each box's 4x4 model matrix (16 floats,
+// unit cube [-0.5,0.5] -> world) to it instead of drawing, and renderShadow /
+// renderCharacter draw nothing. Pass nullptr to stop.
+void setCapture(std::vector<float>* out);
 
 } // namespace ship_mesh

@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 #include "dxbc/vs_mesh.sc.bin.h" // vs_mesh_dxbc[]
 #include "dxbc/fs_mesh.sc.bin.h" // fs_mesh_dxbc[]
@@ -47,6 +48,20 @@ bgfx::UniformHandle u_lightDir = BGFX_INVALID_HANDLE;
 bgfx::UniformHandle u_mat = BGFX_INVALID_HANDLE;
 
 void setMat(float m) { const float v[4] = { m, 0.0f, 0.0f, 0.0f }; bgfx::setUniform(u_mat, v); }
+
+// Scenery shadow pass: while set, every box / character submits the depth-only
+// program to the shadow view instead of drawing lit, so the town casts shadows.
+bool s_depthPass = false;
+// Geometry capture (measurement, no GPU): each box's model matrix is appended
+// here instead of being drawn.
+std::vector<float>* s_capture = nullptr;
+void submitDepth(uint16_t viewId, const float* m) {
+    bgfx::setTransform(m);
+    bgfx::setVertexBuffer(0, s_vbh);
+    bgfx::setIndexBuffer(s_ibh);
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS); // no cull: thin panels cast both ways
+    bgfx::submit(viewId, shadow::program());
+}
 
 // Which procedural surface a hull piece wears: rope/blocks stay flat, the rest
 // is planked timber.
@@ -143,7 +158,7 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
         bgfx::setVertexBuffer(0, s_vbh);
         bgfx::setIndexBuffer(s_ibh);
         bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z
-                       | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW | BGFX_STATE_MSAA);
+                       | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA);
         bgfx::submit(viewId, s_prog);
     }
 
@@ -264,10 +279,12 @@ void renderDepth(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& p
 void renderBoxSized(uint16_t viewId, float x, float y, float z,
                     float sx, float sy, float sz, float r, float g, float b,
                     float mat) {
-    const float lightV[4] = { 0.42f, 0.68f, -0.55f, 0.0f };
-    bgfx::setUniform(u_lightDir, lightV);
     float m[16];
     bx::mtxSRT(m, sx, sy, sz, 0.0f, 0.0f, 0.0f, x, y, z);
+    if (s_capture) { s_capture->insert(s_capture->end(), m, m + 16); return; } // measured, not drawn
+    if (s_depthPass) { submitDepth(viewId, m); return; }   // scenery shadow caster
+    const float lightV[4] = { 0.42f, 0.68f, -0.55f, 0.0f };
+    bgfx::setUniform(u_lightDir, lightV);
     const float col[4] = { r, g, b, 1.0f };
     bgfx::setUniform(u_color, col);
     setMat(mat);
@@ -276,7 +293,7 @@ void renderBoxSized(uint16_t viewId, float x, float y, float z,
     bgfx::setVertexBuffer(0, s_vbh);
     bgfx::setIndexBuffer(s_ibh);
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z
-                   | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW | BGFX_STATE_MSAA);
+                   | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA);
     bgfx::submit(viewId, s_prog);
 }
 
@@ -287,10 +304,12 @@ void renderBox(uint16_t viewId, float x, float y, float z, float size,
 
 void renderBoxRot(uint16_t viewId, float x, float y, float z, float sx, float sy, float sz,
                   float rx, float ry, float rz, float r, float g, float b, float mat) {
-    const float lightV[4] = { 0.42f, 0.68f, -0.55f, 0.0f };
-    bgfx::setUniform(u_lightDir, lightV);
     float m[16];
     bx::mtxSRT(m, sx, sy, sz, rx, ry, rz, x, y, z);
+    if (s_capture) { s_capture->insert(s_capture->end(), m, m + 16); return; } // measured, not drawn
+    if (s_depthPass) { submitDepth(viewId, m); return; }   // scenery shadow caster
+    const float lightV[4] = { 0.42f, 0.68f, -0.55f, 0.0f };
+    bgfx::setUniform(u_lightDir, lightV);
     const float col[4] = { r, g, b, 1.0f };
     bgfx::setUniform(u_color, col);
     setMat(mat);
@@ -299,11 +318,12 @@ void renderBoxRot(uint16_t viewId, float x, float y, float z, float sx, float sy
     bgfx::setVertexBuffer(0, s_vbh);
     bgfx::setIndexBuffer(s_ibh);
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z
-                   | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW | BGFX_STATE_MSAA);
+                   | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA);
     bgfx::submit(viewId, s_prog);
 }
 
 void renderShadow(uint16_t viewId, float x, float y, float z, float sx, float sz, float alpha) {
+    if (s_depthPass || s_capture) return;                   // a decal, not a caster
     const float lightV[4] = { 0.42f, 0.68f, -0.55f, 0.0f };
     bgfx::setUniform(u_lightDir, lightV);
     float m[16];
@@ -322,6 +342,7 @@ void renderShadow(uint16_t viewId, float x, float y, float z, float sx, float sz
 }
 
 void renderCharacter(uint16_t viewId, float x, float y, float z, float heading, float walkPhase) {
+    if (s_capture) return;                                  // not scenery: nothing to measure
     const float lightV[4] = { 0.42f, 0.68f, -0.55f, 0.0f };
     bgfx::setUniform(u_lightDir, lightV);
     // Character root: stands at (x,y,z) (y = feet on the ground), faces `heading`.
@@ -333,6 +354,7 @@ void renderCharacter(uint16_t viewId, float x, float y, float z, float heading, 
         bx::mtxSRT(local, sx, sy, sz, 0.0f, 0.0f, 0.0f, lx, ly, lz);
         float model[16];
         bx::mtxMul(model, local, root);
+        if (s_depthPass) { submitDepth(viewId, model); return; } // casts like the scenery
         const float col[4] = { r, g, b, 1.0f };
         bgfx::setUniform(u_color, col);
         setMat(0.0f); // person: flat, no plank texture
@@ -341,7 +363,7 @@ void renderCharacter(uint16_t viewId, float x, float y, float z, float heading, 
         bgfx::setVertexBuffer(0, s_vbh);
         bgfx::setIndexBuffer(s_ibh);
         bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z
-                       | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW | BGFX_STATE_MSAA);
+                       | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA);
         bgfx::submit(viewId, s_prog);
     };
     const float sw = std::sin(walkPhase) * 0.18f;             // leg/arm swing (fore-aft)
@@ -354,5 +376,9 @@ void renderCharacter(uint16_t viewId, float x, float y, float z, float heading, 
     part(-0.34f, 1.08f + bob, -sw, 0.16f, 0.62f, 0.20f, coatR, coatG, coatB);     // left arm
     part( 0.34f, 1.08f + bob,  sw, 0.16f, 0.62f, 0.20f, coatR, coatG, coatB);     // right arm
 }
+
+void setDepthPass(bool on) { s_depthPass = on; }
+void setCapture(std::vector<float>* out) { s_capture = out; }
+bool depthPass() { return s_depthPass; }
 
 } // namespace ship_mesh

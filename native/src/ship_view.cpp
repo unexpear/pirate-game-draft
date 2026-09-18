@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace ship_view {
 
@@ -57,6 +58,308 @@ void setFreeCamera(bool enabled, float ex, float ey, float ez, float ax, float a
     s_freeCam = enabled; s_freeEye = { ex, ey, ez }; s_freeAt = { ax, ay, az };
 }
 
+// ---------------------------------------------------------------------------
+// ISOLATION TEST. Every building in the town, numbered. The same numbers gate
+// renderIsland: with --isolate N only building N is drawn, moved to the scene
+// origin on flat open ground — no terrain, sea, ships, neighbours or props — and
+// the camera orbits it, so nothing else clouds the inspection.
+//
+// Nothing about a building's size or position is typed in here: its envelope is
+// MEASURED from the boxes its draw code really emits (a geometry capture), so
+// the camera framing and the clash check can never drift from what is drawn.
+// ---------------------------------------------------------------------------
+static const char* const kIsoName[] = {
+    "Forge & gunsmith",        //  1
+    "King's Bonded Warehouse", //  2
+    "Trading post",            //  3
+    "Custom house",            //  4
+    "Chandlery",               //  5
+    "Salt Kraken tavern",      //  6
+    "Church of St. Elmo",      //  7
+    "Counting house",          //  8
+    "Covered market hall",     //  9
+    "Drowned Man inn",         // 10
+    "The Fence",               // 11
+    "Apothecary",              // 12
+    "Outfitter & sailmaker",   // 13
+    "Bakehouse",               // 14
+    "Cooper's shed",           // 15
+    "Terrace house A",         // 16
+    "Terrace house B",         // 17
+    "Terrace house C",         // 18
+    "Captain's villa",         // 19
+    "Fort San Cristobal",      // 20
+    "Governor's residence",    // 21
+    "Powder magazine",         // 22
+    "Sea battery",             // 23
+    "Fisherman's cottage A",   // 24
+    "Fisherman's cottage B",   // 25
+    "Sail loft",               // 26
+    "Ropewalk",                // 27
+    "Great ship hall",         // 28
+    "Lighthouse",              // 29
+};
+static const int kIsoCount = int(sizeof(kIsoName) / sizeof(kIsoName[0]));
+// Town scenery that isn't a building, gated the same way so it can be measured
+// against the buildings too (a palm through a roof is as wrong as two houses
+// sharing a wall). Street paving is left out: it is meant to run under things.
+enum { kGrpPort = 100, kGrpWalls, kGrpPalms, kGrpYard, kGrpPlaza, kGrpEnd };
+static const char* const kGrpName[] = {
+    "Port, quay & quay battery", "Retaining walls & stair", "Palms",
+    "Shipyard slips & cranes", "Plaza furniture & lamps",
+};
+static int s_isoId = -1;           // 1-based building id, or -1 = the whole town
+static int s_isoView = 0;          // camera orbit view for the isolation shot
+static bool s_measure = false;     // geometry capture in progress (no recentring, no terrain mesh)
+static bool s_flatGround = false;  // scenery stands on the flat plane y = 0 (isolation)
+// Measured envelope of the isolated building (island coordinates, flat ground).
+static float s_isoCx = 0.0f, s_isoCz = 0.0f, s_isoW = 10.0f, s_isoD = 10.0f, s_isoH = 10.0f;
+
+// Ground height for scenery. In isolation every building stands on a perfectly
+// flat plane at y = 0, so a defect can only come from the building itself.
+static float groundH(float x, float z) {
+    return s_flatGround ? 0.0f : island_gpu::heightAt(x, z);
+}
+
+// Render building/group `id` alone into a geometry capture (no GPU): the model
+// matrix of every box it really draws. `flat` seats it on the test plane, else
+// on the island's real terrain.
+static std::vector<float> captureGroup(int id, bool flat) {
+    std::vector<float> m;
+    const int savedId = s_isoId; const bool savedFlat = s_flatGround;
+    s_isoId = id; s_flatGround = flat; s_measure = true;
+    ship_mesh::setCapture(&m);
+    renderIsland(0, 0.0f, 0.0f);
+    ship_mesh::setCapture(nullptr);
+    s_isoId = savedId; s_flatGround = savedFlat; s_measure = false;
+    return m;
+}
+
+// An oriented box from a unit-cube model matrix (bx: rows 0..2 = the images of
+// the local axes, row 3 = the translation), plus its world AABB.
+struct Obb { float c[3], a[3][3], e[3], lo[3], hi[3]; };
+static Obb makeObb(const float* m) {
+    Obb o;
+    for (int k = 0; k < 3; ++k) {
+        const float* r = m + 4 * k;
+        const float len = std::sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+        o.e[k] = 0.5f * len;
+        for (int i = 0; i < 3; ++i) o.a[k][i] = len > 1e-6f ? r[i] / len : (i == k ? 1.0f : 0.0f);
+    }
+    for (int i = 0; i < 3; ++i) {
+        o.c[i] = m[12 + i];
+        float h = 0.0f;
+        for (int k = 0; k < 3; ++k) h += std::fabs(o.a[k][i]) * o.e[k];
+        o.lo[i] = o.c[i] - h; o.hi[i] = o.c[i] + h;
+    }
+    return o;
+}
+// How deep two oriented boxes interpenetrate (separating-axis test over all 15
+// axes): 0 when they are apart, else the smallest overlap along any axis.
+static float obbPenetration(const Obb& A, const Obb& B) {
+    const float d[3] = { B.c[0] - A.c[0], B.c[1] - A.c[1], B.c[2] - A.c[2] };
+    float best = 1e9f;
+    auto overlapOn = [&](float x, float y, float z) {
+        const float len = std::sqrt(x * x + y * y + z * z);
+        if (len < 1e-4f) return true;                      // parallel edges: no axis
+        x /= len; y /= len; z /= len;
+        float ra = 0.0f, rb = 0.0f;
+        for (int k = 0; k < 3; ++k) {
+            ra += A.e[k] * std::fabs(A.a[k][0] * x + A.a[k][1] * y + A.a[k][2] * z);
+            rb += B.e[k] * std::fabs(B.a[k][0] * x + B.a[k][1] * y + B.a[k][2] * z);
+        }
+        const float over = ra + rb - std::fabs(d[0] * x + d[1] * y + d[2] * z);
+        if (over <= 0.0f) return false;
+        best = std::min(best, over);
+        return true;
+    };
+    for (int k = 0; k < 3; ++k) if (!overlapOn(A.a[k][0], A.a[k][1], A.a[k][2])) return 0.0f;
+    for (int k = 0; k < 3; ++k) if (!overlapOn(B.a[k][0], B.a[k][1], B.a[k][2])) return 0.0f;
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
+        const float* p = A.a[i]; const float* q = B.a[j];
+        if (!overlapOn(p[1] * q[2] - p[2] * q[1], p[2] * q[0] - p[0] * q[2], p[0] * q[1] - p[1] * q[0]))
+            return 0.0f;
+    }
+    return best;
+}
+static std::vector<Obb> toObbs(const std::vector<float>& m) {
+    std::vector<Obb> out;
+    for (size_t i = 0; i + 16 <= m.size(); i += 16) out.push_back(makeObb(&m[i]));
+    return out;
+}
+// Envelope of a flat-ground capture: everything above the plane (foundations
+// sunk below y = 0 don't count).
+static void envelope(const std::vector<Obb>& bs, float& cx, float& cz, float& w, float& d, float& h) {
+    float x0 = 1e9f, x1 = -1e9f, z0 = 1e9f, z1 = -1e9f, y1 = 0.0f;
+    for (const Obb& b : bs) {
+        if (b.hi[1] <= 0.05f) continue;
+        x0 = std::min(x0, b.lo[0]); x1 = std::max(x1, b.hi[0]);
+        z0 = std::min(z0, b.lo[2]); z1 = std::max(z1, b.hi[2]);
+        y1 = std::max(y1, b.hi[1]);
+    }
+    if (x1 < x0) { cx = cz = 0.0f; w = d = h = 10.0f; return; }
+    cx = 0.5f * (x0 + x1); cz = 0.5f * (z0 + z1); w = x1 - x0; d = z1 - z0; h = y1;
+}
+
+void setIsolate(int id, int view) {
+    s_isoId = (id >= 1 && id <= kIsoCount) ? id : -1;
+    s_isoView = view;
+    if (s_isoId > 0) envelope(toObbs(captureGroup(s_isoId, true)), s_isoCx, s_isoCz, s_isoW, s_isoD, s_isoH);
+    s_flatGround = s_isoId > 0;
+}
+bool isolating() { return s_isoId > 0; }
+int isolateCount() { return kIsoCount; }
+const char* isolateName(int id) { return (id >= 1 && id <= kIsoCount) ? kIsoName[id - 1] : "?"; }
+
+// --list-buildings: print each building's MEASURED envelope, then intersect the
+// real geometry of every building and scenery group with every other, seated on
+// the real terrain. A hit counts only where the overlap rises above the local
+// ground (foundations meeting underground are fine) and is deeper than a few cm.
+// Returns the number of clashing pairs so a script can assert zero.
+int printBuildings() {
+    std::vector<int> ids;
+    for (int i = 1; i <= kIsoCount; ++i) ids.push_back(i);
+    for (int g = kGrpPort; g < kGrpEnd; ++g) ids.push_back(g);
+    auto nameOf = [](int id) { return id < kGrpPort ? kIsoName[id - 1] : kGrpName[id - kGrpPort]; };
+
+    std::printf("Cayo Perdido buildings (isolate with --isolate N --iview 0..5), measured envelopes:\n");
+    for (int i = 1; i <= kIsoCount; ++i) {
+        float cx, cz, w, d, h;
+        envelope(toObbs(captureGroup(i, true)), cx, cz, w, d, h);
+        std::printf("  %2d  %-24s x[%6.1f..%6.1f] z[%6.1f..%6.1f]  h %4.1f\n",
+                    i, kIsoName[i - 1], cx - w * 0.5f, cx + w * 0.5f, cz - d * 0.5f, cz + d * 0.5f, h);
+    }
+    std::vector<std::vector<Obb>> geo;
+    for (int id : ids) geo.push_back(toObbs(captureGroup(id, false)));
+
+    // Plan map (4 m cells, north up): the terrain height in metres ("~" = sea),
+    // overwritten by the number of the building standing there — so a layout
+    // change is planned against the real hill and coast, not guessed.
+    std::printf("\nPlan (x -72..72 across, z +64 top .. -68 bottom; cell = 4 m):\n");
+    for (int zr = 64; zr >= -68; zr -= 4) {
+        std::printf("%4d ", zr);
+        for (int xc = -72; xc <= 72; xc += 4) {
+            const float gx = float(xc), gz = float(zr), gh = island_gpu::heightAt(gx, gz);
+            int who = 0;
+            for (size_t k = 0; k < ids.size() && !who; ++k) {
+                if (ids[k] >= kGrpPort) break;                            // buildings only
+                for (const Obb& b : geo[k])
+                    if (gx >= b.lo[0] && gx <= b.hi[0] && gz >= b.lo[2] && gz <= b.hi[2] && b.hi[1] > gh + 0.5f) { who = ids[k]; break; }
+            }
+            if (who) std::printf("#%02d", who);
+            else if (gh < 0.0f) std::printf("  ~");
+            else std::printf("%3d", int(gh + 0.5f));
+        }
+        std::printf("\n");
+    }
+    std::printf("\n");
+
+    int clashes = 0;
+    for (size_t i = 0; i < ids.size(); ++i)
+        for (size_t j = i + 1; j < ids.size(); ++j) {
+            int hits = 0; float worst = 0.0f, wx = 0.0f, wy = 0.0f, wz = 0.0f;
+            for (const Obb& a : geo[i]) for (const Obb& b : geo[j]) {
+                if (a.lo[0] > b.hi[0] || b.lo[0] > a.hi[0] || a.lo[1] > b.hi[1] || b.lo[1] > a.hi[1]
+                    || a.lo[2] > b.hi[2] || b.lo[2] > a.hi[2]) continue;
+                const float ix = 0.5f * (std::max(a.lo[0], b.lo[0]) + std::min(a.hi[0], b.hi[0]));
+                const float iz = 0.5f * (std::max(a.lo[2], b.lo[2]) + std::min(a.hi[2], b.hi[2]));
+                const float top = std::min(a.hi[1], b.hi[1]);
+                if (top < island_gpu::heightAt(ix, iz) + 0.25f) continue;     // underground only
+                const float pen = obbPenetration(a, b);
+                if (pen < 0.12f) continue;
+                ++hits;
+                if (pen > worst) { worst = pen; wx = ix; wy = top; wz = iz; }
+            }
+            if (hits == 0) continue;
+            std::printf("  CLASH %3d %-24s x %3d %-24s %4d boxes, worst %.2f m deep near (%.0f, %.0f, %.0f)\n",
+                        ids[i], nameOf(ids[i]), ids[j], nameOf(ids[j]), hits, worst, wx, wy, wz);
+            ++clashes;
+        }
+    std::printf("%d clashing pair(s)\n", clashes);
+
+    // HOVER check (buildings, on the real terrain): sample each footprint every
+    // metre; where the LOWEST part of the building above that spot sits 0.3-2.5 m
+    // over the ground, the building is floating off the slope there (an arcade,
+    // shed or wall end left in the air). Parts meant to be up high — decks,
+    // balconies, eaves — are more than 2.5 m up and don't count.
+    int hovering = 0;
+    for (size_t k = 0; k < ids.size(); ++k) {
+        if (ids[k] >= kGrpPort) break;
+        const std::vector<Obb>& bs = geo[k];
+        float x0 = 1e9f, x1 = -1e9f, z0 = 1e9f, z1 = -1e9f;
+        for (const Obb& b : bs) { x0 = std::min(x0, b.lo[0]); x1 = std::max(x1, b.hi[0]); z0 = std::min(z0, b.lo[2]); z1 = std::max(z1, b.hi[2]); }
+        int n = 0, nb = 0; float worst = 0.0f, wx = 0.0f, wz = 0.0f, worstB = 0.0f, bx = 0.0f, bz = 0.0f;
+        for (float x = std::floor(x0) + 0.5f; x < x1; x += 1.0f)
+            for (float z = std::floor(z0) + 0.5f; z < z1; z += 1.0f) {
+                const Obb* low = nullptr;
+                for (const Obb& b : bs) {
+                    const bool upright = std::fabs(b.a[1][1]) > 0.999f;    // skip sloped roof panels
+                    // Rods (posts, rails, bars: two sizes under 0.3 m) are held at their
+                    // ends, and slivers under 0.1 m^2 of plan (hanging fish) are meant to hang.
+                    float dims[3] = { 2 * b.e[0], 2 * b.e[1], 2 * b.e[2] };
+                    std::sort(dims, dims + 3);
+                    const bool sliver = dims[1] < 0.3f || (b.hi[0] - b.lo[0]) * (b.hi[2] - b.lo[2]) < 0.1f;
+                    if (upright && !sliver && x >= b.lo[0] && x <= b.hi[0] && z >= b.lo[2] && z <= b.hi[2]
+                        && (!low || b.lo[1] < low->lo[1])) low = &b;
+                }
+                if (!low) continue;
+                const float gh = island_gpu::heightAt(x, z);
+                const float gap = low->lo[1] - gh;
+                if (gh > -0.5f && gap > 0.3f && gap < 2.5f) { ++n; if (gap > worst) { worst = gap; wx = x; wz = z; } } // (under the sea nothing shows)
+                // BURIED: the land rises above the top of the building's lowest part
+                // (its foundation / floor / platform) — the hill cutting up through it.
+                const float cut = gh - low->hi[1];
+                if (gh > 0.0f && cut > 0.3f) { ++nb; if (cut > worstB) { worstB = cut; bx = x; bz = z; } }
+            }
+        if (n) {
+            std::printf("  HOVER  %3d %-24s %4d m^2 in the air, worst %.2f m up near (%.0f, %.0f)\n",
+                        ids[k], nameOf(ids[k]), n, worst, wx, wz);
+            ++hovering;
+        }
+        if (nb) {
+            std::printf("  BURIED %3d %-24s %4d m^2 of hill through it, worst %.2f m above its floor near (%.0f, %.0f)\n",
+                        ids[k], nameOf(ids[k]), nb, worstB, bx, bz);
+            ++hovering;
+        }
+    }
+    std::printf("%d hovering / buried building(s)\n", hovering);
+    return clashes + hovering;
+}
+
+// The isolated building's bounding radius and the camera for orbit view `v`.
+static void isoCamera(int v, bx::Vec3& eye, bx::Vec3& at) {
+    struct { float w, d, h; } b = { s_isoW, s_isoD, s_isoH };
+    const float r = 0.5f * std::sqrt(b.w * b.w + b.d * b.d);
+    const float R = std::sqrt(r * r + 0.25f * b.h * b.h);
+    const float dist = std::max(14.0f, R * 2.15f);
+    at = { 0.0f, b.h * 0.40f, 0.0f };
+    switch (v) {
+        case 0: eye = { -dist * 0.70f, b.h * 0.45f + dist * 0.22f, -dist * 0.70f }; break; // front-left
+        case 1: eye = {  dist * 0.70f, b.h * 0.45f + dist * 0.22f, -dist * 0.70f }; break; // front-right
+        case 2: eye = { -dist * 0.70f, b.h * 0.45f + dist * 0.22f,  dist * 0.70f }; break; // back-left
+        case 3: eye = {  dist * 0.70f, b.h * 0.45f + dist * 0.22f,  dist * 0.70f }; break; // back-right
+        case 4: eye = {  dist * 0.25f, b.h + dist * 0.85f, -dist * 0.55f }; break;          // overhead
+        default: eye = { 0.0f, b.h * 0.40f + 1.0f, -dist }; break;                          // straight-on front
+    }
+}
+
+void shadowFrame(float relX, float relZ, float& cx, float& cz, float& radius, bool& withIsland) {
+    if (s_isoId > 0) {                      // the isolated building, plus room for its shadow
+        cx = 0.0f; cz = 0.0f;
+        radius = 0.5f * std::max(s_isoW, s_isoD) + s_isoH + 6.0f;
+        withIsland = true;
+        return;
+    }
+    const float dist = std::sqrt(relX * relX + relZ * relZ);
+    if (dist > 230.0f) {                    // open sea: tight map on the ship alone
+        cx = 0.0f; cz = 0.0f; radius = 30.0f; withIsland = false;
+        return;
+    }
+    withIsland = true;                      // near land: cover the town (and the ship)
+    if (dist <= 60.0f) { cx = relX; cz = relZ; radius = 82.0f; }
+    else { cx = relX * 0.5f; cz = relZ * 0.5f; radius = dist * 0.5f + 72.0f; }
+}
+
 void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>& waves,
             const sea::FloatPose& pose, float timeSec, float heading,
             float worldX, float worldZ, float windDir, float sailFullness,
@@ -67,8 +370,9 @@ void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>
     const float dist = 24.0f;
     const float fwdX = bx::sin(heading);
     const float fwdZ = bx::cos(heading);
-    const bx::Vec3 eye = s_freeCam ? s_freeEye : bx::Vec3{ -fwdX * dist, 9.0f, -fwdZ * dist };
-    const bx::Vec3 at  = s_freeCam ? s_freeAt  : bx::Vec3{ fwdX * 5.0f, -0.4f, fwdZ * 5.0f };
+    bx::Vec3 eye = s_freeCam ? s_freeEye : bx::Vec3{ -fwdX * dist, 9.0f, -fwdZ * dist };
+    bx::Vec3 at  = s_freeCam ? s_freeAt  : bx::Vec3{ fwdX * 5.0f, -0.4f, fwdZ * 5.0f };
+    if (s_isoId > 0 && !s_freeCam) isoCamera(s_isoView, eye, at); // orbit the isolated building
     const bx::Vec3 up = { 0.0f, 1.0f, 0.0f };
 
     float view[16];
@@ -84,11 +388,15 @@ void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>
     // The hull sits at the scene origin; feed the water shader the heading, hull
     // footprint and speed so it draws a waterline foam ring, bow wave and wake.
     const float shipSpd = speed > 0.0f ? (speed / 7.0f < 1.0f ? speed / 7.0f : 1.0f) : 0.0f;
+    // In isolation the sea is cut out everywhere (a huge land-cut radius) — the
+    // call still sets the shared fog/camera uniforms the building shaders read.
+    const bool iso = s_isoId > 0;
     water_gpu::render(viewId, waves, timeSec, eye.x, eye.y, eye.z, worldX, worldZ,
-                      cutWorldX, cutWorldZ, cutR,
+                      iso ? 0.0f : cutWorldX, iso ? 0.0f : cutWorldZ, iso ? 1.0e7f : cutR,
                       bx::sin(heading), bx::cos(heading),
                       float(ship.bounds.length) * 0.5f, float(ship.bounds.width) * 0.6f, shipSpd);
-    ship_mesh::render(viewId, ship, pose, heading, windDir, sailFullness, timeSec, 0.0f, 0.0f, heelScale);
+    if (!iso)
+        ship_mesh::render(viewId, ship, pose, heading, windDir, sailFullness, timeSec, 0.0f, 0.0f, heelScale);
 }
 
 void renderShadow(uint16_t viewId, float relX, float relZ, float halfWid, float halfLen) {
@@ -107,13 +415,19 @@ void renderTracer(uint16_t viewId, float x, float y, float z, float size,
 }
 
 void renderIsland(uint16_t viewId, float relX, float relZ) {
+    // Isolation test: move building N to the scene origin and draw ONLY it.
+    const bool town = s_isoId <= 0;
+    if (!town && !s_measure) { relX = -s_isoCx; relZ = -s_isoCz; }
+    auto want = [&](int id) { return town || s_isoId == id; };
+    // Shadow pass: the same code draws the scenery as depth-only casters.
+    const bool depth = ship_mesh::depthPass();
     // Composed from lit boxes (matching the ship art). Island local frame: player
     // approaches from -z (the south), so the port + shipyard face that way.
     // Structures sit ON the terrain: lift each by the ground height at its
     // footprint (0 offshore, so piers/slipways stay at the waterline).
     auto B = [&](float cx, float cy, float cz, float sx, float sy, float sz,
                  float r, float g, float b, float mat = 1.0f) {
-        const float gh = island_gpu::heightAt(cx, cz);
+        const float gh = groundH(cx, cz);
         const float lift = gh > 0.0f ? gh : 0.0f;
         ship_mesh::renderBoxSized(viewId, relX + cx, cy + lift, relZ + cz, sx, sy, sz, r, g, b, mat);
     };
@@ -133,10 +447,19 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     // Seat a structure on the HIGHEST terrain in its neighbourhood, so the rising
     // hill never cuts up through the walls (a deep plinth hides the downhill gap).
     auto setShelf = [&](float cx, float cz) {
-        float gh = island_gpu::heightAt(cx, cz);
+        float gh = groundH(cx, cz);
         for (int sx = -1; sx <= 1; ++sx) for (int sz = -1; sz <= 1; ++sz)
-            gh = std::max(gh, island_gpu::heightAt(cx + sx * 7.0f, cz + sz * 7.0f));
+            gh = std::max(gh, groundH(cx + sx * 7.0f, cz + sz * 7.0f));
         curLift = std::max(0.0f, gh);
+    };
+    // Seat a structure on the HIGHEST ground under its own footprint (a 5x5 grid
+    // over w x d) — exact, where setShelf's fixed 7 m neighbourhood can miss the
+    // ends of a long building or overshoot a small one.
+    auto seat = [&](float cx, float cz, float w, float d) {
+        float gh = 0.0f;
+        for (int i = 0; i <= 4; ++i) for (int j = 0; j <= 4; ++j)
+            gh = std::max(gh, groundH(cx + w * (i / 4.0f - 0.5f), cz + d * (j / 4.0f - 0.5f)));
+        curLift = gh;
     };
     const float MAT_STONE = 2.0f, MAT_FLAT = 0.0f;
     // Palette (the landmass itself is now the coloured terrain heightfield)
@@ -203,7 +526,7 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     // fill the gable-end triangles.
     auto gableRoof = [&](float cx, float cz, float w, float d, float wallTopY,
                          float rise, const float* rc, const float* wc, float wmat) {
-        const float lift  = std::max(0.0f, island_gpu::heightAt(cx, cz));
+        const float lift  = std::max(0.0f, groundH(cx, cz));
         const float halfW = w * 0.5f + 0.4f;                       // modest eave overhang past the walls
         const float depth = d + 0.9f;                              // modest gable overhang front/back
         const float slope = std::sqrt(halfW * halfW + rise * rise);
@@ -228,7 +551,7 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     };
     // A four-sided PYRAMID/HIP roof (for towers) — four tilted panels to an apex.
     auto pyramidRoof = [&](float cx, float cz, float w, float wallTopY, float rise, const float* rc) {
-        const float lift  = std::max(0.0f, island_gpu::heightAt(cx, cz));
+        const float lift  = std::max(0.0f, groundH(cx, cz));
         const float half  = w * 0.5f + 0.4f;
         const float slope = std::sqrt(half * half + rise * rise);
         const float ang   = std::atan2(rise, half);
@@ -243,17 +566,13 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     // the sea with an irregular coastline, beach, meadow and rocky heights. It
     // occludes the ocean where it stands above the waves; the sea is also carved
     // out under it (water_gpu land cut) so nothing floats on a flat sheet. ---
-    island_gpu::render(viewId, relX, relZ);
+    if (town && !depth && !s_measure) island_gpu::render(viewId, relX, relZ);
+    if (!town && !depth && !s_measure)   // isolation: a flat, neutral flagstone test ground (scale + contact shadows)
+        ship_mesh::renderBoxSized(viewId, 0.0f, -0.5f, 0.0f, 500.0f, 1.0f, 500.0f, 0.62f, 0.60f, 0.54f, MAT_STONE);
 
-    // Angular ROCK CRAGS at the summit to break the smooth-dome silhouette into a
-    // ridged peak (drawn directly at the terrain height, not lifted).
-    auto crag = [&](float cx, float cy, float cz, float sx, float sy, float sz) {
-        ship_mesh::renderBoxSized(viewId, relX + cx, cy, relZ + cz, sx, sy, sz, 0.50f, 0.47f, 0.43f, MAT_STONE);
-    };
-    crag(6, 18, 34, 8, 9, 7);   crag(-1, 15, 30, 5, 7, 5);   crag(15, 16, 38, 6, 7, 5);
-    crag(2, 20, 37, 5, 7, 4);   crag(11, 14, 30, 4, 6, 4);
 
     // --- Port (south shore) ---
+    if (want(kGrpPort)) {
     // Solid stone quay: the block extends well BELOW the waterline (no floating
     // slab underside) and back INTO the beach, so it reads as a masonry quay wall
     // rising from the water rather than a plate hovering over it.
@@ -266,12 +585,22 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     mooredShip(31, -56, 22);                                 // the hero: a moored galleon alongside the east pier
     // (Old warehouses A/B and the harbourmaster tower are superseded by the new
     //  King's Bonded Warehouse and the west-point Sea Bastion in the town below.)
-    B(40, 10, -62, 5, 20, 5, white[0], white[1], white[2], MAT_STONE); // lighthouse
-    B(40, 20.5f, -62, 6, 2, 6, red[0], red[1], red[2]);
     B(-8, 2.1f, -40, 2.4f, 2, 2.4f, crate[0], crate[1], crate[2]); // crates on the quay
     B(-4, 2.1f, -41, 2.4f, 2, 2.4f, crate[0], crate[1], crate[2]);
     B(6, 2.6f, -39, 3, 3, 3, crate[0], crate[1], crate[2]);
     B(-26, 1.7f, -60, 3, 1.2f, 8, wood[0], wood[1], wood[2]);      // moored fishing boat
+    } // town (port)
+    if (want(29)) {                                                 // [29] LIGHTHOUSE
+    const float rockC[3] = { 0.44f, 0.41f, 0.37f };                 // the reef rock it stands on (not a bare post in the sea)
+    B(40, -3.5f, -62, 11, 8, 10, rockC[0], rockC[1], rockC[2], MAT_STONE);
+    B(40.5f, -1.6f, -61.5f, 7.5f, 5.6f, 7, rockC[0], rockC[1], rockC[2], MAT_STONE);
+    B(37.5f, -2.6f, -64.5f, 5, 5, 4, rockC[0], rockC[1], rockC[2], MAT_STONE);
+    B(40, 9, -62, 5, 18, 5, white[0], white[1], white[2], MAT_STONE);       // tower
+    B(40, 18.25f, -62, 6.4f, 0.5f, 6.4f, 0.26f, 0.20f, 0.15f, MAT_FLAT);     // gallery
+    B(40, 19.6f, -62, 3.4f, 2.2f, 3.4f, 1.00f, 0.82f, 0.40f, MAT_FLAT);      // the lantern room, lit
+    B(40, 21.2f, -62, 4.8f, 1.0f, 4.8f, red[0], red[1], red[2]);             // cap
+    B(40, 22.2f, -62, 0.4f, 1.0f, 0.4f, 0.26f, 0.20f, 0.15f, MAT_FLAT);      // finial
+    }
 
     // --- Pirate town: a row of shops along the waterfront street, a little
     // square behind, fences, market stalls, lamps and signs. Each shop is a
@@ -332,7 +661,7 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
         B(cx, 1.9f, cz, 0.18f, 3.8f, 0.18f, darkW[0], darkW[1], darkW[2], MAT_FLAT);
         B(cx, 4.0f, cz, 0.55f, 0.55f, 0.55f, amberC[0], amberC[1], amberC[2], MAT_FLAT);
     };
-    auto barrelAt = [&](float cx, float cz) { B(cx, 0.9f, cz, 1.3f, 1.8f, 1.3f, barrel[0], barrel[1], barrel[2]); };
+    auto barrelAt = [&](float cx, float cz) { B(cx, 0.7f, cz, 1.3f, 1.8f, 1.3f, barrel[0], barrel[1], barrel[2]); };
     auto fenceX = [&](float x0, float x1, float z) {
         const int n = int((x1 - x0) / 1.6f);
         for (int i = 0; i <= n; ++i) B(x0 + (x1 - x0) * i / float(n < 1 ? 1 : n), 0.8f, z, 0.2f, 1.6f, 0.2f, wood[0], wood[1], wood[2], MAT_FLAT);
@@ -438,9 +767,10 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
         BL(cx + 0.5f, topY + 0.6f, cz + 0.5f, 0.5f, 0.7f, 0.5f, darkW, MAT_FLAT);
         // Smoke: overlapping and pale, rising straight from the pot. (Spaced grey
         // blocks read as detached lumps of chimney floating over the roof.)
-        if (smoking) for (int s = 0; s < 4; ++s)
-            BL(cx + s * 0.28f, topY + 1.0f + s * 1.35f, cz + s * 0.18f,
-               1.5f - s * 0.28f, 1.6f, 1.5f - s * 0.28f, smoke, MAT_FLAT);
+        if (smoking) for (int s = 0; s < 3; ++s) {   // puffs that spread as they rise and drift downwind
+            const float ps = 1.1f + s * 0.5f;
+            BL(cx + s * 0.55f, topY + 1.1f + s * 1.25f, cz + s * 0.3f, ps, 1.1f + s * 0.25f, ps, smoke, MAT_FLAT);
+        }
     };
     // Alternating CORNER QUOINS up all four corners.
     auto quoins = [&](float cx, float cz, float w, float d, float topY) {
@@ -531,7 +861,7 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
         float gh = 0.0f;
         for (int sx = -1; sx <= 1; ++sx)
             for (int sz = -1; sz <= 1; ++sz)
-                gh = std::max(gh, island_gpu::heightAt(cx + sx * w * 0.5f, cz + sz * d * 0.5f));
+                gh = std::max(gh, groundH(cx + sx * w * 0.5f, cz + sz * d * 0.5f));
         curLift = std::max(0.0f, gh);
         curShutter = shutC;
         const float topY = stories * storyH;
@@ -610,23 +940,39 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     // Capstoned retaining wall, TILED along its length so each segment sits on its
     // own patch of ground. (As one long box it hung in mid-air wherever the slope
     // fell away — a stone slab cantilevered into open sky.)
-    auto retWall = [&](float x0, float x1, float z, float topY) {
+    // A terrace RETAINING WALL along z, tiled every ~6 m. Each tile's top is the
+    // level of the terrace it holds up (the highest ground in the 5 m behind it)
+    // and its face runs 8 m down past the street in front — so it reads as the
+    // edge of a real terrace, never a free-standing slab across a facade.
+    auto retWall = [&](float x0, float x1, float z) {
         const int n = std::max(1, int((x1 - x0) / 6.0f));
         const float tw = (x1 - x0) / float(n);
         for (int i = 0; i < n; ++i) {
             const float tx = x0 + tw * (float(i) + 0.5f);
-            const float g = std::max(0.0f, island_gpu::heightAt(tx, z));
-            ship_mesh::renderBoxSized(viewId, relX + tx, g + topY * 0.5f - 4.0f, relZ + z,
-                                      tw + 0.3f, topY + 8.0f, 1.7f, wallStone[0], wallStone[1], wallStone[2], MAT_STONE);
-            ship_mesh::renderBoxSized(viewId, relX + tx, g + topY + 0.25f, relZ + z,
+            float top = 0.0f;
+            for (int a = -1; a <= 1; ++a) for (int b = 0; b <= 5; ++b)
+                top = std::max(top, groundH(tx + a * tw * 0.5f, z + float(b)));
+            const float h = top + 8.0f - std::max(0.0f, groundH(tx, z - 1.5f));
+            ship_mesh::renderBoxSized(viewId, relX + tx, top - h * 0.5f, relZ + z,
+                                      tw + 0.3f, h, 1.7f, wallStone[0], wallStone[1], wallStone[2], MAT_STONE);
+            ship_mesh::renderBoxSized(viewId, relX + tx, top + 0.25f, relZ + z,
                                       tw + 0.5f, 0.5f, 2.2f, sillC[0], sillC[1], sillC[2], MAT_STONE);
         }
     };
-    auto stairUp = [&](float cx, float cz, float w, float dep, float rise) { // external stone stair up-slope
-        setShelf(cx, cz);
-        const int n = std::max(3, int(rise / 0.8f));
-        for (int i = 0; i < n; ++i) { const float t = (i + 0.5f) / n;
-            BL(cx, rise * t - 0.4f, cz + dep * t, w, 0.9f, dep / n + 0.6f, cobble, MAT_STONE); }
+    // An external stone STAIR climbing the slope (up +z): each step is seated on
+    // the ground under it, so the flight hugs the hill instead of rising on a
+    // straight ramp that ends up metres in the air.
+    auto stairUp = [&](float cx, float cz, float w, float dep) {
+        const int n = std::max(3, int(dep / 1.2f));
+        const float sd = dep / float(n);
+        for (int i = 0; i < n; ++i) {
+            const float z = cz + sd * (float(i) + 0.5f);
+            float g = 0.0f;
+            for (int a = -1; a <= 1; ++a) for (int b = -1; b <= 1; b += 2)
+                g = std::max(g, groundH(cx + a * w * 0.5f, z + b * sd * 0.5f));
+            ship_mesh::renderBoxSized(viewId, relX + cx, g - 1.0f, relZ + z,
+                                      w, 2.5f, sd + 0.3f, cobble[0], cobble[1], cobble[2], MAT_STONE);
+        }
     };
     auto cannon = [&](float cx, float cz, float dir) {                       // cannon on a carriage (uses curLift)
         BL(cx, 1.2f, cz, 1.4f, 1.1f, 1.6f, ironC, MAT_FLAT);
@@ -650,6 +996,12 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
             BL(cx, y + 0.9f, front - 2.7f, w, 1.2f, 0.16f, darkW, MAT_FLAT);
             const int np = std::max(3, int(w / 3.2f));
             for (int i = 0; i <= np; ++i) BL(cx - w * 0.5f + w * i / np, y + 1.1f, front - 2.7f, 0.28f, 2.3f, 0.28f, plank, MAT_FLAT); }
+        // Gallery POSTS from the ground up to the eave: the decks stand on them
+        // (without posts the galleries hung off the facade in mid-air). They run
+        // well below the shelf so they meet the street even where it falls away.
+        const int np = std::max(3, int(w / 3.2f)), top = int(tiers);
+        for (int i = 0; i <= np; ++i)
+            BL(cx - w * 0.5f + w * i / np, (storyH * top + 1.1f - 6.0f) * 0.5f, front - 2.7f, 0.36f, storyH * top + 1.1f + 6.0f, 0.36f, beam, MAT_FLAT);
         BL(cx, storyH * tiers + 1.1f, front - 1.2f, w + 0.4f, 0.3f, 2.2f, darkRoof, MAT_FLAT); // shade eave (tight)
     };
     auto arcade = [&](float cx, float front, float w, float y, int n) {     // ground colonnade (loggia)
@@ -677,9 +1029,10 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
         BL(cx, 6.8f, cz, 1.8f, 0.5f, 0.5f, stone, MAT_STONE);
     };
     // Ground props (small, sit on the terrain via per-box lift B).
-    auto crateAt = [&](float cx, float cz, float s) { B(cx, s * 0.5f, cz, s, s, s, crate[0], crate[1], crate[2], 1.0f); };
-    auto ropeCoil = [&](float cx, float cz) { B(cx, 0.5f, cz, 1.6f, 0.6f, 1.6f, wood[0], wood[1], wood[2], MAT_FLAT); B(cx, 1.0f, cz, 1.1f, 0.5f, 1.1f, wood[0], wood[1], wood[2], MAT_FLAT); };
-    auto tarBarrel = [&](float cx, float cz) { B(cx, 0.9f, cz, 1.3f, 1.8f, 1.3f, tarred[0], tarred[1], tarred[2], 1.0f); };
+    // (Each sits ~0.2 m INTO the ground so a slope can't lift an edge off it.)
+    auto crateAt = [&](float cx, float cz, float s) { B(cx, s * 0.5f - 0.2f, cz, s, s, s, crate[0], crate[1], crate[2], 1.0f); };
+    auto ropeCoil = [&](float cx, float cz) { B(cx, 0.2f, cz, 1.6f, 0.8f, 1.6f, wood[0], wood[1], wood[2], MAT_FLAT); B(cx, 0.8f, cz, 1.1f, 0.5f, 1.1f, wood[0], wood[1], wood[2], MAT_FLAT); };
+    auto tarBarrel = [&](float cx, float cz) { B(cx, 0.7f, cz, 1.3f, 1.8f, 1.3f, tarred[0], tarred[1], tarred[2], 1.0f); };
     auto dryRack = [&](float cx, float cz, float w) {
         B(cx - w * 0.5f, 1.4f, cz, 0.2f, 2.8f, 0.2f, wood[0], wood[1], wood[2], MAT_FLAT);
         B(cx + w * 0.5f, 1.4f, cz, 0.2f, 2.8f, 0.2f, wood[0], wood[1], wood[2], MAT_FLAT);
@@ -688,32 +1041,33 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     };
     // FORT San Cristóbal: keep + angled bastions + crenellated curtain + guns + flag.
     auto fort = [&](float cx, float cz) {
-        setShelf(cx, cz);
         const float R = 14.0f, wt = 9.0f;
+        seat(cx, cz, 2 * R + 8, 2 * R + 8);     // the WHOLE fort, bastions included: the summit must not poke through the courtyard
         BL(cx, -8.0f, cz, 2 * R + 4, 18.0f, 2 * R + 4, wallStone, MAT_STONE); // platform, deep enough to reach grade all round
         auto curtain = [&](float mx, float mz, float lx, float lz) {
             BL(mx, wt * 0.5f, mz, lx, wt, lz, wallStone, MAT_STONE);
             const bool ax = lx > lz; const int n = int((ax ? lx : lz) / 2.6f);
             for (int i = 0; i <= n; i += 2) { const float t = -0.5f + i / float(n);
-                BL(mx + (ax ? t * lx : 0.0f), wt + 0.9f, mz + (ax ? 0.0f : t * lz), ax ? 1.4f : lz + 0.2f, 1.5f, ax ? lz + 0.2f : 1.4f, wallStone, MAT_STONE); }
+                BL(mx + (ax ? t * lx : 0.0f), wt + 0.9f, mz + (ax ? 0.0f : t * lz), ax ? 1.4f : lx + 0.2f, 1.5f, ax ? lz + 0.2f : 1.4f, wallStone, MAT_STONE); } // merlon: across the wall, whichever way it runs
         };
         curtain(cx, cz - R, 2 * R, 2.2f); curtain(cx, cz + R, 2 * R, 2.2f);
         curtain(cx - R, cz, 2.2f, 2 * R); curtain(cx + R, cz, 2.2f, 2 * R);
         for (int sx = -1; sx <= 1; sx += 2) for (int sz = -1; sz <= 1; sz += 2)
-            BLr(cx + sx * R, wt * 0.5f, cz + sz * R, 6.0f, wt + 2.0f, 6.0f, 0, 0.785f, 0, wallStone, MAT_STONE); // diamond bastions
+            BLr(cx + sx * R, -5.0f, cz + sz * R, 6.0f, wt + 21.0f, 6.0f, 0, 0.785f, 0, wallStone, MAT_STONE); // diamond bastions, footed far below grade (the summit falls away north)
         BL(cx, 9.0f, cz + 2, 13, 20, 12, wallStone, MAT_STONE);            // keep
         BL(cx, 19.6f, cz + 2, 14, 1.6f, 13, darkRoof, MAT_FLAT);
         for (int i = -2; i <= 2; ++i) cannon(cx + i * 4.5f, cz - R + 1.6f, -1); // seaward guns
         BL(cx, 4.0f, cz + R, 3.2f, 8.0f, 2.6f, darkW, MAT_FLAT);           // landward gate
-        flagstaff(cx, cz + 2, 21, flagC);
+        BL(cx, 23.4f, cz + 2, 0.28f, 6.0f, 0.28f, darkW, MAT_FLAT);        // flagpole on the keep roof
+        BL(cx + 1.4f, 25.5f, cz + 2, 2.6f, 1.7f, 0.1f, flagC, MAT_FLAT);   // the colours
     };
     // SEA BASTION water battery on the west headland.
     auto battery = [&](float cx, float cz) {
         setShelf(cx, cz);
-        BL(cx, -4.0f, cz, 24, 14.0f, 14, wallStone, MAT_STONE);           // gun platform, carried down to grade
-        for (int i = -4; i <= 4; i += 2) BL(cx + i * 2.6f, 4.2f, cz - 6.5f, 2.2f, 2.4f, 1.6f, wallStone, MAT_STONE); // merlons
-        for (int i = -2; i <= 2; ++i) { cannon(cx + i * 5.0f, cz - 5.0f, -1); shotPile(cx + i * 5.0f + 2.3f, cz - 2.6f); }
-        flagstaff(cx - 10, cz + 3, 16, redRoof);
+        BL(cx, -4.0f, cz, 20, 14.0f, 14, wallStone, MAT_STONE);           // gun platform, carried down to grade
+        for (int i = -4; i <= 4; i += 2) BL(cx + i * 2.2f, 4.2f, cz - 6.5f, 2.0f, 2.4f, 1.6f, wallStone, MAT_STONE); // merlons
+        for (int i = -2; i <= 2; ++i) { cannon(cx + i * 4.4f, cz - 5.0f, -1); shotPile(cx + i * 4.4f, cz - 2.0f); }
+        flagstaff(cx - 8, cz + 3, 16, redRoof);
     };
 
     // ===================== CAYO PERDIDO — the port town =====================
@@ -733,7 +1087,7 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     // Wall-audit character: a person standing in the town for scale, and to walk
     // around and inside the audited building.
     if (s_charOn) {
-        const float cgh = std::max(0.0f, island_gpu::heightAt(s_charX, s_charZ));
+        const float cgh = std::max(0.0f, groundH(s_charX, s_charZ));
         ship_mesh::renderCharacter(viewId, relX + s_charX, cgh + s_charY, relZ + s_charZ, s_charH, 0.0f);
     }
 
@@ -761,22 +1115,39 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
         const float tw = (x1 - x0) / float(nx), td = (z1 - z0) / float(nz);
         for (int i = 0; i < nx; ++i) for (int j = 0; j < nz; ++j) {
             const float tx = x0 + tw * (float(i) + 0.5f), tz = z0 + td * (float(j) + 0.5f);
-            const float g = std::max(0.0f, island_gpu::heightAt(tx, tz));
+            const float g = std::max(0.0f, groundH(tx, tz));
             ship_mesh::renderBoxSized(viewId, relX + tx, g - 0.85f, relZ + tz,
                                       tw + 0.3f, 2.0f, td + 0.3f, cobble[0], cobble[1], cobble[2], MAT_STONE);
         }
     };
+    // TOWN PLAN (measured with --list-buildings, which prints the hill and every
+    // footprint on a 4 m grid and fails on any overlap or floating part):
+    //   A  harbourfront row  z -33..-18  forge .. tavern, fronts on Harbour Street
+    //   B  plaza terrace     z -15..-1   counting house | open square | market hall
+    //                                    | Grand Stair | church | Rum Row
+    //   C  trades terrace    z   1..11   west-point fishermen .. bakehouse
+    //   D  residential       z  13..26   terrace row + captain's villa
+    //   E  summit            z  27..64   governor's residence, magazine, the fort
+    //   east shore: great ship hall over the slipways, sail loft beside it.
+    // The Grand Stair (x -6..2) climbs straight up the middle; every retaining wall
+    // stops either side of it, in front of the row it holds up.
+    if (town) {                            // street paving (runs under things; not clash-measured)
     pavedStrip(-42, 34, -33.5f, -26.5f);   // Harbour Street
     pavedStrip(-40, 32, -28.5f, -17.5f);   // waterfront apron
-    pavedStrip(-6.5f, 2.5f, -29, -15);     // Grand Stair base run
-    stairUp(-2, -16, 9, 24, 11);           // the climbing stair
-    retWall(-32, 14, -15, 4.5f);           // plaza retaining wall
-    pavedStrip(-35, 19, -15.5f, -2.5f);    // plaza deck
-    retWall(-32, 18, 3, 6.0f);             // terrace wall 1
-    pavedStrip(-33, 21, -2, 10);           // trades terrace
-    retWall(-28, 18, 13, 7.0f);            // terrace wall 2
-    pavedStrip(-26, 22, 7.5f, 18.5f);      // residential terrace
-    lamp(-34, -30); lamp(-16, -30); lamp(2, -30); lamp(22, -30); lamp(-2, -12);
+    pavedStrip(-6, -2, -29, -16);          // Grand Stair base run (lane between trading post and custom house)
+    pavedStrip(-44, 20, -15.5f, -1.5f);    // plaza deck
+    pavedStrip(-34, 20, 1.5f, 11);         // trades terrace
+    pavedStrip(-34, 24, 13, 20);           // residential terrace
+    }
+    if (want(kGrpWalls)) {
+    stairUp(-3.5f, -16, 5.5f, 25);        // the Grand Stair: harbour -> plaza -> trades terrace
+    retWall(-44, -6.5f, -16.5f); retWall(-0.5f, 20, -16.5f);  // plaza retaining wall
+    retWall(-34, -6.5f, -0.1f);  retWall(-0.5f, 20, -0.1f);   // terrace wall 1 (trades)
+    retWall(-34, -6.5f, 11.3f);  retWall(-0.5f, 24, 11.3f);   // terrace wall 2 (residential)
+    }
+    if (want(kGrpPlaza)) { lamp(-34, -34.5f); lamp(-17, -34.5f); lamp(-7, -34.5f); lamp(22, -34.5f); lamp(-18.5f, -9); }
+
+    if (want(kGrpPort)) {
 
     // ---- QUAY-FRONT BATTERY + cargo: the waterfront defence + working life the
     // player sees first. A low crenellated rampart along the seaward quay edge
@@ -791,16 +1162,19 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     setShelf(-26, -38); BL(-26, 1.7f, -38, 1.8f, 2.2f, 1.8f, darkW, MAT_FLAT); BL(-26, 2.9f, -38, 2.4f, 0.5f, 2.4f, darkW, MAT_FLAT); // capstan
     setShelf(24, -38); BL(24, 1.7f, -38, 1.8f, 2.2f, 1.8f, darkW, MAT_FLAT); BL(24, 2.9f, -38, 2.4f, 0.5f, 2.4f, darkW, MAT_FLAT);   // capstan
     crateAt(-14, -38, 2.4f); crateAt(-11, -39, 2.0f); crateAt(14, -38, 2.4f); ropeCoil(18, -39); ropeCoil(-18, -39); barrelAt(-8, -39);
+    } // town (streets, terraces, quay battery)
 
     // ---- BAND A: HARBOURFRONT (west -> east) — six distinct blocks with clear
     // ~3-4m street gaps, each its own colour, tall fronts on Harbour Street. ----
-    // FORGE / gunsmith — grey stone, slate.
+    // Each building is gated by its isolation number: want(N).
+    if (want(1)) {                                                // [1] FORGE / gunsmith — grey stone, slate
     house(-42, -25, 12, 9, 2, 4.0f, smithyW, slate, MAT_STONE, 2, 3, red, false, false, shutDark);
     chimneyAt(-46, -22, 6.0f, 13.0f, true);
     BL(-46, 13.6f, -22, 1.1f, 1.3f, 1.1f, glow, MAT_FLAT);
     BL(-38, 1.4f, -30.5f, 2.2f, 1.7f, 1.5f, ironC, MAT_FLAT);     // anvil
     cannon(-35, -30, -1); shotPile(-32, -31);
-    // KING'S BONDED WAREHOUSE — tall dark tarred-timber, hoist beam + cargo.
+    }
+    if (want(2)) {                                                // [2] KING'S BONDED WAREHOUSE
     house(-26, -24, 13, 11, 3, 4.0f, tarred, darkRoof, 1.0f, 2, 3, nullptr, false, false, shutDark);
     // Tall loading doors: timber surround + two leaves with a centre stile and iron
     // straps, so it reads as cargo doors rather than a flat black hole in the wall.
@@ -810,109 +1184,150 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     BL(-26, 10.6f, -30.46f, 4.6f, 0.18f, 0.10f, ironC, MAT_FLAT); // iron straps
     BL(-26, 6.4f, -30.46f, 4.6f, 0.18f, 0.10f, ironC, MAT_FLAT);
     crateAt(-20, -31, 2.4f); crateAt(-31, -31, 2.4f); tarBarrel(-33, -31.5f);
-    // TRADING POST / general store — ochre, terracotta, awning.
-    house(-11, -25, 11, 9, 2, 4.0f, ochre, redRoof, 1.0f, 0, 3, green, false, false, shutGreen);
-    crateAt(-6, -31, 1.8f); barrelAt(-16, -31);
-    // CUSTOM HOUSE — white civic, arcade loggia, LOOKOUT TOWER (LOW skyline tier).
+    }
+    if (want(3)) {                                                // [3] TRADING POST — ochre, terracotta
+    house(-12, -25, 11, 9, 2, 4.0f, ochre, redRoof, 1.0f, 0, 3, green, false, false, shutGreen);
+    crateAt(-8.5f, -31.5f, 1.8f); barrelAt(-16, -31);
+    }
+    if (want(4)) {                                                // [4] CUSTOM HOUSE — arcade + LOOKOUT TOWER
     house(5, -25, 13, 10, 3, 4.0f, cream, slate, MAT_STONE, 0, 3, nullptr, false, false);
     arcade(5, -30.0f, 11, 3.6f, 4);
-    setShelf(5, -25);
-    BL(5, 15.5f, -23, 6, 7, 6, cream, MAT_STONE);                // lookout tower
+    BL(5, 15.5f, -23, 6, 7, 6, cream, MAT_STONE);                // lookout tower (on the house's own shelf)
     spire(5, -23, 6.5f, 19.0f, 4.0f, slate);
-    flagstaff(5, -20, 25, flagC);
-    // THE CHANDLERY — teal timber, hoist beam, rope + tar spilling out.
+    BL(5, 24.6f, -23, 0.22f, 4.0f, 0.22f, darkW, MAT_FLAT);      // flagpole ON the tower's spire
+    BL(6.4f, 25.6f, -23, 2.6f, 1.7f, 0.1f, flagC, MAT_FLAT);     // the colours
+    }
+    if (want(5)) {                                                // [5] THE CHANDLERY — teal timber
     house(20, -25, 10, 9, 2, 4.0f, tealW, redRoof, 1.0f, 0, 2, wood, false, false, shutDark);
-    ropeCoil(24, -31); tarBarrel(16, -31); crateAt(23, -32, 1.8f);
-    // THE SALT KRAKEN TAVERN — biggest block: terracotta-red timber-frame, two-tier
-    // gallery, dormers, two chimneys, amber windows.
+    ropeCoil(24, -31); tarBarrel(16, -31); crateAt(22.5f, -31, 1.6f);
+    }
+    if (want(6)) {                                                // [6] SALT KRAKEN TAVERN — two-tier gallery
     house(36, -24, 15, 12, 3, 4.0f, tavW, darkRoof, 1.0f, 1, 3, amberC, false, true, shutDark);
     verandah(36, -30.0f, 14, 4.0f, 2);
-    setShelf(36, -24);
     chimneyAt(31, -20, 12.0f, 16.5f, true); chimneyAt(41, -20, 12.0f, 16.5f, true);
-    barrelAt(45, -31); crateAt(43, -32, 1.6f);
+    barrelAt(27, -31.5f); crateAt(26.5f, -33.5f, 1.6f);           // (clear of the gallery posts, on dry land)
+    }
 
     // ---- BAND B: PLAZA DE ARMAS (one terrace up) — church + counting house frame an
     // open square with the market hall, well and cross; wide gaps between blocks. ----
-    // CHURCH OF ST. ELMO — white nave + buttresses + tall campanile (MID skyline tier).
-    setShelf(-3, -6);
-    BL(-3, 4.0f, -6, 13, 11, 9, cream, MAT_STONE);               // nave (kept compact in z)
-    gable(-3, -6, 13, 9, 11, 5.2f, redRoof, cream, MAT_STONE);
-    for (int i = -1; i <= 1; i += 2) BL(-3 + i * 6.7f, 3.2f, -6, 1.4f, 8, 7.0f, cream, MAT_STONE); // buttressed flanks
-    windowOn(-9.6f, 6, -6, -1, 0, 1.6f, 3.2f, false); windowOn(3.6f, 6, -6, 1, 0, 1.6f, 3.2f, false);
-    BL(-3, 13, -11.5f, 5.6f, 26, 5.6f, cream, MAT_STONE);        // slender campanile — the dominant landmark
-    BL(-3, 26.5f, -11.5f, 6.6f, 3.6f, 6.6f, tailorW, MAT_STONE); // belfry
-    windowOn(-3, 26.5f, -14.85f, 0, -1, 1.8f, 2.6f, false);      // belfry arch
-    BL(-3, 26.5f, -12.0f, 1.3f, 1.7f, 0.4f, darkW, MAT_FLAT);    // the bell
-    spire(-3, -11.5f, 6.2f, 28.3f, 7.5f, slate);                 // slate spire (contrasts the terracotta roofs)
-    BL(-3, 36.5f, -11.5f, 0.3f, 2.6f, 0.3f, darkW, MAT_FLAT); BL(-3, 37.3f, -11.5f, 1.7f, 0.3f, 0.3f, darkW, MAT_FLAT); // cross finial
-    // MERCHANTS' ARCADE & COUNTING HOUSE — brick-red, ground colonnade, west of the square.
-    house(-24, -7, 12, 9, 2, 4.0f, brickW, slate, MAT_STONE, 0, 3, cloth, false, false, shutDark);
-    arcade(-24, -11.7f, 10, 3.6f, 4);
-    // COVERED MARKET HALL (open, on piers) east of the square + well + cross out front.
-    setShelf(15, -9);
-    for (int i = -1; i <= 1; ++i) for (int j = 0; j <= 1; ++j) BL(15 + i * 4.5f, 3.0f, -9 + j * 3.6f, 0.8f, 6, 0.8f, wood, MAT_FLAT);
-    gable(15, -9, 12, 8, 6.0f, 2.6f, thatch, wood, 1.0f);
-    stall(11, -10, cloth); stall(19, -10, green);
-    wellAt(-10, -9); marketCross(-1, -9);
-    B(6, 1.4f, -10, 0.3f, 3.0f, 0.3f, wood[0], wood[1], wood[2], MAT_FLAT); B(6, 3.2f, -10, 2.2f, 1.6f, 0.2f, cream[0], cream[1], cream[2], MAT_FLAT); // notice board
+    if (want(7)) {                                                // [7] CHURCH OF ST. ELMO — gable front to the harbour, campanile beside it
+    const float chx = 10.6f, tx = chx + 7.0f;                    // nave centre / campanile standing beside the facade (not in front of it)
+    seat(chx + 1.95f, -7.9f, 15.9f, 13.8f);
+    BL(chx + 1.95f, -6.0f, -7.9f, 15.9f, 12.0f, 13.8f, sillC, MAT_STONE); // stone plinth under nave + tower, down to grade
+    BL(chx, 5.0f, -6, 10, 12, 9, cream, MAT_STONE);              // nave: walls run right up to the eaves the roof sits on
+    gable(chx, -6, 10, 9, 11, 4.4f, redRoof, cream, MAT_STONE);  // ridge runs front-to-back, so the gable IS the facade
+    for (int i = -1; i <= 1; i += 2) BL(chx + i * 5.2f, 3.2f, -6, 1.4f, 8, 7.0f, cream, MAT_STONE); // buttressed flanks
+    for (int i = -1; i <= 1; i += 2) {                           // side windows: on the aisle (buttress) faces, and a clerestory above them
+        windowOn(chx + i * 5.9f, 3.9f, -6, float(i), 0, 1.4f, 2.6f, false);
+        windowOn(chx + i * 5.0f, 9.2f, -6, float(i), 0, 1.4f, 1.5f, false);
+    }
+    doorOn(chx, -10.5f, 2.4f, 4.0f, false);                      // the great door, centred in the facade
+    windowOn(chx, 8.2f, -10.5f, 0, -1, 1.8f, 1.8f, false);       // window over the door
+    BL(tx, 13, -11.8f, 5.6f, 26, 5.6f, cream, MAT_STONE);        // slender campanile — the dominant landmark
+    BL(tx, 26.5f, -11.8f, 6.6f, 3.6f, 6.6f, tailorW, MAT_STONE); // belfry
+    windowOn(tx, 26.5f, -15.15f, 0, -1, 1.8f, 2.6f, false);      // belfry arch
+    BL(tx, 26.5f, -12.3f, 1.3f, 1.7f, 0.4f, darkW, MAT_FLAT);    // the bell
+    spire(tx, -11.8f, 6.2f, 28.3f, 7.5f, slate);                 // slate spire (contrasts the terracotta roofs)
+    BL(tx, 36.5f, -11.8f, 0.3f, 2.6f, 0.3f, darkW, MAT_FLAT); BL(tx, 37.3f, -11.8f, 1.7f, 0.3f, 0.3f, darkW, MAT_FLAT); // cross finial
+    }
+    if (want(8)) {                                                // [8] COUNTING HOUSE — brick-red, colonnade
+    house(-36, -7, 12, 9, 2, 4.0f, brickW, slate, MAT_STONE, 0, 3, cloth, false, false, shutDark);
+    arcade(-36, -11.7f, 10, 3.6f, 4);
+    }
+    if (want(9)) {                                                // [9] COVERED MARKET HALL (open, on piers)
+    seat(-12.5f, -9, 11, 9);
+    BL(-12.5f, -4.0f, -9, 11.0f, 8.0f, 9.0f, sillC, MAT_STONE);   // raised stone floor, down to grade
+    for (int i = -1; i <= 1; ++i) for (int j = -1; j <= 1; ++j)   // piers under the WHOLE roof (front half too)
+        BL(-12.5f + i * 4.0f, 3.0f, -9 + j * 3.4f, 0.8f, 6, 0.8f, wood, MAT_FLAT);
+    gable(-12.5f, -9, 10, 8, 6.0f, 2.6f, thatch, wood, 1.0f);
+    }
+    if (want(kGrpPlaza)) {                                        // the open square (not a building)
+    wellAt(-25.5f, -7); marketCross(-21, -5);
+    stall(-27, -12.5f, cloth); stall(-21.5f, -12.5f, green);
+    B(2, 1.4f, -12, 0.3f, 3.0f, 0.3f, wood[0], wood[1], wood[2], MAT_FLAT); B(2, 3.2f, -12, 2.2f, 1.6f, 0.2f, cream[0], cream[1], cream[2], MAT_FLAT); // notice board by the stair head
+    }
 
     // ---- RUM ROW (east warren, behind the tavern) ----
-    // THE DROWNED MAN boarding inn — tall timber-frame, jettied.
+    if (want(10))                                                 // [10] THE DROWNED MAN inn — timber-frame
     house(26, -12, 9, 8, 3, 4.0f, tailorW, darkRoof, 1.0f, 1, 3, amberC, true, false);
-    // THE FENCE — dark, crooked, barred, no sign, one red lantern.
+    if (want(11)) {                                               // [11] THE FENCE — dark, barred, red lantern
     house(37, -11, 8, 7, 2, 3.6f, fenceWall, darkRoof, 1.0f, 2, 2, nullptr, false, false);
     BL(37, 3.0f, -14.6f, 1.5f, 1.5f, 0.2f, darkW, MAT_FLAT);
     for (int b = -1; b <= 1; ++b) BL(37 + b * 0.5f, 3.0f, -14.75f, 0.14f, 1.5f, 0.14f, metal, MAT_FLAT); // bars
-    setShelf(37, -11); BL(41, 2.6f, -14.5f, 0.6f, 0.6f, 0.6f, red, MAT_FLAT);   // red lantern
+    BL(40.4f, 2.6f, -14.8f, 0.6f, 0.6f, 0.6f, red, MAT_FLAT);   // red lantern at the door
+    }
 
     // ---- BAND C: TRADES TERRACE (behind retaining wall 1) — signed craft shops ----
-    house(-28, 6, 8, 7, 2, 4.2f, seagrn, redRoof,  1.0f, 0, 2, cloth, true, false);  // APOTHECARY
-    house(-10, 6, 10, 7, 2, 4.0f, lemonW, darkRoof, 1.0f, 0, 3, amberC, false, false, shutGreen); // OUTFITTER
-    house(12, 6, 9, 7, 2, 3.8f, ochre, redRoof, 1.0f, 0, 2, amberC, false, false, shutRed);    // BAKEHOUSE
+    if (want(12)) house(-28, 6, 8, 7, 2, 4.2f, seagrn, redRoof,  1.0f, 0, 2, cloth, true, false);  // [12] APOTHECARY
+    if (want(13)) house(-12, 6, 10, 7, 2, 4.0f, lemonW, darkRoof, 1.0f, 0, 3, amberC, false, false, shutGreen); // [13] OUTFITTER
+    if (want(14)) {                                               // [14] BAKEHOUSE + oven chimney
+    house(12, 6, 9, 7, 2, 3.8f, ochre, redRoof, 1.0f, 0, 2, amberC, false, false, shutRed);
     chimneyAt(16, 8, 8.0f, 13.0f, true);
-    setShelf(12, 6); BL(16, 3.4f, 2.6f, 3.0f, 3.0f, 2.0f, stone, MAT_STONE); BL(16, 3.4f, 1.5f, 1.4f, 1.4f, 0.4f, glow, MAT_FLAT); // oven
-    // COOPER open work-shed + casks + saw-pit (west end of the terrace).
-    setShelf(-44, 6);
-    for (int i = -1; i <= 1; ++i) BL(-44 + i * 3.5f, 2.4f, 7.5f, 0.6f, 5, 0.6f, wood, MAT_FLAT);
-    BLr(-44, 5.2f, 6.0f, 9.0f, 0.4f, 6.5f, -0.35f, 0, 0, darkRoof, MAT_FLAT);
-    for (int i = 0; i < 3; ++i) barrelAt(-47 + i * 1.8f, 8.5f);
+    BL(16, 3.4f, 2.6f, 3.0f, 3.0f, 2.0f, stone, MAT_STONE); BL(16, 3.4f, 1.5f, 1.4f, 1.4f, 0.4f, glow, MAT_FLAT); // oven
+    }
+    if (want(15)) {                                               // [15] COOPER open work-shed + casks (on the west beach)
+    seat(-50, -13.5f, 9, 6);
+    for (int i = -1; i <= 1; ++i) {
+        BL(-50 + i * 4.0f, -0.5f, -11.0f, 0.5f, 11.0f, 0.5f, wood, MAT_FLAT);   // back posts, up to 5.0 (footed below grade)
+        BL(-50 + i * 4.0f, -1.3f, -16.0f, 0.5f, 9.4f, 0.5f, wood, MAT_FLAT);    // front posts, up to 3.4
+    }
+    const float ra = std::atan2(1.6f, 5.0f);                     // roof falls 1.6 m from back to front
+    BLr(-50, 4.3f, -13.5f, 9.8f, 0.3f, 6.6f / std::cos(ra), ra, 0, 0, darkRoof, MAT_FLAT);
+    for (int i = 0; i < 3; ++i) barrelAt(-52.0f + i * 2.0f, -13.2f);   // casks under cover
+    }
 
     // ---- BAND D: RESIDENTIAL TERRACE (behind retaining wall 2) — pastel row ----
-    house(-28, 16, 9, 7, 2, 3.8f, brickW, redRoof,  1.0f, 0, 3, nullptr, true, false, shutGreen);
-    house(-16, 16, 9, 7, 2, 4.0f, tealW,  darkRoof, 1.0f, 1, 3, nullptr, true, false, shutRed);
-    house(-4,  16, 9, 7, 2, 3.8f, ochre,  redRoof,  1.0f, 0, 3, nullptr, true, false, shutTeal);
-    // CAPTAIN'S VILLA — fine white + full verandah, upper terrace east.
-    house(14, 15, 12, 10, 2, 4.2f, tailorW, redRoof, MAT_STONE, 0, 3, nullptr, true, false, shutTeal);
-    verandah(14, 10.0f, 11, 4.2f, 1);
-    setShelf(14, 15); flagstaff(21, 16, 12, flagC);
+    if (want(16)) house(-28, 17.5f, 9, 7, 2, 3.8f, brickW, redRoof,  1.0f, 0, 3, nullptr, true, false, shutGreen); // [16]
+    if (want(17)) house(-16, 17.5f, 9, 7, 2, 4.0f, tealW,  darkRoof, 1.0f, 1, 3, nullptr, true, false, shutRed);   // [17]
+    if (want(18)) house(-4,  17.5f, 9, 7, 2, 3.8f, ochre,  redRoof,  1.0f, 0, 3, nullptr, true, false, shutTeal);  // [18]
+    if (want(19)) {                                               // [19] CAPTAIN'S VILLA + verandah
+    house(14, 20.5f, 12, 10, 2, 4.2f, tailorW, redRoof, MAT_STONE, 0, 3, nullptr, true, false, shutTeal);
+    verandah(14, 15.5f, 11, 4.2f, 1);
+    flagstaff(21, 21.5f, 12, flagC);
+    }
 
     // ---- BAND E: GOVERNOR'S HILL / THE CITADEL (summit) ----
-    fort(-8, 26);
-    // GOVERNOR'S RESIDENCE — white mansion + two-tier verandah + cupola, beside the fort.
-    house(12, 22, 14, 11, 2, 4.4f, tailorW, redRoof, MAT_STONE, 0, 3, nullptr, true, false);
-    verandah(12, 16.5f, 13, 4.4f, 2);
-    setShelf(12, 22);
-    BL(12, 11.0f, 22, 3.5f, 2.5f, 3.5f, tailorW, MAT_STONE); spire(12, 22, 3.8f, 13.0f, 2.2f, slate); // cupola
-    flagstaff(20, 23, 16, flagC);
-    cannon(6, 17.5f, -1); cannon(18, 17.5f, -1);                 // trophy cannon
-    // POWDER MAGAZINE — squat windowless stone, slab roof, set apart west.
-    setShelf(-24, 24);
-    BL(-24, 3.0f, 24, 9, 7, 8, wallStone, MAT_STONE);
-    BL(-24, 6.8f, 24, 10, 1.4f, 9, stone, MAT_STONE);
-    for (int i = -1; i <= 1; i += 2) BLr(-24 + i * 5.0f, 3.0f, 24, 2.0f, 6.5f, 8.0f, 0, 0, i * 0.18f, wallStone, MAT_STONE);
+    if (want(20)) fort(16, 46);                                   // [20] FORT SAN CRISTOBAL — on the summit, guns over the town
+    if (want(21)) {                                               // [21] GOVERNOR'S RESIDENCE + cupola
+    house(-14, 31, 14, 11, 2, 4.4f, tailorW, redRoof, MAT_STONE, 0, 3, nullptr, true, false);
+    verandah(-14, 25.5f, 13, 4.4f, 2);
+    BL(-14, 11.0f, 31, 3.5f, 2.5f, 3.5f, tailorW, MAT_STONE); spire(-14, 31, 3.8f, 13.0f, 2.2f, slate); // cupola (house's shelf)
+    flagstaff(-5, 32, 16, flagC);
+    }
+    if (want(22)) {                                               // [22] POWDER MAGAZINE
+    seat(-9, 44, 12.4f, 9);
+    BL(-9, -5.0f, 44, 12.4f, 10.0f, 9.0f, stone, MAT_STONE);     // footing down to grade
+    BL(-9, 3.0f, 44, 9, 7, 8, wallStone, MAT_STONE);
+    BL(-9, 6.8f, 44, 10, 1.4f, 9, stone, MAT_STONE);             // cornice
+    gable(-9, 44, 10, 9, 7.5f, 2.2f, slate, wallStone, MAT_STONE); // low stone-slab roof
+    for (int i = -1; i <= 1; i += 2) BLr(-9 + i * 5.0f, 3.0f, 44, 2.0f, 6.5f, 8.0f, 0, 0, -i * 0.18f, wallStone, MAT_STONE); // raking buttresses, wide at the foot
+    doorOn(-9, 40, 1.6f, 2.8f, false);                           // the iron-bound magazine door
+    }
 
     // ---- WEST POINT: sea battery + fishermen's cottages ----
-    battery(-54, -30);
+    if (want(23)) battery(-60, -31);                              // [23] SEA BATTERY
+    if (want(24)) {                                               // [24] FISHERMAN'S COTTAGE A + rack + skiff
     house(-48, 5, 7, 6, 1, 4.0f, fenceWall, thatch, 1.0f, 2, 2, nullptr, false, false);
+    dryRack(-51.5f, -0.5f, 3); B(-54, 0.0f, -3, 1.4f, 1.2f, 3.0f, wood[0], wood[1], wood[2], 1.0f); // rack beside the door; skiff drawn up at the water's edge
+    }
+    if (want(25)) {                                               // [25] FISHERMAN'S COTTAGE B + rack
     house(-40, 4, 6, 6, 1, 4.0f, tarred,   thatch, 1.0f, 2, 2, nullptr, false, false);
-    dryRack(-46, 0, 4); dryRack(-40, -1, 4); B(-50, 0.6f, -2, 3.0f, 1.2f, 1.4f, wood[0], wood[1], wood[2], 1.0f); // skiff
+    dryRack(-35.5f, -1, 3);                                       // beside the door, not across it
+    }
 
     // ---- SHIPYARD edge: a long low SAIL LOFT & ROPEWALK (east, by the hall) ----
-    house(48, -16, 9, 8, 2, 4.0f, tarred, darkRoof, 1.0f, 2, 2, wood, false, false);
-    setShelf(58, -14);
-    BL(58, 3.0f, -14, 20, 6, 6, tarred, 1.0f);                   // long ropewalk shed
-    BLr(58, 6.6f, -14, 21, 0.4f, 5.0f, -0.28f, 0, 0, darkRoof, MAT_FLAT);
-    BLr(58, 6.6f, -14, 21, 0.4f, 5.0f, 0.28f, 0, 0, darkRoof, MAT_FLAT);
+    if (want(26)) house(38, -2, 9, 8, 2, 4.0f, tarred, darkRoof, 1.0f, 2, 2, wood, false, false); // [26] SAIL LOFT
+    if (want(27)) {                                               // [27] ROPEWALK — long shed running along the west coast
+    seat(-50, 21, 6, 20);
+    BL(-50, -3.0f, 21, 6.6f, 6.0f, 20.6f, stone, MAT_STONE);     // footing down to grade
+    BL(-50, 3.0f, 21, 6, 6, 20, tarred, 1.0f);                   // the shed (the rope is laid along its length)
+    gable(-50, 21, 6, 20, 6.0f, 1.8f, darkRoof, tarred, 1.0f);
+    doorOn(-50, 11, 2.2f, 3.2f, false);                          // door at the south end
+    for (float z = 14.0f; z <= 28.1f; z += 3.5f) {               // the long row of small windows down each side
+        windowOn(-53, 3.6f, z, -1, 0, 0.9f, 0.9f, false);
+        windowOn(-47, 3.6f, z,  1, 0, 0.9f, 0.9f, false);
+    }
+    }
 
     // --- Palm trees: the Caribbean signature — a leaning trunk and a drooping
     // green crown, clustered on the sandy shore and dotting the green slopes. ---
@@ -935,30 +1350,37 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
         B(tx - fd, fyd, tz + fd, 2.4f, 0.26f, 2.4f, fr[0], fr[1], fr[2], MAT_FLAT);
     };
     // Shore-line palms flanking the town, and a grove dotting the green slopes.
-    palm(-56, -28, 10); palm(-52, -36, 9);  palm(54, -30, 11); palm(58, -22, 9);
-    palm(-44, -8, 12);  palm(46, -6, 10);
-    palm(-40, 12, 11);  palm(-22, 22, 10);  palm(-6, 30, 12);  palm(16, 24, 11);
-    palm(34, 18, 10);   palm(44, 26, 9);    palm(8, 34, 11);    palm(-30, 30, 10);
+    if (want(kGrpPalms)) {
+    palm(-48.5f, -40, 9); palm(-55, -4, 10);  palm(-40, 12, 11); palm(-40, 30, 10);
+    palm(-30, 40, 10);    palm(36, 8, 10);    palm(28, 16, 10);  palm(40, 24, 9);
+    palm(46, 34, 9);      palm(52, 20, 10);
+    }
 
     // --- Shipyard (large, on the east shore, kept inside the shore line) ---
-    B(38, 7, 6, 36, 22, 32, timber[0], timber[1], timber[2]);      // great ship hall (base sunk to the ground)
-    gableRoof(38, 6, 36, 32, 18.0f, 9.0f, roof, timber, 1.0f);     // big pitched roof over the hall
-    B(24, 1.4f, -46, 11, 0.8f, 34, wood[0], wood[1], wood[2]);     // slipway 1
-    B(40, 1.4f, -44, 11, 0.8f, 32, wood[0], wood[1], wood[2]);     // slipway 2
-    B(54, 1.4f, -40, 9, 0.8f, 28, wood[0], wood[1], wood[2]);      // slipway 3
-    B(30, 9, -48, 2, 18, 2, metal[0], metal[1], metal[2], MAT_FLAT);  // gantry crane 1
-    B(30, 17.5f, -40, 2, 2, 20, metal[0], metal[1], metal[2], MAT_FLAT);
-    B(46, 9, -46, 2, 18, 2, metal[0], metal[1], metal[2], MAT_FLAT);  // gantry crane 2
-    B(46, 17.5f, -38, 2, 2, 20, metal[0], metal[1], metal[2], MAT_FLAT);
-    // scaffolding frame around slipway 1
-    B(19, 4, -38, 1, 8, 1, wood[0], wood[1], wood[2]);
-    B(29, 4, -38, 1, 8, 1, wood[0], wood[1], wood[2]);
-    B(19, 4, -54, 1, 8, 1, wood[0], wood[1], wood[2]);
-    B(29, 4, -54, 1, 8, 1, wood[0], wood[1], wood[2]);
-    B(24, 8, -38, 11, 0.7f, 0.7f, wood[0], wood[1], wood[2]);
-    B(24, 8, -54, 11, 0.7f, 0.7f, wood[0], wood[1], wood[2]);
-    B(46, 2, -14, 4, 2, 16, wood[0], wood[1], wood[2]);            // timber stacks
-    B(52, 2, -14, 4, 2, 16, timber[0], timber[1], timber[2]);
+    if (want(28)) {                                               // [28] GREAT SHIP HALL — on the east shore at the head of the slips
+    // Stands on the shipyard's GRADED PAD (island_gpu: level ground cut into the
+    // hillside at beach height), so its floor meets the slipways at its doors.
+    seat(58, -2, 20, 26);
+    BL(58, -4.0f, -2, 20.6f, 12.0f, 26.6f, stone, MAT_STONE);    // footing down to grade
+    BL(58, 9.0f, -2, 20, 18, 26, timber, 1.0f);                  // the hall
+    gable(58, -2, 20, 26, 18.0f, 8.0f, roof, timber, 1.0f);      // big pitched roof, ridge running out to the slips
+    BL(58, 7.0f, -15.1f, 12.0f, 14.0f, 0.3f, darkW, MAT_FLAT);   // the great doors facing the slipways
+    }
+    if (!want(kGrpYard)) return;                                  // slips, cranes, stacks: town only
+    // Two slipways running from the hall's doors down the beach into the sea.
+    B(52, 1.4f, -32, 9, 0.8f, 32, wood[0], wood[1], wood[2]);      // slipway A
+    B(63, 1.4f, -30, 9, 0.8f, 28, wood[0], wood[1], wood[2]);      // slipway B
+    // A double gantry straddling both slips: three legs and two beams.
+    for (int k = 0; k < 3; ++k) B(46.5f + k * 11.0f, 8.0f, -30, 1.6f, 20.0f, 1.6f, metal[0], metal[1], metal[2], MAT_FLAT);
+    B(52, 17.5f, -30, 12.6f, 1.6f, 1.6f, metal[0], metal[1], metal[2], MAT_FLAT);
+    B(63, 17.5f, -30, 12.6f, 1.6f, 1.6f, metal[0], metal[1], metal[2], MAT_FLAT);
+    // Scaffolding frame around slipway A.
+    B(47, 4, -22, 1, 8, 1, wood[0], wood[1], wood[2]);
+    B(57, 4, -22, 1, 8, 1, wood[0], wood[1], wood[2]);
+    B(47, 4, -40, 1, 8, 1, wood[0], wood[1], wood[2]);
+    B(57, 4, -40, 1, 8, 1, wood[0], wood[1], wood[2]);
+    B(52, 8, -22, 11, 0.7f, 0.7f, wood[0], wood[1], wood[2]);
+    B(52, 8, -40, 11, 0.7f, 0.7f, wood[0], wood[1], wood[2]);
 }
 
 float deckStandHeight(const sea::Ship& ship) {

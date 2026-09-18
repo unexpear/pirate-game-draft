@@ -21,13 +21,13 @@ float shadowFactor(vec3 wpos) {
 	uv.y = 1.0 - uv.y;
 #endif
 	if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 1.0;
-	float cur = ndc.z - 0.0025;
-	float texel = 1.0 / 1024.0;
+	float cur = ndc.z - 0.0006;
+	float texel = 1.0 / 2048.0;
 	float sh = 0.0;
 	for (int y = -1; y <= 1; ++y)
 	for (int x = -1; x <= 1; ++x)
 		sh += (cur > texture2DLod(s_shadowMap, uv + vec2(float(x), float(y)) * texel, 0.0).x) ? 1.0 : 0.0;
-	return 1.0 - (sh / 9.0) * 0.30;
+	return 1.0 - (sh / 9.0) * 0.40;
 }
 
 void main()

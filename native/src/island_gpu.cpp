@@ -127,7 +127,24 @@ float heightAt(float x, float z) {
     const float roughAmt = std::min(1.0f, std::max(0.0f, (base - 3.0f) / 12.0f));
     const float rolling = (fbm(x * 0.055f, z * 0.055f) - 0.5f) * 2.2f;
     const float ridged = (1.0f - std::fabs(2.0f * fbm(x * 0.10f, z * 0.10f) - 1.0f)) * 2.6f - 0.9f;
-    return base + (rolling + ridged) * roughAmt * landFrac + (fbm(x * 0.05f, z * 0.05f) - 0.5f) * 1.2f * landFrac;
+    float h = base + (rolling + ridged) * roughAmt * landFrac + (fbm(x * 0.05f, z * 0.05f) - 0.5f) * 1.2f * landFrac;
+    // GRADED PADS: level ground cut into the hillside where a big flat-floored
+    // works stands — the shipyard on the east shore, graded down to just above
+    // the beach so the ship hall opens straight onto its slipways. Inside the
+    // rectangle the ground is exactly `level`; across `margin` it eases back to
+    // the natural slope (a cut bank behind, a gentle fill toward the sea).
+    struct Pad { float x0, z0, x1, z1, level, margin; };
+    static const Pad kPads[] = {
+        { 46.0f, -17.0f, 68.0f, 13.0f, 3.0f, 7.0f },   // shipyard: ship hall + slipway heads
+    };
+    for (const Pad& p : kPads) {
+        const float dx = std::max(std::max(p.x0 - x, 0.0f), x - p.x1);
+        const float dz = std::max(std::max(p.z0 - z, 0.0f), z - p.z1);
+        const float t = std::min(1.0f, std::sqrt(dx * dx + dz * dz) / p.margin);
+        const float w = 1.0f - t * t * (3.0f - 2.0f * t);            // 1 on the pad, 0 past the margin
+        h = h + (p.level - h) * w;
+    }
+    return h;
 }
 
 float landRadius() { return kMeanCoast; }
