@@ -10,7 +10,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace sea { struct Ship; struct Wave; struct FloatPose; }
+namespace sea { struct Ship; struct Wave; struct FloatPose; struct BoardingMelee; }
 
 namespace ship_view {
 
@@ -40,6 +40,22 @@ void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>
 void renderShip(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
                 float heading, float windDir, float sailFullness, float timeSec,
                 float posX, float posZ);
+
+// While boarding, replace the chase camera with a third-person follow on the
+// fighter. Pass enabled=false to restore the chase cam. Free / isolate cameras
+// still win when they are set.
+void setMeleeCamera(bool enabled, float ex, float ey, float ez, float ax, float ay, float az);
+
+// Eye/at for a follow cam behind the boarder on `deck` (same pose as renderShip).
+void meleeFollowCamera(const sea::BoardingMelee& melee, const sea::Ship& deck,
+                       const sea::FloatPose& pose, float heading, float posX, float posZ,
+                       float& ex, float& ey, float& ez, float& ax, float& ay, float& az);
+
+// Box-figure boarder + crew standing on that deck. Safe during the shadow pass
+// (renderCharacter submits depth while ship_mesh::depthPass() is set).
+void renderBoardingMelee(uint16_t viewId, const sea::BoardingMelee& melee,
+                         const sea::Ship& deck, const sea::FloatPose& pose,
+                         float heading, float posX, float posZ);
 
 // Draw a cannonball tracer at scene position (x,y,z) (defaults to our orange).
 void renderTracer(uint16_t viewId, float x, float y, float z, float size,

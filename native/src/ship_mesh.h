@@ -55,8 +55,12 @@ void renderBoxRot(uint16_t viewId, float x, float y, float z,
 
 // Draw a simple box-figure human standing at (x,y,z) (y = feet on the ground),
 // facing `heading` (radians); `walkPhase` animates the stride when moving.
+// `coat*` tints the jacket, `swing` (0..1) lunges the blade, and `downed`
+// lays the figure on the deck.
 void renderCharacter(uint16_t viewId, float x, float y, float z,
-                     float heading, float walkPhase);
+                     float heading, float walkPhase,
+                     float coatR = 0.45f, float coatG = 0.28f, float coatB = 0.20f,
+                     float swing = 0.0f, bool downed = false);
 
 // Scenery shadow pass. While on, renderBoxSized / renderBoxRot / renderCharacter
 // submit depth-only casters to `viewId` (the shadow view) instead of lit

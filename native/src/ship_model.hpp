@@ -157,6 +157,77 @@ double tackleAdvantage(int parts);
 AiOrders aiCaptain(double ex, double ez, double eHeading,
                    double ox, double oz, double engageRange, bool reloadReady);
 
+// --- On-deck boarding melee ------------------------------------------------
+// A short third-person fight on the enemy's deck. Pressing B to board (the app)
+// starts one of these instead of capturing outright; the prize is taken only
+// when the crew is cut down. Pure state — no rendering. Step it once per tick.
+//
+// Lose path: phase becomes Lost when the boarder is downed. That is a failed
+// boarding, not a sinking defeat — the app throws you back to your own ship.
+// The prize stays struck, so you can pull alongside and board again.
+enum class MeleePhase { Inactive, Fighting, Won, Lost };
+
+// One verb packet for a tick. `attack` is an edge (a click / tap); `block` is
+// held. `throttle` is -1 astern .. +1 ahead along the fighter's facing;
+// `turn` is -1 port .. +1 starboard.
+struct MeleeInput {
+    double throttle = 0;
+    double turn = 0;
+    bool attack = false;
+    bool block = false;
+};
+
+// Deck-local metres: +x starboard, +z toward the bow, heading 0 faces the bow
+// (the same yaw convention as the ship). `swing` / `hurt` / `walkPhase` are
+// cues for the view.
+struct MeleeFighter {
+    double x = 0, z = 0;
+    double heading = 0;
+    double hp = 100, maxHp = 100;
+    double attackCooldown = 0;
+    double hitstun = 0;
+    double swing = 0;
+    double hurt = 0;
+    double walkPhase = 0;
+    bool alive = true;
+    bool blocking = false;
+};
+
+struct BoardingMelee {
+    MeleePhase phase = MeleePhase::Inactive;
+    MeleeFighter player;
+    std::vector<MeleeFighter> crew;
+    double deckHalfWidth = 1.2;   // clamp |x| to the deck plank
+    double deckHalfLength = 2.0;  // clamp z around deckCenterZ
+    double deckCenterZ = 0;
+    int crewTotal = 0;
+};
+
+inline bool meleeFighting(const BoardingMelee& m) { return m.phase == MeleePhase::Fighting; }
+
+inline int meleeCrewLeft(const BoardingMelee& m) {
+    int n = 0;
+    for (const auto& c : m.crew) if (c.alive) ++n;
+    return n;
+}
+
+// Stand up a fight on `deck`. `boardSide` is +1 if you climb the starboard
+// rail, -1 for port. `crewCount` is clamped to a small party (1..5).
+BoardingMelee startBoardingMelee(const Ship& deck, int boardSide, int crewCount = 3);
+// Advance the fight by `dt` seconds. No-op unless phase is Fighting.
+void stepBoardingMelee(BoardingMelee& m, const MeleeInput& in, double dt);
+
+// Ship-local Y of the deck surface (feet height, before heave).
+double meleeDeckSurfaceY(const Ship& deck);
+// 0..1 attack-swing cue (1 = just swung).
+double meleeAttackSwing(const MeleeFighter& f);
+
+// Deck-local point -> world/scene. `shipHeading` / origin are the deck ship's
+// pose. Local heading 0 (facing the bow) becomes `shipHeading` in the world.
+void meleeDeckToWorld(double shipHeading, double originX, double originZ,
+                      double localX, double localZ, double localHeading,
+                      double& worldX, double& worldZ, double& worldHeading);
+
 // --- Real sailing: points of sail -----------------------------------------
 // Boat-speed fraction (0..1) for `windAngleOffBowDeg`, the angle of the wind
 // SOURCE off the bow (0 = dead into the wind, 180 = dead astern). Models real

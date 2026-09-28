@@ -58,6 +58,12 @@ void setFreeCamera(bool enabled, float ex, float ey, float ez, float ax, float a
     s_freeCam = enabled; s_freeEye = { ex, ey, ez }; s_freeAt = { ax, ay, az };
 }
 
+static bool s_meleeCam = false;
+static bx::Vec3 s_meleeEye = { 0, 0, 0 }, s_meleeAt = { 0, 0, 0 };
+void setMeleeCamera(bool enabled, float ex, float ey, float ez, float ax, float ay, float az) {
+    s_meleeCam = enabled; s_meleeEye = { ex, ey, ez }; s_meleeAt = { ax, ay, az };
+}
+
 // ---------------------------------------------------------------------------
 // ISOLATION TEST. Every building in the town, numbered. The same numbers gate
 // renderIsland: with --isolate N only building N is drawn, moved to the scene
@@ -370,8 +376,10 @@ void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>
     const float dist = 24.0f;
     const float fwdX = bx::sin(heading);
     const float fwdZ = bx::cos(heading);
-    bx::Vec3 eye = s_freeCam ? s_freeEye : bx::Vec3{ -fwdX * dist, 9.0f, -fwdZ * dist };
-    bx::Vec3 at  = s_freeCam ? s_freeAt  : bx::Vec3{ fwdX * 5.0f, -0.4f, fwdZ * 5.0f };
+    bx::Vec3 eye = s_freeCam ? s_freeEye
+                 : (s_meleeCam ? s_meleeEye : bx::Vec3{ -fwdX * dist, 9.0f, -fwdZ * dist });
+    bx::Vec3 at  = s_freeCam ? s_freeAt
+                 : (s_meleeCam ? s_meleeAt : bx::Vec3{ fwdX * 5.0f, -0.4f, fwdZ * 5.0f });
     if (s_isoId > 0 && !s_freeCam) isoCamera(s_isoView, eye, at); // orbit the isolated building
     const bx::Vec3 up = { 0.0f, 1.0f, 0.0f };
 
@@ -407,6 +415,45 @@ void renderShip(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& po
                 float heading, float windDir, float sailFullness, float timeSec,
                 float posX, float posZ) {
     ship_mesh::render(viewId, ship, pose, heading, windDir, sailFullness, timeSec, posX, posZ);
+}
+
+void meleeFollowCamera(const sea::BoardingMelee& melee, const sea::Ship& deck,
+                       const sea::FloatPose& pose, float heading, float posX, float posZ,
+                       float& ex, float& ey, float& ez, float& ax, float& ay, float& az) {
+    double wx = 0, wz = 0, wh = 0;
+    sea::meleeDeckToWorld(heading, posX, posZ, melee.player.x, melee.player.z, melee.player.heading,
+                          wx, wz, wh);
+    const float feetY = float(pose.heaveY + sea::meleeDeckSurfaceY(deck));
+    const float fx = std::sin(float(wh)), fz = std::cos(float(wh));
+    ex = float(wx) - fx * 6.2f;
+    ey = feetY + 3.6f;
+    ez = float(wz) - fz * 6.2f;
+    ax = float(wx) + fx * 2.4f;
+    ay = feetY + 1.35f;
+    az = float(wz) + fz * 2.4f;
+}
+
+void renderBoardingMelee(uint16_t viewId, const sea::BoardingMelee& melee,
+                         const sea::Ship& deck, const sea::FloatPose& pose,
+                         float heading, float posX, float posZ) {
+    const float feetY = float(pose.heaveY + sea::meleeDeckSurfaceY(deck));
+    const bool depth = ship_mesh::depthPass();
+    auto draw = [&](const sea::MeleeFighter& f, float cr, float cg, float cb) {
+        double wx = 0, wz = 0, wh = 0;
+        sea::meleeDeckToWorld(heading, posX, posZ, f.x, f.z, f.heading, wx, wz, wh);
+        float r = cr, g = cg, b = cb;
+        if (f.alive && f.hurt > 0.0) { r = 0.95f; g = 0.90f; b = 0.84f; } // hit flash
+        if (!depth)
+            ship_mesh::renderShadow(viewId, float(wx), feetY + 0.04f, float(wz), 0.55f, 0.55f, 0.30f);
+        ship_mesh::renderCharacter(viewId, float(wx), feetY, float(wz), float(wh),
+                                   float(f.walkPhase), r, g, b,
+                                   float(sea::meleeAttackSwing(f)), !f.alive);
+    };
+    draw(melee.player, 0.16f, 0.26f, 0.52f); // navy coat — the boarder
+    for (int i = 0; i < int(melee.crew.size()); ++i) {
+        const float shade = 1.0f - 0.08f * float(i);
+        draw(melee.crew[i], 0.58f * shade, 0.13f * shade, 0.11f * shade); // enemy red
+    }
 }
 
 void renderTracer(uint16_t viewId, float x, float y, float z, float size,
