@@ -58,6 +58,15 @@ void renderBoxRot(uint16_t viewId, float x, float y, float z,
 void renderCharacter(uint16_t viewId, float x, float y, float z,
                      float heading, float walkPhase);
 
+// Same figure, parented to the ship root (the bx::mtxSRT pose used by render):
+// feet at ship-local (localX, feetY, localZ), facing `localHeading` in the hull
+// frame, so heave/pitch/heel carry the body with the deck.
+void renderCharacterOnShip(uint16_t viewId, float localX, float feetY, float localZ,
+                           float localHeading, float walkPhase,
+                           const sea::FloatPose& pose, float shipHeading,
+                           float windDir, float sailFullness,
+                           float posX, float posZ, float heelScale);
+
 // Scenery shadow pass. While on, renderBoxSized / renderBoxRot / renderCharacter
 // submit depth-only casters to `viewId` (the shadow view) instead of lit
 // geometry, and renderShadow (contact decals) is skipped — so the whole town can

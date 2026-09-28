@@ -22,6 +22,14 @@ void shutdown();
 // chase camera.
 void setFreeCamera(bool enabled, float ex, float ey, float ez, float ax, float ay, float az);
 
+// While enabled, the sail scene uses a third-person camera on a sailor at scene
+// (x,y,z), behind the horizontal forward (fx,fz), instead of the chase camera.
+// The horizon stays level; the figure is drawn separately, parented to the hull.
+void setDeckFollow(bool enabled, float x, float y, float z, float fx, float fz);
+
+// Feet height on the shipyard dock. The gangplank and the yard walker share it.
+constexpr float kYardDockFeet = 1.8f;
+
 // Chase camera behind `heading`, scrolling ocean at the ship's virtual world
 // position (worldX/worldZ), and the ship riding the surface at `pose`, yawed to
 // `heading`. The sail trims toward `windDir` and is reefed to `sailFullness`
