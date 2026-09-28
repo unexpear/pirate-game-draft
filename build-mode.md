@@ -83,7 +83,7 @@ The clarified loop we're building toward, and how it maps to the native C++ prot
 - **Pulleys & ropes** — block-and-tackle: yard **cranes/gantries** hoist timbers & masts with visible rope + sheaves; the ship's **rigging** (halyards/sheets). Rope as a simple constraint/catenary; pulley as a hoist ratio. Big.
 - **Per-section buoyancy sample points** baked from the hull → `computeFloatPose` rides/pitches per the real shape.
 
-**Status (native prototype):** the whole ship is real piece-by-piece (backbone keel/stem/sternpost/ribs → planking → nails → deck → mast/bowsprit → helm/capstan → standing rigging lines); the shipyard build **berth with a stand** + orbit camera is in; the **launch → `bakeHullProfile` → sail-differently** loop is in (driven by hull-shape sliders for now); and a **walkable box-figure character (v0)** can walk the yard on foot (WASD, follow cam). **Next up: freeform plank/rib placement**, then **climbing aboard + walking the deck**, then **running rigging / pulleys & ropes**. See [next-steps.md](next-steps.md).
+**Status (native prototype):** the whole ship is real piece-by-piece (backbone keel/stem/sternpost/ribs → planking → nails → deck → mast/bowsprit → helm/capstan → standing rigging lines); the shipyard build **berth with a stand** + orbit camera is in; and a **walkable box-figure character (v0)** can walk the yard on foot (WASD, follow cam). **Launch into the harbour** bakes the shaped hull and that hull is the ship you sail (session + `user_ships/` file); sailing reads its profile for speed, turn, heel, and acceleration. The shape is still the L/B/depth sliders, not click-placed planks. **Next up: freeform plank/rib placement** (so the bake reads placed geometry). See [next-steps.md](next-steps.md).
 
 ## Open questions
 

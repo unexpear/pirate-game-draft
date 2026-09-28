@@ -214,7 +214,19 @@ int main(int argc, char** argv) {
     const int total = (int)results.size();
     sea::ShipConfig cfg;
     cfg.name = "Test Sloop";
-    sea::Ship ship = sea::makeShipFromConfig(cfg); // mutable: cargo/damage are live
+    // The hull being sailed. Starts as the reference sloop; a yard launch replaces
+    // it for the rest of the session (and reloads from user_ships/ on the next run).
+    sea::SailSession session;
+    session.ship = sea::makeShipFromConfig(cfg);
+    session.pristine = session.ship;
+    session.profile = sea::bakeHullProfile(session.ship);
+    sea::Ship& ship = session.ship;
+    sea::Ship yard = ship; // stocks draft — edits here do not touch the sailed hull
+    char shipName[64] = "Test Sloop";
+    sea::Ship launchSnapshot;
+    std::vector<sea::Issue> launchErrors;
+    std::string saveStatus;
+    bool yardDirty = false;
     const std::vector<sea::Wave> waves = sea::makeWaveField("sea-trial-native");
 
     ship_view::init();
@@ -265,10 +277,8 @@ int main(int argc, char** argv) {
     int buildTrad = 2;  // 0 Roman, 1 Viking, 2 English (Age of Sail)
     int placed = 0;     // pieces revealed so far
 
-    // The hull's baked water-physics profile (Build -> Sail bridge). Sailing reads
-    // top-speed & turn from it, so the boat sails like the shape you built.
-    sea::HullProfile activeProfile = sea::bakeHullProfile(ship);
-    bool launching = false, launched = true;
+    // Launch beat. On completion the yard hull is baked and becomes `session`.
+    bool launching = false;
     float launchTimer = 0.0f;
 
     // On-foot character — walk the shipyard. Position is in the build-scene's local
@@ -310,6 +320,50 @@ int main(int argc, char** argv) {
             if (isHull(p) && p.damage < 1.0 && k++ == target) { p.damage = p.damage + 0.25 > 1.0 ? 1.0 : p.damage + 0.25; return; }
     };
     auto repairAll = [&]() { for (auto& p : ship.pieces) p.damage = 0.0; };
+    auto applyLaunch = [&](const sea::LaunchHandoff& handoff) {
+        sea::adoptLaunch(session, handoff);
+        sea::YardState ys{buildMode, walkMode, onDeck, launching};
+        sea::clearYardForSail(ys);
+        buildMode = ys.buildMode;
+        walkMode = ys.walkMode;
+        onDeck = ys.onDeck;
+        launching = ys.launching;
+        worldX = float(session.spawnX);
+        worldZ = float(session.spawnZ);
+        heading = float(session.spawnHeading);
+        speed = 0.0f;
+        sinkDepth = 0.0f;
+        sailTier = 1;
+        wHoldTime = 0.0f;
+        shots.clear();
+        enemyShots.clear();
+        yardDirty = false;
+        launchErrors.clear();
+        std::snprintf(shipName, sizeof(shipName), "%s", session.ship.display_name.c_str());
+        const std::string path = sea::saveUserShip("user_ships", session.ship);
+        saveStatus = path.empty() ? "Could not save the hull under user_ships/" : "Saved " + path;
+    };
+    auto adoptSaved = [&](const sea::Ship& loaded) {
+        const sea::LaunchHandoff h = sea::prepareLaunch(
+            loaded, loaded.display_name, islandX, islandZ, kLandRadius);
+        if (!h.ok) return false;
+        sea::adoptLaunch(session, h);
+        worldX = float(session.spawnX);
+        worldZ = float(session.spawnZ);
+        heading = float(session.spawnHeading);
+        speed = 0.0f;
+        sinkDepth = 0.0f;
+        sailTier = 1;
+        wHoldTime = 0.0f;
+        cfg.name = session.ship.display_name;
+        cfg.length = session.ship.bounds.length;
+        cfg.width = session.ship.bounds.width;
+        cfg.depth = session.ship.bounds.depth;
+        yard = sea::makeShipFromConfig(cfg);
+        yardDirty = false;
+        std::snprintf(shipName, sizeof(shipName), "%s", session.ship.display_name.c_str());
+        return true;
+    };
     // Deterministic pseudo-random in [0,1) — no rand(), seeded by time + position.
     auto pseudoRand = [&](double salt) {
         double v = std::sin((timeSec * 1.37 + salt) * 12.9898 + worldX * 0.0719 + worldZ * 0.1237) * 43758.5453;
@@ -337,11 +391,26 @@ int main(int argc, char** argv) {
         enemyShots.clear();
     };
     auto resetShip = [&]() {
-        ship = sea::makeShipFromConfig(cfg);
-        sinkDepth = 0.0f; sailTier = 1; wHoldTime = 0.0f; speed = 0.0f; heading = 0.0f; worldX = 0.0f; worldZ = 0.0f;
+        sea::resetSailSession(session);
+        sinkDepth = 0.0f; sailTier = 1; wHoldTime = 0.0f; speed = 0.0f;
         shots.clear();
+        if (session.active) {
+            worldX = float(session.spawnX);
+            worldZ = float(session.spawnZ);
+            heading = float(session.spawnHeading);
+        } else {
+            heading = 0.0f; worldX = 0.0f; worldZ = 0.0f;
+        }
         spawnEnemyForZone();
     };
+
+    // A hull launched last session is the ship we sail — not the boot sloop.
+    // Skip this for scripted shots so a leftover user_ships/ cannot change the frame.
+    if (!shotMode) {
+        sea::Ship loaded;
+        if (sea::loadShipFile("user_ships/last.ship", loaded) && adoptSaved(loaded))
+            spawnEnemyForZone();
+    }
 
     // Shot mode: pose the scene for a clean capture (no player input arrives).
     if (shotMode) {
@@ -366,13 +435,20 @@ int main(int argc, char** argv) {
             case SDL_EVENT_QUIT: running = false; break;
             case SDL_EVENT_KEY_DOWN:
                 if (e.key.key == SDLK_ESCAPE) running = false;
-                else if (!ImGui::GetIO().WantCaptureKeyboard) {
+                else if (!ImGui::GetIO().WantCaptureKeyboard && !buildMode) {
                     switch (e.key.scancode) {
                     case SDL_SCANCODE_C: ship.systems.cargo_mass = clampf(float(ship.systems.cargo_mass) + 200.0f, 0.0f, 6000.0f); break;
                     case SDL_SCANCODE_V: ship.systems.cargo_mass = clampf(float(ship.systems.cargo_mass) - 200.0f, 0.0f, 6000.0f); break;
                     case SDL_SCANCODE_X: damagePlank(); break;
                     case SDL_SCANCODE_Z: repairAll(); break;
                     case SDL_SCANCODE_R: resetShip(); break;
+                    case SDL_SCANCODE_L:
+                        if (!e.key.repeat) {
+                            sea::Ship loaded;
+                            if (sea::loadShipFile("user_ships/last.ship", loaded) && adoptSaved(loaded))
+                                spawnEnemyForZone();
+                        }
+                        break;
                     case SDL_SCANCODE_SPACE: if (!e.key.repeat) wantFire = true; break;
                     case SDL_SCANCODE_B: if (!e.key.repeat) wantBoard = true; break;
                     default: break; // W/S/A/D sailing is polled below (hold-aware)
@@ -448,19 +524,20 @@ int main(int argc, char** argv) {
 
         const float kFullSpeed = 11.0f;
         const float kTravelSpeed = 16.5f;
-        // This hull's speeds, scaled by its baked profile (long & fine sails faster).
-        const float pFull = kFullSpeed * float(activeProfile.topSpeedFactor);
-        const float pTravel = kTravelSpeed * float(activeProfile.topSpeedFactor);
+        // This hull's handling, from the profile baked at launch (not a fixed sloop).
+        sea::SailFactors hullDrive = sea::sailFactors(session.profile);
+        const float pFull = kFullSpeed * float(hullDrive.topSpeed);
+        const float pTravel = kTravelSpeed * float(hullDrive.topSpeed);
         const float tierSpeed = effTier == 0 ? 0.0f
                               : (effTier == 1 ? pFull * 0.5f
                               : (effTier == 2 ? pFull : pTravel));
         const float rig = float(sea::rigIntegrity(ship)); // a shot-up rig loses drive
         const float targetSpeed = tierSpeed * windFactor * rig;
         // Heavier hulls gather (and lose) way more slowly.
-        speed += (targetSpeed - speed) * clampf(dt * 1.2f * float(activeProfile.accelFactor), 0.0f, 1.0f);
+        speed += (targetSpeed - speed) * clampf(dt * 1.2f * float(hullDrive.accel), 0.0f, 1.0f);
         const float speedFrac = clampf(speed / (pTravel > 0.1f ? pTravel : kTravelSpeed), 0.0f, 1.0f);
         // Turn radius couples to speed AND the hull's agility (short & beamy turns tighter).
-        const float turnRate = 1.35f * (1.0f - 0.62f * speedFrac) * float(activeProfile.turnFactor);
+        const float turnRate = 1.35f * (1.0f - 0.62f * speedFrac) * float(hullDrive.turn);
         heading += steer * turnRate * dt;
         if (buildMode) speed = 0.0f; // frozen on the stocks while building
         worldX += std::sin(heading) * speed * dt;
@@ -475,14 +552,14 @@ int main(int argc, char** argv) {
             }
             wasAground = aground;
         }
-        const float islX = islandX - worldX, islZ = islandZ - worldZ; // island vs. our ship
-        const float islandDist = std::sqrt(islX * islX + islZ * islZ);
-        const bool inSafeZone = islandDist < kSafeRadius; // harbour truce - no combat
+        float islX = islandX - worldX, islZ = islandZ - worldZ; // island vs. our ship
+        float islandDist = std::sqrt(islX * islX + islZ * islZ);
+        bool inSafeZone = islandDist < kSafeRadius; // harbour truce - no combat
 
         // Visible canvas reflects the sail state: furled -> half -> full.
         const float sailFullness = effTier == 0 ? 0.0f : (effTier == 1 ? 0.55f : 1.0f);
 
-        const sea::Stats stats = sea::getShipStats(ship);
+        sea::Stats stats = sea::getShipStats(ship);
         sea::FloatPose pose = sea::computeFloatPose(ship, waves, timeSec, worldX, worldZ, heading);
         // Founder: an over-margin ship sinks progressively; recovers if lightened in time.
         if (stats.sinking) sinkDepth += dt * clampf(std::fabs(float(stats.floatMargin)) / 1200.0f, 0.3f, 3.0f);
@@ -490,7 +567,7 @@ int main(int argc, char** argv) {
         pose.heaveY -= sinkDepth;
 
         // --- Enemy warship: AI maneuver, buoyancy pose, return fire, foundering ---
-        const bool enemyGone = enemySink > 22.0f;
+        bool enemyGone = enemySink > 22.0f;
         enemyReload = clampf(enemyReload - dt, 0.0f, 10.0f);
         sea::FloatPose enemyPose;
         // Keep the enemy out of the harbour safe zone (and thus off the island) — it
@@ -582,13 +659,30 @@ int main(int argc, char** argv) {
         // Build mode: the ship's pieces in this tradition's construction order.
         std::vector<int> border;
         if (buildMode) {
-            border = sea::buildOrder(ship, sea::BuildTradition(buildTrad));
+            border = sea::buildOrder(yard, sea::BuildTradition(buildTrad));
             placed = std::max(0, std::min(placed, int(border.size())));
         }
-        // Launch bake: after the "calculating" beat, freeze the hull's physics profile.
+        // Launch bake: after the "calculating" beat, the yard hull becomes the ship.
         if (launching) {
             launchTimer -= dt;
-            if (launchTimer <= 0.0f) { launching = false; launched = true; activeProfile = sea::bakeHullProfile(ship); }
+            if (launchTimer <= 0.0f) {
+                launching = false;
+                const sea::LaunchHandoff h = sea::prepareLaunch(
+                    launchSnapshot, launchSnapshot.display_name, islandX, islandZ, kLandRadius);
+                if (h.ok) {
+                    applyLaunch(h);
+                    spawnEnemyForZone();
+                    enemyGone = false;
+                    hullDrive = sea::sailFactors(session.profile);
+                    islX = islandX - worldX;
+                    islZ = islandZ - worldZ;
+                    islandDist = std::sqrt(islX * islX + islZ * islZ);
+                    inSafeZone = islandDist < kSafeRadius;
+                    stats = sea::getShipStats(ship);
+                    pose = sea::computeFloatPose(ship, waves, timeSec, worldX, worldZ, heading);
+                    pose.heaveY -= sinkDepth;
+                } else launchErrors = h.errors;
+            }
         }
         // On-foot: walk the yard (WASD move, A/D turn), kept on the dock.
         if (buildMode && walkMode) {
@@ -605,11 +699,11 @@ int main(int argc, char** argv) {
             charZ += std::cos(charHeading) * mv * 3.4f * dt;
             if (onDeck) {
                 // Stay on the deck of the ship (at the origin on the stocks).
-                const float hw = float(ship.bounds.width) * 0.5f - 0.5f;
-                const float hl = float(ship.bounds.length) * 0.5f - 0.5f;
+                const float hw = float(yard.bounds.width) * 0.5f - 0.5f;
+                const float hl = float(yard.bounds.length) * 0.5f - 0.5f;
                 charX = clampf(charX, -hw, hw);
                 charZ = clampf(charZ, -hl, hl);
-                charY = ship_view::deckStandHeight(ship);
+                charY = ship_view::deckStandHeight(yard);
             } else {
                 charX = clampf(charX, -26.0f, 26.0f);
                 charZ = clampf(charZ, -20.0f, 26.0f);
@@ -640,11 +734,28 @@ int main(int argc, char** argv) {
             if (ImGui::Button("Repair")) repairAll();
             ImGui::SameLine();
             if (ImGui::Button("Reset")) resetShip();
+            ImGui::SameLine();
+            if (ImGui::Button("Reload saved hull")) {
+                sea::Ship loaded;
+                if (sea::loadShipFile("user_ships/last.ship", loaded) && adoptSaved(loaded)) {
+                    sea::YardState ys{buildMode, walkMode, onDeck, launching};
+                    sea::clearYardForSail(ys);
+                    buildMode = ys.buildMode;
+                    walkMode = ys.walkMode;
+                    onDeck = ys.onDeck;
+                    launching = ys.launching;
+                    spawnEnemyForZone();
+                } else {
+                    saveStatus = "No saved hull in user_ships/last.ship";
+                }
+            }
             ImGui::TextDisabled("Keys: W raise sail (hold at full = travel), S lower, A/D steer");
-            ImGui::TextDisabled("      Space fire, B board  ·  C/V cargo, X damage, Z repair, R reset");
+            ImGui::TextDisabled("      Space fire, B board  ·  C/V cargo, X damage, Z repair, R reset, L reload");
         }
         if (ImGui::CollapsingHeader("Build mode", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Checkbox("Guided assembly (freeze & build)", &buildMode);
+            if (ImGui::Checkbox("At the shipyard (shape and launch)", &buildMode)) {
+                if (!buildMode) { walkMode = false; onDeck = false; launching = false; }
+            }
             const char* trads[] = { "Roman", "Viking", "English (Age of Sail)" };
             ImGui::Combo("Tradition", &buildTrad, trads, 3);
             ImGui::TextDisabled("%s", sea::traditionName(sea::BuildTradition(buildTrad)));
@@ -653,8 +764,8 @@ int main(int argc, char** argv) {
                 if (walkMode) {
                     if (!onDeck) {
                         if (ImGui::Button("Board ship (up the gangplank)")) {
-                            onDeck = true; charX = 0.0f; charZ = -float(ship.bounds.length) * 0.3f;
-                            charHeading = 0.0f; charY = ship_view::deckStandHeight(ship);
+                            onDeck = true; charX = 0.0f; charZ = -float(yard.bounds.length) * 0.3f;
+                            charHeading = 0.0f; charY = ship_view::deckStandHeight(yard);
                         }
                         ImGui::TextColored(kGreen, "  On the dock - WASD walk, A/D turn.");
                     } else {
@@ -665,32 +776,53 @@ int main(int argc, char** argv) {
                     }
                 }
                 ImGui::Separator();
-                // Shape the hull (until freeform placement exists, drive L/B/depth).
+                // Shape the hull on the stocks. Freeform plank placement is still later;
+                // length / beam / depth rebuild the draft without touching the sailed ship.
+                if (ImGui::InputText("Ship name", shipName, sizeof(shipName))) {
+                    cfg.name = shipName;
+                    yard.display_name = shipName;
+                    yardDirty = true;
+                }
                 bool shapeChanged = false;
                 float shL = float(cfg.length), shB = float(cfg.width), shD = float(cfg.depth);
                 if (ImGui::SliderFloat("Length (m)", &shL, 8.0f, 24.0f, "%.1f")) { cfg.length = shL; shapeChanged = true; }
                 if (ImGui::SliderFloat("Beam (m)",   &shB, 3.0f, 9.0f, "%.1f"))  { cfg.width = shB;  shapeChanged = true; }
                 if (ImGui::SliderFloat("Depth (m)",  &shD, 2.0f, 3.6f, "%.1f"))  { cfg.depth = shD;  shapeChanged = true; }
-                if (shapeChanged) { ship = sea::makeShipFromConfig(cfg); placed = 0; launched = false; }
+                if (shapeChanged) {
+                    cfg.name = shipName;
+                    yard = sea::makeShipFromConfig(cfg);
+                    placed = 0;
+                    yardDirty = true;
+                }
 
-                // Submit for launch -> bake the water-physics profile.
+                ImGui::TextDisabled("Launch sails this shaped hull. The list below is the build order.");
                 if (launching) {
                     ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.2f, 1.0f), "Calculating hull profile...");
-                } else if (ImGui::Button("Submit for launch (bake profile)")) {
-                    launching = true; launchTimer = 1.6f;
+                } else if (ImGui::Button("Launch into the harbour")) {
+                    cfg.name = shipName;
+                    yard.display_name = shipName;
+                    launchSnapshot = yard;
+                    launching = true;
+                    launchTimer = 1.6f;
+                    launchErrors.clear();
                 }
-                if (!launched && !launching)
-                    ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Hull changed - submit to re-bake its profile.");
+                for (const auto& err : launchErrors)
+                    ImGui::TextColored(kRed, "%s", err.message.c_str());
+                if (yardDirty && !launching)
+                    ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Hull changed - launch to sail this shape.");
 
-                // The baked profile — what the boat will sail like.
+                const sea::HullProfile preview = sea::bakeHullProfile(yard);
+                const sea::SailFactors previewDrive = sea::sailFactors(preview);
                 ImGui::Separator();
-                ImGui::Text("Hull:  %.1f x %.1f m, draft %.1f", activeProfile.length, activeProfile.beam, activeProfile.draft);
-                ImGui::Text("Displaces: %.1f t", activeProfile.displacementMass / 1000.0);
-                const char* stab = activeProfile.gm < 0.0 ? "TENDER (tippy)"
-                                 : (activeProfile.gm < 0.4 ? "lively" : (activeProfile.gm < 1.0 ? "stable" : "stiff"));
-                ImGui::Text("Stability: %s (GM %.2f)", stab, activeProfile.gm);
+                ImGui::Text("Hull:  %.1f x %.1f m, draft %.1f", preview.length, preview.beam, preview.draft);
+                ImGui::Text("Displaces: %.1f t", preview.displacementMass / 1000.0);
+                const char* stab = preview.gm < 0.0 ? "TENDER (tippy)"
+                                 : (preview.gm < 0.4 ? "lively" : (preview.gm < 1.0 ? "stable" : "stiff"));
+                ImGui::Text("Stability: %s (GM %.2f)", stab, preview.gm);
                 ImGui::Text("Top speed: %.0f%%   Turn: %.0f%%",
-                            activeProfile.topSpeedFactor * 100.0, activeProfile.turnFactor * 100.0);
+                            previewDrive.topSpeed * 100.0, previewDrive.turn * 100.0);
+                ImGui::Text("Heel: %.0f%%   Accel: %.0f%%",
+                            previewDrive.heel * 100.0, previewDrive.accel * 100.0);
                 ImGui::Separator();
 
                 const int total = int(border.size());
@@ -708,13 +840,19 @@ int main(int argc, char** argv) {
                     ImGui::TextColored(i == step ? kGreen : ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
                                        "%d. %s", i + 1, seq[i].c_str());
             } else {
-                ImGui::TextDisabled("Enable to watch a hull assemble plank by plank.");
+                ImGui::TextDisabled("Open the yard, shape a hull, then launch it into the harbour.");
             }
         }
         if (ImGui::CollapsingHeader("Sailing", ImGuiTreeNodeFlags_DefaultOpen)) {
             const char* tierName = effTier == 0 ? "anchored"
                                  : (effTier == 1 ? "half sail"
                                  : (effTier == 2 ? "full sail" : "TRAVEL SPEED"));
+            ImGui::Text("Vessel:  %s", ship.display_name.c_str());
+            if (session.active)
+                ImGui::TextDisabled("Launched hull  %s", ship.ship_id.c_str());
+            else
+                ImGui::TextDisabled("Reference hull - launch one from Build mode to replace it");
+            if (!saveStatus.empty()) ImGui::TextDisabled("%s", saveStatus.c_str());
             ImGui::Text("Sails:   %s", tierName);
             ImGui::Text("Speed:   %.1f", speed);
             ImGui::TextColored(rig < 0.6f ? kRed : (rig < 0.99f ? ImVec4(1.0f, 0.8f, 0.3f, 1.0f) : kGreen),
@@ -730,10 +868,10 @@ int main(int argc, char** argv) {
                 ImGui::TextColored(zlvl >= 4 ? kRed : kGreen, "Zone:    level %d waters (%s patrol)",
                                    zlvl, sea::zoneShipName(zlvl));
             }
-            const char* hs = activeProfile.gm < 0.0 ? "tender" : (activeProfile.gm < 0.4 ? "lively"
-                            : (activeProfile.gm < 1.0 ? "stable" : "stiff"));
-            ImGui::Text("Hull:    %.0f%% speed, %.0f%% turn (%s)",
-                        activeProfile.topSpeedFactor * 100.0, activeProfile.turnFactor * 100.0, hs);
+            const char* hs = session.profile.gm < 0.0 ? "tender" : (session.profile.gm < 0.4 ? "lively"
+                            : (session.profile.gm < 1.0 ? "stable" : "stiff"));
+            ImGui::Text("Hull:    %.0f%% speed, %.0f%% turn, %.0f%% heel (%s)",
+                        hullDrive.topSpeed * 100.0, hullDrive.turn * 100.0, hullDrive.heel * 100.0, hs);
         }
         if (ImGui::CollapsingHeader("Gunnery & boarding", ImGuiTreeNodeFlags_DefaultOpen)) {
             const char* est = captured ? "captured" : (enemyGone ? "sunk"
@@ -757,7 +895,9 @@ int main(int argc, char** argv) {
                 ImGui::TextColored(r.pass ? kGreen : kRed, "%s  %s", r.pass ? "PASS" : "FAIL", r.name.c_str());
         }
         ImGui::Separator();
-        if (ImGui::CollapsingHeader("Test Sloop - stats", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("Hull stats", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Text("Vessel:       %s", ship.display_name.c_str());
+            ImGui::TextDisabled("%s", ship.ship_id.c_str());
             ImGui::Text("Pieces:       %d", stats.pieceCount);
             ImGui::Text("Mass:         %.0f kg", stats.mass);
             ImGui::Text("Buoyancy:     %.0f kg-eq", stats.buoyancyScore);
@@ -794,17 +934,17 @@ int main(int argc, char** argv) {
         // 3D scene. In build mode: only the pieces placed so far, on calm water,
         // in this tradition's construction order (sailing & combat frozen).
         if (buildMode) {
-            sea::Ship shown = ship;
+            sea::Ship shown = yard;
             shown.pieces.clear();
             const int reveal = walkMode ? int(border.size()) : placed; // full ship to walk around
             for (int i = 0; i < reveal && i < int(border.size()); ++i)
-                shown.pieces.push_back(ship.pieces[border[i]]);
+                shown.pieces.push_back(yard.pieces[border[i]]);
             const bool complete = reveal >= int(border.size());
             if (!complete) { shown.systems.mast_count = 0; shown.systems.sail_count = 0; }
             const float buildOrbit = shotMode ? shotHead : timeSec * 0.12f; // --head frames the shot
             // Shadow pass: the hull on the stocks casts onto the dock.
             shadow::beginPass(kShadowView, kSunX, kSunY, kSunZ, 0.0f, 0.0f, 34.0f);
-            sea::FloatPose bp; bp.heaveY = 2.9f + float(ship.bounds.depth) * 0.55f;
+            sea::FloatPose bp; bp.heaveY = 2.9f + float(yard.bounds.depth) * 0.55f;
             ship_mesh::renderDepth(kShadowView, shown, bp, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
             ship_view::renderBuildScene(kClearView, shown, waves, timeSec, buildOrbit, width, height,
                                         walkMode, charX, charY, charZ, charHeading, walkPhase);
@@ -819,7 +959,7 @@ int main(int argc, char** argv) {
             ship_view::shadowFrame(islX, islZ, shCx, shCz, shR, shIsland);
             shadow::beginPass(kShadowView, kSunX, kSunY, kSunZ, shCx, shCz, shR);
             if (!iso && !noShadow) {
-                ship_mesh::renderDepth(kShadowView, ship, pose, heading, windDir, sailFullness, 0.0f, 0.0f, float(activeProfile.heelFactor));
+                ship_mesh::renderDepth(kShadowView, ship, pose, heading, windDir, sailFullness, 0.0f, 0.0f, float(hullDrive.heel));
                 if (!enemyGone)
                     ship_mesh::renderDepth(kShadowView, enemy, enemyPose, enemyHeading, windDir,
                                            enemyStruck ? 0.0f : 0.75f, enemyWorldX - worldX, enemyWorldZ - worldZ);
@@ -829,7 +969,7 @@ int main(int argc, char** argv) {
                 ship_view::renderIsland(kShadowView, islX, islZ);
                 ship_mesh::setDepthPass(false);
             }
-            ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height, float(activeProfile.heelFactor), islandX, islandZ, kLandCutRadius, speed);
+            ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height, float(hullDrive.heel), islandX, islandZ, kLandCutRadius, speed);
             if (!enemyGone && !iso) {
                 ship_view::renderShip(kClearView, enemy, enemyPose, enemyHeading, windDir,
                                       enemyStruck ? 0.0f : 0.75f, timeSec, // furled sails once she strikes
