@@ -264,6 +264,15 @@ int main(int argc, char** argv) {
     bool buildMode = false;
     int buildTrad = 2;  // 0 Roman, 1 Viking, 2 English (Age of Sail)
     int placed = 0;     // pieces revealed so far
+    // Freeform shaping. Sliders seed a template; station clicks place timbers by hand.
+    int placeTool = 0;  // PlaceTool: rib, plank, garboard, wale, floor, knee
+    int placeStation = 4;
+    int placeSide = 1;  // +1 starboard, -1 port
+    int placeCourse = 0;
+    float placeBeam = 1.8f;
+    float placeHeight = 1.6f;
+    std::string placeMsg = "Pick a timber, then click a station (stern to bow) to place it.";
+    bool placeBad = false, placeWarn = false;
 
     // The hull's baked water-physics profile (Build -> Sail bridge). Sailing reads
     // top-speed & turn from it, so the boat sails like the shape you built.
@@ -299,7 +308,9 @@ int main(int argc, char** argv) {
     }
 
     auto clampf = [](float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); };
-    auto isHull = [](const sea::Piece& p) { return p.type == "plank" || p.type == "rib" || p.type == "keel"; };
+    auto isHull = [](const sea::Piece& p) {
+        return p.type == "keel" || sea::isFramePiece(p.type) || sea::isShellPiece(p.type);
+    };
     auto damagePlank = [&]() {
         int n = 0;
         for (const auto& p : ship.pieces) if (isHull(p) && p.damage < 1.0) ++n;
@@ -646,7 +657,8 @@ int main(int argc, char** argv) {
         if (ImGui::CollapsingHeader("Build mode", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Checkbox("Guided assembly (freeze & build)", &buildMode);
             const char* trads[] = { "Roman", "Viking", "English (Age of Sail)" };
-            ImGui::Combo("Tradition", &buildTrad, trads, 3);
+            if (ImGui::Combo("Tradition", &buildTrad, trads, 3))
+                sea::stampJoinery(ship, sea::BuildTradition(buildTrad));
             ImGui::TextDisabled("%s", sea::traditionName(sea::BuildTradition(buildTrad)));
             if (buildMode) {
                 ImGui::Checkbox("Walk the yard (on foot)", &walkMode);
@@ -665,13 +677,19 @@ int main(int argc, char** argv) {
                     }
                 }
                 ImGui::Separator();
-                // Shape the hull (until freeform placement exists, drive L/B/depth).
+                // Sliders seed a starting hull. Freeform edits below replace that shape in the bake.
                 bool shapeChanged = false;
                 float shL = float(cfg.length), shB = float(cfg.width), shD = float(cfg.depth);
                 if (ImGui::SliderFloat("Length (m)", &shL, 8.0f, 24.0f, "%.1f")) { cfg.length = shL; shapeChanged = true; }
                 if (ImGui::SliderFloat("Beam (m)",   &shB, 3.0f, 9.0f, "%.1f"))  { cfg.width = shB;  shapeChanged = true; }
                 if (ImGui::SliderFloat("Depth (m)",  &shD, 2.0f, 3.6f, "%.1f"))  { cfg.depth = shD;  shapeChanged = true; }
-                if (shapeChanged) { ship = sea::makeShipFromConfig(cfg); placed = 0; launched = false; }
+                if (shapeChanged) {
+                    ship = sea::makeShipFromConfig(cfg);
+                    sea::stampJoinery(ship, sea::BuildTradition(buildTrad));
+                    placed = 100000; launched = false;
+                    placeMsg = "Template re-seeded from the sliders. Hand edits were cleared.";
+                    placeBad = false; placeWarn = false;
+                }
 
                 // Submit for launch -> bake the water-physics profile.
                 if (launching) {
@@ -693,6 +711,98 @@ int main(int argc, char** argv) {
                             activeProfile.topSpeedFactor * 100.0, activeProfile.turnFactor * 100.0);
                 ImGui::Separator();
 
+                // Freeform: click a station to lay the selected timber by hand.
+                // The guided reveal below only shows or hides pieces.
+                if (ImGui::TreeNodeEx("Freeform placement", ImGuiTreeNodeFlags_DefaultOpen)) {
+                    const sea::BuildTradition trad = sea::BuildTradition(buildTrad);
+                    const int stations = sea::hullStationCount(ship);
+                    if (placeStation >= stations) placeStation = stations - 1;
+                    if (placeStation < 0) placeStation = 0;
+                    auto doPlace = [&](int station) {
+                        placeStation = station;
+                        sea::PlaceSpec spec;
+                        spec.tool = sea::PlaceTool(placeTool);
+                        spec.station = station;
+                        spec.stations = stations;
+                        spec.side = placeSide;
+                        spec.course = placeCourse;
+                        spec.halfBeam = placeBeam;
+                        spec.height = placeHeight;
+                        const sea::PlaceReport rep = sea::placePiece(ship, trad, spec);
+                        placeMsg = rep.message;
+                        placeBad = !rep.ok;
+                        placeWarn = rep.ok && rep.warning;
+                        if (rep.ok) { placed = 100000; launched = false; }
+                    };
+
+                    ImGui::TextDisabled("Sliders seed the template. Click a station to place by hand.");
+                    ImGui::TextDisabled("Backbone first. Roman/Viking: planks before frames.");
+                    ImGui::TextDisabled("English: frames before planks. Viking strakes lap the course below.");
+                    const char* tools[] = { "Rib", "Plank", "Garboard", "Wale", "Floor", "Knee" };
+                    ImGui::Combo("Timber", &placeTool, tools, 6);
+                    const bool shellTool = placeTool == 1 || placeTool == 2 || placeTool == 3;
+                    const bool frameTool = placeTool == 0 || placeTool == 4;
+                    if (shellTool || placeTool == 5) {
+                        if (ImGui::RadioButton("Port", placeSide < 0)) placeSide = -1;
+                        ImGui::SameLine();
+                        if (ImGui::RadioButton("Starboard", placeSide > 0)) placeSide = 1;
+                    }
+                    if (shellTool && placeTool != 2)
+                        ImGui::SliderInt("Course (0 = garboard)", &placeCourse, 0, 7);
+                    ImGui::SliderFloat("Half-beam (m)", &placeBeam, 0.35f, 4.2f, "%.2f");
+                    if (frameTool)
+                        ImGui::SliderFloat("Frame height (m)", &placeHeight, 0.4f, 3.2f, "%.2f");
+
+                    ImGui::TextUnformatted("Stations, stern to bow (click to place):");
+                    for (int i = 0; i < stations; ++i) {
+                        if (i) ImGui::SameLine();
+                        char label[16];
+                        std::snprintf(label, sizeof(label), "%d", i + 1);
+                        const bool sel = i == placeStation;
+                        if (sel) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.45f, 0.28f, 1.0f));
+                        if (ImGui::SmallButton(label)) doPlace(i);
+                        if (sel) ImGui::PopStyleColor();
+                    }
+                    if (ImGui::Button("Place at selected station")) doPlace(placeStation);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Undo timber")) {
+                        if (sea::strikeLastHand(ship)) {
+                            placeMsg = "Struck the last hand-placed timber.";
+                            placeBad = false; placeWarn = false;
+                            placed = 100000; launched = false;
+                        } else {
+                            placeMsg = "No hand-placed timber to strike.";
+                            placeBad = true; placeWarn = false;
+                        }
+                    }
+                    if (ImGui::Button("Strip frames")) {
+                        const int n = sea::stripTimbers(ship, true);
+                        placeMsg = n ? "Stripped the frames." : "No frames to strip.";
+                        placeBad = n == 0; placeWarn = false;
+                        if (n) { placed = 100000; launched = false; }
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Strip planking")) {
+                        const int n = sea::stripTimbers(ship, false);
+                        placeMsg = n ? "Stripped the planking." : "No planking to strip.";
+                        placeBad = n == 0; placeWarn = false;
+                        if (n) { placed = 100000; launched = false; }
+                    }
+                    const ImVec4 msgCol = placeBad ? kRed : (placeWarn ? ImVec4(1.0f, 0.8f, 0.3f, 1.0f) : kGreen);
+                    ImGui::TextColored(msgCol, "%s", placeMsg.c_str());
+                    if (ship.freeform) {
+                        const sea::HullMeasure m = sea::measureHull(ship);
+                        if (m.ok)
+                            ImGui::Text("Placed hull: %.1f x %.1f m, depth %.1f, Cb %.2f",
+                                        m.length, m.beam, m.depth, m.blockCoeff);
+                        ImGui::TextDisabled("Submit bakes this placed geometry, not the slider seed.");
+                    } else {
+                        ImGui::TextDisabled("Bake uses the sliders until you place or strip a timber.");
+                    }
+                    ImGui::TreePop();
+                }
+                ImGui::Separator();
+
                 const int total = int(border.size());
                 ImGui::Text("Placed: %d / %d pieces", placed, total);
                 if (ImGui::Button("Lay next")) placed = std::min(placed + 1, total);
@@ -700,6 +810,7 @@ int main(int argc, char** argv) {
                 ImGui::SameLine(); if (ImGui::Button("Build all")) placed = total;
                 ImGui::SameLine(); if (ImGui::Button("Clear")) placed = 0;
                 ImGui::SliderInt("Reveal", &placed, 0, total);
+                ImGui::TextDisabled("Reveal only shows or hides pieces. Undo timber / Strip remove them.");
                 const std::vector<std::string> seq = sea::buildSequence(sea::BuildTradition(buildTrad));
                 const int step = total > 0
                     ? std::min(int(seq.size()) - 1, placed * int(seq.size()) / total) : 0;
