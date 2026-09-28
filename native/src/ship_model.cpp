@@ -463,19 +463,72 @@ double tackleAdvantage(int parts) {
 }
 
 int resolveHits(std::vector<Projectile>& shots, Ship& target,
-                double tx, double ty, double tz, double heading) {
+                double tx, double ty, double tz, double heading, double damageScale) {
+    const double scale = clampd(damageScale, 0.0, 1.0);
     int hits = 0;
     for (auto& p : shots) {
         if (!p.alive) continue;
         if (pointInHull(target, tx, ty, tz, heading, p.x, p.y, p.z)) {
             p.alive = false;
             // High shots rake the rigging (slowing her); low shots flood the hull.
-            if (p.y > ty + target.bounds.depth * 0.55) damageRig(target, 0.5);
-            else damageHull(target, 0.34);
+            // A brace scales both (0 negates the broadside, the ball is still spent).
+            if (scale > 0.0) {
+                if (p.y > ty + target.bounds.depth * 0.55) damageRig(target, 0.5 * scale);
+                else damageHull(target, 0.34 * scale);
+            }
             ++hits;
         }
     }
     return hits;
+}
+
+void stepBrace(BraceState& s, bool holding, double dt) {
+    if (dt < 0.0) dt = 0.0;
+
+    // Lockout: the crew is spent. Holding does nothing and the meter stays empty.
+    if (s.cooldown > 0.0) {
+        s.cooldown = std::max(0.0, s.cooldown - dt);
+        s.active = false;
+        s.held = 0.0;
+        s.wasHolding = holding;
+        return;
+    }
+
+    const bool rising = holding && !s.wasHolding;
+    if (s.active) {
+        if (!holding) {
+            // Released early: drop the brace, keep what's left of the meter.
+            s.active = false;
+            s.held = 0.0;
+        } else {
+            s.held += dt;
+            s.stamina = std::max(0.0, s.stamina - kBraceDrainPerSec * dt);
+            if (s.stamina <= 0.0) {
+                s.stamina = 0.0;
+                s.active = false;
+                s.held = 0.0;
+                s.cooldown = kBraceLockoutSec;
+            }
+        }
+    } else if (rising && s.stamina >= kBraceEngageCost) {
+        // Pay the engage cost and cover this tick even if that empties the
+        // meter. The next held tick (below) is what trips the lockout, so a
+        // press that just barely affords the cost still meets the broadside.
+        s.stamina -= kBraceEngageCost;
+        s.active = true;
+        s.held = dt;
+        s.stamina = std::max(0.0, s.stamina - kBraceDrainPerSec * dt);
+    }
+
+    if (!s.active && s.cooldown <= 0.0)
+        s.stamina = std::min(1.0, s.stamina + kBraceRecoverPerSec * dt);
+    s.wasHolding = holding;
+}
+
+double braceDamageScale(const BraceState& s) {
+    if (!s.active) return 1.0;
+    if (s.held <= kBraceWindowSec) return 0.0;
+    return kBraceSoftenScale;
 }
 
 AiOrders aiCaptain(double ex, double ez, double eHeading,
@@ -893,6 +946,86 @@ std::vector<TestResult> runSelfTest() {
         resolveHits(low, hullTarget, 0, 0, 0, 0.0);
         push("A low shot floods the hull, not the rig",
              getShipStats(hullTarget).damageRatio > 0.0 && rigIntegrity(hullTarget) > 0.99);
+    }
+
+    // --- Brace (timed damage negation) ---
+    {
+        BraceState timed;
+        stepBrace(timed, true, 0.05); // rising edge: engage inside the window
+        Ship bracedHull = makeShipFromConfig(baseCfg);
+        std::vector<Projectile> low = { Projectile{ 0, 0, 0, 0, 0, 0, 4.0, true } };
+        const int hit = resolveHits(low, bracedHull, 0, 0, 0, 0.0, braceDamageScale(timed));
+        Ship bracedRig = makeShipFromConfig(baseCfg);
+        const double hi = bracedRig.bounds.depth * 0.85;
+        std::vector<Projectile> high = { Projectile{ 0, hi, 0, 0, 0, 0, 4.0, true } };
+        resolveHits(high, bracedRig, 0, 0, 0, 0.0, braceDamageScale(timed));
+        const bool negated = timed.active && braceDamageScale(timed) == 0.0
+            && hit == 1 && !low[0].alive
+            && getShipStats(bracedHull).damageRatio == 0.0
+            && rigIntegrity(bracedRig) > 0.99;
+        push("A timed brace negates hull and rig damage", negated,
+             negated ? "" : "scale " + num(braceDamageScale(timed) * 100));
+
+        BraceState late;
+        stepBrace(late, true, 0.05);
+        int guard = 0;
+        while (late.active && late.held <= kBraceWindowSec && guard++ < 400)
+            stepBrace(late, true, 0.05);
+        Ship softHull = makeShipFromConfig(baseCfg);
+        Ship fullHull = makeShipFromConfig(baseCfg);
+        std::vector<Projectile> softLow = { Projectile{ 0, 0, 0, 0, 0, 0, 4.0, true } };
+        std::vector<Projectile> fullLow = { Projectile{ 0, 0, 0, 0, 0, 0, 4.0, true } };
+        resolveHits(softLow, softHull, 0, 0, 0, 0.0, braceDamageScale(late));
+        resolveHits(fullLow, fullHull, 0, 0, 0, 0.0, 1.0);
+        Ship softRig = makeShipFromConfig(baseCfg);
+        Ship fullRig = makeShipFromConfig(baseCfg);
+        const double rigY = softRig.bounds.depth * 0.85;
+        std::vector<Projectile> softHigh = { Projectile{ 0, rigY, 0, 0, 0, 0, 4.0, true } };
+        std::vector<Projectile> fullHigh = { Projectile{ 0, rigY, 0, 0, 0, 0, 4.0, true } };
+        resolveHits(softHigh, softRig, 0, 0, 0, 0.0, braceDamageScale(late));
+        resolveHits(fullHigh, fullRig, 0, 0, 0, 0.0, 1.0);
+        const double softDmg = getShipStats(softHull).damageRatio;
+        const double fullDmg = getShipStats(fullHull).damageRatio;
+        const double softInt = rigIntegrity(softRig);
+        const double fullInt = rigIntegrity(fullRig);
+        const bool softened = late.active && eq(braceDamageScale(late), kBraceSoftenScale)
+            && softDmg > 0.0 && softDmg < fullDmg
+            && softInt > fullInt && softInt < 0.99;
+        push("Bracing past the window only softens hull and rig damage", softened);
+
+        BraceState spent;
+        stepBrace(spent, true, 0.05);
+        guard = 0;
+        while (spent.active && guard++ < 800) stepBrace(spent, true, 0.05);
+        const bool emptied = !spent.active && spent.stamina == 0.0
+            && spent.cooldown == kBraceLockoutSec && braceDamageScale(spent) == 1.0;
+        push("Holding brace drains the meter into a lockout", emptied);
+
+        const double cd = spent.cooldown;
+        stepBrace(spent, false, 0.1); // release, still locked
+        stepBrace(spent, true, 0.1);  // fresh press during the lockout
+        push("Brace stays down through the lockout",
+             !spent.active && spent.cooldown > 0.0 && spent.cooldown < cd
+             && braceDamageScale(spent) == 1.0);
+
+        while (spent.cooldown > 0.0) stepBrace(spent, false, 0.05);
+        stepBrace(spent, true, 0.05); // rising edge, meter still empty
+        const bool tooSoon = !spent.active && spent.stamina < kBraceEngageCost;
+        guard = 0;
+        while (spent.stamina < kBraceEngageCost && guard++ < 800)
+            stepBrace(spent, false, 0.05);
+        stepBrace(spent, true, 0.05);
+        push("Brace engages again only after the meter recovers",
+             tooSoon && spent.active && braceDamageScale(spent) == 0.0);
+
+        BraceState tap;
+        stepBrace(tap, true, 0.20);
+        const double left = tap.stamina;
+        stepBrace(tap, false, 0.0); // release before the meter empties
+        const bool dropped = !tap.active && tap.cooldown == 0.0 && eq(tap.stamina, left);
+        stepBrace(tap, false, 1.0);
+        push("Releasing brace early refills stamina with no lockout",
+             dropped && tap.cooldown == 0.0 && tap.stamina > left && tap.stamina <= 1.0);
     }
 
     // --- Enemy AI captain ---
