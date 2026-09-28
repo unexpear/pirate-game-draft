@@ -762,6 +762,283 @@ Ship deserialize(const std::string& text) {
     return s;
 }
 
+double leewardHeel(double heading, double windDir, double sailFullness, double heelScale) {
+    const double align = std::cos(heading - windDir);
+    const double awa = std::acos(clampd(-align, -1.0, 1.0)); // 0 = in irons .. pi = astern
+    const double lee = (std::sin(windDir - heading) >= 0.0) ? 1.0 : -1.0;
+    const double power = sailPower(awa * 57.2957795);
+    return lee * 0.34 * power * std::sin(awa) * sailFullness * heelScale;
+}
+
+namespace {
+
+constexpr double kDeckBody = 0.30; // half-breadth of the box figure, metres
+
+struct DeckBlock { double minX, maxX, minZ, maxZ; };
+
+const Piece* findPiece(const Ship& ship, const char* type) {
+    for (const auto& p : ship.pieces)
+        if (p.type == type) return &p;
+    return nullptr;
+}
+
+std::vector<DeckBlock> deckBlocks(const Ship& ship) {
+    std::vector<DeckBlock> blocks;
+    for (const auto& p : ship.pieces) {
+        if (p.type != "mast" && p.type != "capstan" && p.type != "helm") continue;
+        DeckBlock b;
+        b.minX = p.position.x - p.bounds.x * 0.5 - kDeckBody;
+        b.maxX = p.position.x + p.bounds.x * 0.5 + kDeckBody;
+        b.minZ = p.position.z - p.bounds.z * 0.5 - kDeckBody;
+        b.maxZ = p.position.z + p.bounds.z * 0.5 + kDeckBody;
+        blocks.push_back(b);
+    }
+    return blocks;
+}
+
+bool inBlock(double x, double z, const DeckBlock& b) {
+    return x > b.minX && x < b.maxX && z > b.minZ && z < b.maxZ;
+}
+
+void pushOutOfBlock(double& x, double& z, const DeckBlock& b) {
+    const double dl = x - b.minX, dr = b.maxX - x, db = z - b.minZ, df = b.maxZ - z;
+    const double m = std::min(std::min(dl, dr), std::min(db, df));
+    if (m == dl) x = b.minX;
+    else if (m == dr) x = b.maxX;
+    else if (m == db) z = b.minZ;
+    else z = b.maxZ;
+}
+
+bool inRect(double x, double z, const DeckRect& r) {
+    return x >= r.minX && x <= r.maxX && z >= r.minZ && z <= r.maxZ;
+}
+
+bool onWalkableDeck(const Ship& ship, double x, double z) {
+    if (!inRect(x, z, deckFootprint(ship))) return false;
+    for (const auto& b : deckBlocks(ship))
+        if (inBlock(x, z, b)) return false;
+    return true;
+}
+
+// bx::mtxSRT columns (scale 1, ZYX). See shipLocalToScene.
+struct ShipFrame {
+    double c0x, c0y, c0z, c1x, c1y, c1z, c2x, c2y, c2z;
+    double tx, ty, tz;
+};
+
+ShipFrame makeShipFrame(const FloatPose& pose, double shipHeading, double windHeel,
+                        double shipSceneX, double shipSceneZ) {
+    const double sx = std::sin(pose.pitch), cx = std::cos(pose.pitch);
+    const double sy = std::sin(shipHeading), cy = std::cos(shipHeading);
+    const double roll = pose.heel + windHeel;
+    const double sz = std::sin(roll), cz = std::cos(roll);
+    ShipFrame f;
+    f.c0x = cy * cz;
+    f.c0y = cz * sx * sy - cx * sz;
+    f.c0z = cx * cz * sy + sx * sz;
+    f.c1x = cy * sz;
+    f.c1y = cx * cz + sx * sy * sz;
+    f.c1z = -cz * sx + cx * sy * sz;
+    f.c2x = -sy;
+    f.c2y = cy * sx;
+    f.c2z = cx * cy;
+    f.tx = shipSceneX;
+    f.ty = pose.heaveY;
+    f.tz = shipSceneZ;
+    return f;
+}
+
+} // namespace
+
+DeckRect deckFootprint(const Ship& ship) {
+    DeckRect d;
+    if (const Piece* deck = findPiece(ship, "deck")) {
+        d.minX = deck->position.x - deck->bounds.x * 0.5 + kDeckBody;
+        d.maxX = deck->position.x + deck->bounds.x * 0.5 - kDeckBody;
+        d.minZ = deck->position.z - deck->bounds.z * 0.5 + kDeckBody;
+        d.maxZ = deck->position.z + deck->bounds.z * 0.5 - kDeckBody;
+        d.feetY = deck->position.y + deck->bounds.y * 0.5 + 0.02;
+    } else {
+        d.minX = -ship.bounds.width * 0.5 + kDeckBody;
+        d.maxX = ship.bounds.width * 0.5 - kDeckBody;
+        d.minZ = -ship.bounds.length * 0.5 + kDeckBody;
+        d.maxZ = ship.bounds.length * 0.5 - kDeckBody;
+        d.feetY = ship.bounds.depth * 0.05;
+    }
+    if (d.minX > d.maxX) { const double mid = (d.minX + d.maxX) * 0.5; d.minX = d.maxX = mid; }
+    if (d.minZ > d.maxZ) { const double mid = (d.minZ + d.maxZ) * 0.5; d.minZ = d.maxZ = mid; }
+    return d;
+}
+
+bool clampDeckFooting(const Ship& ship, double& x, double& z) {
+    const double ox = x, oz = z;
+    const DeckRect fp = deckFootprint(ship);
+    x = clampd(x, fp.minX, fp.maxX);
+    z = clampd(z, fp.minZ, fp.maxZ);
+    const std::vector<DeckBlock> blocks = deckBlocks(ship);
+    for (int pass = 0; pass < 4; ++pass) {
+        for (const auto& b : blocks)
+            if (inBlock(x, z, b)) pushOutOfBlock(x, z, b);
+    }
+    x = clampd(x, fp.minX, fp.maxX);
+    z = clampd(z, fp.minZ, fp.maxZ);
+    return x != ox || z != oz;
+}
+
+void stepDeckWalk(const Ship& ship, double& x, double& z, double& heading,
+                  double forward, double turn) {
+    heading += turn;
+    const double dx = std::sin(heading) * forward;
+    const double dz = std::cos(heading) * forward;
+    if (onWalkableDeck(ship, x + dx, z + dz)) { x += dx; z += dz; }
+    else if (onWalkableDeck(ship, x + dx, z)) x += dx;
+    else if (onWalkableDeck(ship, x, z + dz)) z += dz;
+}
+
+Vec3 shipLocalToScene(double localX, double localY, double localZ,
+                      const FloatPose& pose, double shipHeading, double windHeel,
+                      double shipSceneX, double shipSceneZ) {
+    const ShipFrame f = makeShipFrame(pose, shipHeading, windHeel, shipSceneX, shipSceneZ);
+    Vec3 w;
+    w.x = localX * f.c0x + localY * f.c1x + localZ * f.c2x + f.tx;
+    w.y = localX * f.c0y + localY * f.c1y + localZ * f.c2y + f.ty;
+    w.z = localX * f.c0z + localY * f.c1z + localZ * f.c2z + f.tz;
+    return w;
+}
+
+Vec3 sceneToShipLocal(double sceneX, double sceneY, double sceneZ,
+                      const FloatPose& pose, double shipHeading, double windHeel,
+                      double shipSceneX, double shipSceneZ) {
+    const ShipFrame f = makeShipFrame(pose, shipHeading, windHeel, shipSceneX, shipSceneZ);
+    const double dx = sceneX - f.tx, dy = sceneY - f.ty, dz = sceneZ - f.tz;
+    Vec3 local;
+    local.x = dx * f.c0x + dy * f.c0y + dz * f.c0z;
+    local.y = dx * f.c1x + dy * f.c1y + dz * f.c1z;
+    local.z = dx * f.c2x + dy * f.c2y + dz * f.c2z;
+    return local;
+}
+
+void deckFlatForward(double localHeading, const FloatPose& pose, double shipHeading,
+                     double windHeel, double& outX, double& outZ) {
+    const double lx = std::sin(localHeading);
+    const double lz = std::cos(localHeading);
+    const Vec3 tip = shipLocalToScene(lx, 0.0, lz, pose, shipHeading, windHeel, 0.0, 0.0);
+    const Vec3 org = shipLocalToScene(0.0, 0.0, 0.0, pose, shipHeading, windHeel, 0.0, 0.0);
+    double fx = tip.x - org.x, fz = tip.z - org.z;
+    const double len = std::sqrt(fx * fx + fz * fz);
+    if (len < 1e-8) {
+        fx = -std::sin(shipHeading);
+        fz = std::cos(shipHeading);
+    } else {
+        fx /= len;
+        fz /= len;
+    }
+    outX = fx;
+    outZ = fz;
+}
+
+Ramp yardGangplank(double shipLength, double dockFeetY, double deckFeetY) {
+    Ramp r;
+    r.x = 0.0;
+    r.halfWidth = 0.9;
+    // Meets the aft edge of yardDeckRect (hull half-length, inset 0.5 m).
+    r.z1 = -shipLength * 0.5 + 0.5;
+    r.z0 = r.z1 - 3.4;
+    r.y0 = dockFeetY;
+    r.y1 = deckFeetY;
+    return r;
+}
+
+RampHit sampleRamp(const Ramp& ramp, double x, double z) {
+    RampHit h;
+    const double span = ramp.z1 - ramp.z0;
+    if (std::fabs(span) < 1e-9) return h;
+    if (std::fabs(x - ramp.x) > ramp.halfWidth) return h;
+    if (z < ramp.z0 || z > ramp.z1) return h;
+    h.on = true;
+    h.t = (z - ramp.z0) / span;
+    h.y = lerp(ramp.y0, ramp.y1, h.t);
+    return h;
+}
+
+DeckRect yardDeckRect(const Ship& ship, double feetY) {
+    constexpr double kInset = 0.5;
+    DeckRect d;
+    d.minX = -ship.bounds.width * 0.5 + kInset;
+    d.maxX = ship.bounds.width * 0.5 - kInset;
+    d.minZ = -ship.bounds.length * 0.5 + kInset;
+    d.maxZ = ship.bounds.length * 0.5 - kInset;
+    d.feetY = feetY;
+    return d;
+}
+
+YardMove stepYardFooting(const Ramp& ramp, const Aabb2& dock, const DeckRect& deck,
+                         double dockFeetY, double x, double z, double heading,
+                         double forward, bool onDeck) {
+    const double nx = x + std::sin(heading) * forward;
+    const double nz = z + std::cos(heading) * forward;
+    YardMove m;
+    if (onDeck) {
+        const bool pressingAft = nz < deck.minZ && z <= deck.minZ + 0.05;
+        const bool overMouth = std::fabs(x - ramp.x) <= ramp.halfWidth
+                            && std::fabs(nx - ramp.x) <= ramp.halfWidth + 0.2;
+        if (pressingAft && overMouth) {
+            m.onDeck = false;
+            m.x = clampd(nx, ramp.x - ramp.halfWidth, ramp.x + ramp.halfWidth);
+            m.z = ramp.z1 - 0.08;
+            const RampHit back = sampleRamp(ramp, m.x, m.z);
+            m.y = back.on ? back.y : dockFeetY;
+            return m;
+        }
+        m.onDeck = true;
+        m.x = clampd(nx, deck.minX, deck.maxX);
+        m.z = clampd(nz, deck.minZ, deck.maxZ);
+        m.y = deck.feetY;
+        return m;
+    }
+
+    const RampHit was = sampleRamp(ramp, x, z);
+    double px = nx, pz = nz;
+    RampHit now = sampleRamp(ramp, px, pz);
+    // The upper steps are above the dock. Mount the plank from its foot (you
+    // were below z0, walking up). A sideways step onto a tread is rejected.
+    const bool fromFoot = z < ramp.z0 && pz > z;
+    if (now.on && !was.on && now.t > 0.2 && !fromFoot) {
+        m.onDeck = false;
+        m.x = x;
+        m.z = z;
+        m.y = dockFeetY;
+        return m;
+    }
+    const bool zIn = pz >= ramp.z0 && pz <= ramp.z1;
+    if (!now.on && was.on && was.t > 0.15 && zIn) {
+        px = clampd(px, ramp.x - ramp.halfWidth, ramp.x + ramp.halfWidth);
+        now = sampleRamp(ramp, px, pz);
+    }
+    // A step that reaches or crosses the top of the plank boards the deck.
+    // Large ticks can jump past z1 in one go, which is still a climb, not a
+    // fall back onto the dock.
+    if ((pz - z) > 0.0 && ((now.on && now.t >= 0.98) || (was.on && pz >= ramp.z1))) {
+        m.onDeck = true;
+        m.x = clampd(px, deck.minX, deck.maxX);
+        m.z = clampd(std::max(std::min(pz, ramp.z1), deck.minZ), deck.minZ, deck.maxZ);
+        m.y = deck.feetY;
+        return m;
+    }
+    if (now.on) {
+        m.onDeck = false;
+        m.x = px;
+        m.z = pz;
+        m.y = now.y;
+        return m;
+    }
+    m.onDeck = false;
+    m.x = clampd(px, dock.minX, dock.maxX);
+    m.z = clampd(pz, dock.minZ, dock.maxZ);
+    m.y = dockFeetY;
+    return m;
+}
+
 std::vector<TestResult> runSelfTest() {
     std::vector<TestResult> r;
     auto eq = [](double a, double b) { return std::fabs(a - b) < 1e-6; };
@@ -1100,6 +1377,122 @@ std::vector<TestResult> runSelfTest() {
              num(l1.cannonCount) + " -> " + num(l5.cannonCount));
         push("Higher-level enemies are larger", l5.length > l1.length && l5.width > l1.width);
         push("Enemy broadsides are even (guns split per side)", (l1.cannonCount % 2) == 0 && (l5.cannonCount % 2) == 0);
+    }
+
+    // --- Walking the deck: ship-local footing --------------------------------
+    {
+        auto near = [](double a, double b, double eps = 1e-9) { return std::fabs(a - b) < eps; };
+        const Ship sloop = makeShipFromConfig(ShipConfig{});
+        const DeckRect fp = deckFootprint(sloop);
+        push("Deck footprint sits inside the hull",
+             fp.maxX < sloop.bounds.width * 0.5 && fp.minX > -sloop.bounds.width * 0.5
+             && fp.maxZ < sloop.bounds.length * 0.5 && fp.minZ > -sloop.bounds.length * 0.5
+             && fp.feetY > 0.0);
+
+        double cx = 1000.0, cz = -1000.0;
+        const bool moved = clampDeckFooting(sloop, cx, cz);
+        push("Clamp pulls a far point onto the deck",
+             moved && cx >= fp.minX && cx <= fp.maxX && cz >= fp.minZ && cz <= fp.maxZ);
+
+        const Piece* mast = nullptr;
+        for (const auto& p : sloop.pieces) if (p.type == "mast") mast = &p;
+        double mx = mast ? mast->position.x : 0.0;
+        double mz = mast ? mast->position.z : 0.0;
+        clampDeckFooting(sloop, mx, mz);
+        const bool clearOfMast = mast && (std::fabs(mx - mast->position.x) > mast->bounds.x * 0.5
+                                        || std::fabs(mz - mast->position.z) > mast->bounds.z * 0.5);
+        push("Clamp pushes footing out of the mast", clearOfMast && mx >= fp.minX && mx <= fp.maxX);
+
+        // Slide along the starboard edge instead of walking off it.
+        double ex = fp.maxX, ez = (fp.minZ + fp.maxZ) * 0.5, eh = PI * 0.25;
+        const double ezBefore = ez;
+        stepDeckWalk(sloop, ex, ez, eh, /*forward*/ 1.0, /*turn*/ 0.0);
+        push("A step off the deck edge slides along it",
+             ex <= fp.maxX + 1e-9 && ez > ezBefore && onWalkableDeck(sloop, ex, ez));
+
+        // Planted foot: zero input does not move ship-local coordinates, while a
+        // change of pose moves the scene position and the inverse brings it back.
+        double px = 0.4, pz = 1.0, ph = 0.3;
+        if (!onWalkableDeck(sloop, px, pz)) { px = 0.0; pz = (fp.minZ + fp.maxZ) * 0.5; }
+        const double px0 = px, pz0 = pz, ph0 = ph;
+        stepDeckWalk(sloop, px, pz, ph, 0.0, 0.0);
+        push("Standing still keeps ship-local footing", px == px0 && pz == pz0 && ph == ph0);
+
+        FloatPose level; level.heaveY = 1.7;
+        FloatPose worked = level; worked.pitch = 0.12; worked.heel = -0.18;
+        const double feet = fp.feetY;
+        const Vec3 planted = shipLocalToScene(px, feet, pz, level, 0.4, 0.0, 3.0, -5.0);
+        const Vec3 rocked = shipLocalToScene(px, feet, pz, worked, 0.4, 0.05, 3.0, -5.0);
+        const Vec3 back = sceneToShipLocal(rocked.x, rocked.y, rocked.z, worked, 0.4, 0.05, 3.0, -5.0);
+        const bool sceneMoved = std::fabs(planted.x - rocked.x) > 1e-4
+                              || std::fabs(planted.y - rocked.y) > 1e-4
+                              || std::fabs(planted.z - rocked.z) > 1e-4;
+        push("Heel and pitch move a planted foot in the scene", sceneMoved);
+        push("Scene pose round-trips back to ship-local footing",
+             near(back.x, px, 1e-8) && near(back.y, feet, 1e-8) && near(back.z, pz, 1e-8));
+
+        // bx::mtxSRT at identity is a pure translate. Positive heel (roll about Z)
+        // lowers +X; positive pitch raises the bow (+Z).
+        FloatPose id;
+        const Vec3 ident = shipLocalToScene(1.0, 2.0, 3.0, id, 0.0, 0.0, 4.0, 5.0);
+        push("A level hull at the origin only translates",
+             near(ident.x, 5.0) && near(ident.y, 2.0) && near(ident.z, 8.0));
+        FloatPose heeled; heeled.heel = 0.2;
+        const Vec3 stbd = shipLocalToScene(2.0, 0.0, 0.0, heeled, 0.0, 0.0, 0.0, 0.0);
+        push("Positive heel lowers the starboard side", stbd.y < -0.3 && near(stbd.y, -2.0 * std::sin(0.2), 1e-9));
+        FloatPose pitched; pitched.pitch = 0.1;
+        const Vec3 bow = shipLocalToScene(0.0, 0.0, 4.0, pitched, 0.0, 0.0, 0.0, 0.0);
+        push("Positive pitch raises the bow", bow.y > 0.3 && near(bow.y, 4.0 * std::sin(0.1), 1e-9));
+
+        double ffx = 0, ffz = 0;
+        deckFlatForward(0.0, id, PI * 0.5, 0.0, ffx, ffz);
+        push("Follow-cam forward matches the mesh yaw", near(ffx, -1.0, 1e-9) && near(ffz, 0.0, 1e-9));
+
+        const double toStbd = leewardHeel(0.0, PI * 0.5, 1.0, 1.0);
+        const double toPort = leewardHeel(0.0, -PI * 0.5, 1.0, 1.0);
+        push("Sail pressure heels the hull to leeward", toStbd > 0.0 && toPort < 0.0 && near(toStbd, -toPort, 1e-12));
+        push("Furled sails do not heel the hull", near(leewardHeel(0.0, PI * 0.5, 0.0, 1.0), 0.0));
+    }
+
+    // --- Yard gangplank climb ------------------------------------------------
+    {
+        auto near = [](double a, double b, double eps = 1e-6) { return std::fabs(a - b) < eps; };
+        const Ship sloop = makeShipFromConfig(ShipConfig{});
+        const double dockY = 1.8, deckY = 6.2;
+        const DeckRect deck = yardDeckRect(sloop, deckY);
+        const Ramp ramp = yardGangplank(sloop.bounds.length, dockY, deckY);
+        push("Gangplank meets the stern edge of the yard deck", near(ramp.z1, deck.minZ, 1e-12));
+        const double midZ = (ramp.z0 + ramp.z1) * 0.5;
+        const RampHit mid = sampleRamp(ramp, 0.0, midZ);
+        push("Gangplank midpoint lifts the feet halfway",
+             mid.on && near(mid.t, 0.5) && near(mid.y, (dockY + deckY) * 0.5));
+        push("Beside the gangplank is the dock, not the plank", !sampleRamp(ramp, 3.0, midZ).on);
+
+        const Aabb2 dock{-30.0, 30.0, -30.0, 30.0};
+        double x = 0.0, z = ramp.z0 - 0.3;
+        bool aboard = false;
+        double y = dockY;
+        for (int i = 0; i < 30 && !aboard; ++i) {
+            const YardMove step = stepYardFooting(ramp, dock, deck, dockY, x, z, 0.0, 0.25, aboard);
+            x = step.x; z = step.z; y = step.y; aboard = step.onDeck;
+        }
+        push("Walking up the gangplank boards the deck", aboard && near(y, deckY) && z >= deck.minZ);
+
+        for (int i = 0; i < 10; ++i) {
+            const YardMove step = stepYardFooting(ramp, dock, deck, dockY, x, z, PI, 0.25, aboard);
+            x = step.x; z = step.z; y = step.y; aboard = step.onDeck;
+        }
+        push("Walking aft down the stern returns to the plank",
+             !aboard && y < deckY - 0.5 && y > dockY && z < ramp.z1 && z > ramp.z0);
+
+        // A sideways step off the upper plank is held on the timber.
+        x = 0.0; z = midZ; aboard = false;
+        const YardMove side = stepYardFooting(ramp, dock, deck, dockY, x, z, PI * 0.5, 2.0, false);
+        push("The upper gangplank holds a sideways step",
+             !side.onDeck && std::fabs(side.x) <= ramp.halfWidth + 1e-9 && side.y > dockY + 0.5);
+        const YardMove hop = stepYardFooting(ramp, dock, deck, dockY, 2.0, midZ, -PI * 0.5, 1.5, false);
+        push("You cannot hop onto the upper gangplank from the dock",
+             !hop.onDeck && near(hop.y, dockY) && near(hop.x, 2.0) && near(hop.z, midZ));
     }
 
     return r;

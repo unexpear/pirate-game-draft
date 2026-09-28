@@ -119,6 +119,17 @@ void shutdown() {
     s_vbh = BGFX_INVALID_HANDLE;
 }
 
+// Ship root shared by the hull mesh and anyone standing on it. Roll is wave
+// heel plus leewardHeel — the same number the footing math uses.
+void shipRootMtx(float* shipRoot, const sea::FloatPose& pose, float heading,
+                 float windDir, float sailFullness, float heelScale,
+                 float posX, float posZ) {
+    const float windHeel = float(sea::leewardHeel(heading, windDir, sailFullness, heelScale));
+    bx::mtxSRT(shipRoot, 1.0f, 1.0f, 1.0f,
+        float(pose.pitch), heading, float(pose.heel) + windHeel,
+        posX, float(pose.heaveY), posZ);
+}
+
 void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
             float heading, float windDir, float sailFullness, float timeSec,
             float posX, float posZ, float heelScale) {
@@ -128,14 +139,11 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
     const float awa = std::acos(std::max(-1.0f, std::min(1.0f, -align))); // 0=in irons .. pi=astern
     const float lee = (std::sin(windDir - heading) >= 0.0f) ? 1.0f : -1.0f; // leeward side
     const float power = float(sea::sailPower(double(awa) * 57.2957795));
-    const float windHeel = lee * 0.34f * power * std::sin(awa) * sailFullness * heelScale; // lean to leeward
 
     // Ship root: yaw (heading) + heave + pitch + (wave heel + wind heel) + world
     // position, above each piece's local transform.
     float shipRoot[16];
-    bx::mtxSRT(shipRoot, 1.0f, 1.0f, 1.0f,
-        float(pose.pitch), heading, float(pose.heel) + windHeel,
-        posX, float(pose.heaveY), posZ);
+    shipRootMtx(shipRoot, pose, heading, windDir, sailFullness, heelScale, posX, posZ);
 
     const float lightV[4] = { 0.42f, 0.68f, -0.55f, 0.0f }; // lower warm sun: lights vertical faces
     bgfx::setUniform(u_lightDir, lightV);
@@ -221,10 +229,8 @@ void renderDepth(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& p
     const float awa = std::acos(std::max(-1.0f, std::min(1.0f, -align)));
     const float lee = (std::sin(windDir - heading) >= 0.0f) ? 1.0f : -1.0f;
     const float power = float(sea::sailPower(double(awa) * 57.2957795));
-    const float windHeel = lee * 0.34f * power * std::sin(awa) * sailFullness * heelScale;
     float shipRoot[16];
-    bx::mtxSRT(shipRoot, 1.0f, 1.0f, 1.0f,
-        float(pose.pitch), heading, float(pose.heel) + windHeel, posX, float(pose.heaveY), posZ);
+    shipRootMtx(shipRoot, pose, heading, windDir, sailFullness, heelScale, posX, posZ);
     for (const auto& p : ship.pieces) {
         float local[16];
         bx::mtxSRT(local,
@@ -341,13 +347,9 @@ void renderShadow(uint16_t viewId, float x, float y, float z, float sx, float sz
     bgfx::submit(viewId, s_prog);
 }
 
-void renderCharacter(uint16_t viewId, float x, float y, float z, float heading, float walkPhase) {
-    if (s_capture) return;                                  // not scenery: nothing to measure
+void drawFigure(uint16_t viewId, const float* root, float walkPhase) {
     const float lightV[4] = { 0.42f, 0.68f, -0.55f, 0.0f };
     bgfx::setUniform(u_lightDir, lightV);
-    // Character root: stands at (x,y,z) (y = feet on the ground), faces `heading`.
-    float root[16];
-    bx::mtxSRT(root, 1.0f, 1.0f, 1.0f, 0.0f, heading, 0.0f, x, y, z);
     auto part = [&](float lx, float ly, float lz, float sx, float sy, float sz,
                     float r, float g, float b) {
         float local[16];
@@ -375,6 +377,28 @@ void renderCharacter(uint16_t viewId, float x, float y, float z, float heading, 
     part( 0.14f, 0.42f, -sw, 0.22f, 0.82f, 0.24f, 0.26f, 0.22f, 0.30f);           // right leg
     part(-0.34f, 1.08f + bob, -sw, 0.16f, 0.62f, 0.20f, coatR, coatG, coatB);     // left arm
     part( 0.34f, 1.08f + bob,  sw, 0.16f, 0.62f, 0.20f, coatR, coatG, coatB);     // right arm
+}
+
+void renderCharacter(uint16_t viewId, float x, float y, float z, float heading, float walkPhase) {
+    if (s_capture) return;                                  // not scenery: nothing to measure
+    float root[16];
+    bx::mtxSRT(root, 1.0f, 1.0f, 1.0f, 0.0f, heading, 0.0f, x, y, z);
+    drawFigure(viewId, root, walkPhase);
+}
+
+void renderCharacterOnShip(uint16_t viewId, float localX, float feetY, float localZ,
+                           float localHeading, float walkPhase,
+                           const sea::FloatPose& pose, float shipHeading,
+                           float windDir, float sailFullness,
+                           float posX, float posZ, float heelScale) {
+    if (s_capture) return;
+    float shipRoot[16];
+    shipRootMtx(shipRoot, pose, shipHeading, windDir, sailFullness, heelScale, posX, posZ);
+    float local[16];
+    bx::mtxSRT(local, 1.0f, 1.0f, 1.0f, 0.0f, localHeading, 0.0f, localX, feetY, localZ);
+    float root[16];
+    bx::mtxMul(root, local, shipRoot); // character under the same root as the hull
+    drawFigure(viewId, root, walkPhase);
 }
 
 void setDepthPass(bool on) { s_depthPass = on; }

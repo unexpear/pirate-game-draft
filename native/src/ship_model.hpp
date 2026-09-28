@@ -249,6 +249,89 @@ const char* zoneShipName(int level);
 // the level rises. Level <= 1 is the light raider; the reference sloop is L0.
 ShipConfig enemyConfigForLevel(int level);
 
+// --- On deck: ship-local footing -------------------------------------------
+// The sailor's position is stored in the hull frame (+X starboard, +Y up, +Z
+// bow) and only then transformed into the scene. Heave, pitch, and heel move
+// the deck under a planted foot; they do not change the stored coordinates, so
+// the figure does not slide as the hull works.
+//
+// The scene transform matches bx::mtxSRT (scale 1, rotation order ZYX: pitch
+// about X, heading about Y, heel about Z, then translate), which is the ship
+// root used to draw the hull. `windHeel` is the extra leeward roll from sail
+// pressure (see leewardHeel) and is added to pose.heel.
+
+// Leeward roll (radians) from sail pressure. Positive lowers the starboard
+// gunwale. `sailFullness` is 0..1 (furled..full); `heelScale` is the hull's
+// heelFactor (tender hulls lean more).
+double leewardHeel(double heading, double windDir, double sailFullness, double heelScale);
+
+// Axis-aligned rectangle in the horizontal plane, plus a feet height.
+struct DeckRect {
+    double minX = 0, maxX = 0, minZ = 0, maxZ = 0;
+    double feetY = 0;
+};
+
+// Walkable top of the deck plank, already inset by the figure's body radius,
+// with feetY on the plank surface. Falls back to an inset hull footprint if
+// the ship has no deck piece.
+DeckRect deckFootprint(const Ship& ship);
+
+// Push (x,z) onto that footprint and out of deck fittings (mast, capstan,
+// helm). Returns true if the point moved.
+bool clampDeckFooting(const Ship& ship, double& x, double& z);
+
+// One tick of deck walking. `forward` is metres along `heading` this tick
+// (+ faces the bow when heading is 0); `turn` is radians added to heading.
+// Blocked steps slide along the deck edge or a fitting instead of leaving it.
+void stepDeckWalk(const Ship& ship, double& x, double& z, double& heading,
+                  double forward, double turn);
+
+// Ship-local point -> scene. `shipSceneX/Z` is the hull origin in the scene
+// (the player's ship is held at the origin while the ocean scrolls).
+Vec3 shipLocalToScene(double localX, double localY, double localZ,
+                      const FloatPose& pose, double shipHeading, double windHeel,
+                      double shipSceneX, double shipSceneZ);
+// Inverse of shipLocalToScene (pure rotation + translation, scale 1).
+Vec3 sceneToShipLocal(double sceneX, double sceneY, double sceneZ,
+                      const FloatPose& pose, double shipHeading, double windHeel,
+                      double shipSceneX, double shipSceneZ);
+
+// Unit scene-horizontal forward for a follow camera behind a sailor facing
+// `localHeading` on this deck. Matches the mesh yaw, so the camera sits behind
+// the drawn figure.
+void deckFlatForward(double localHeading, const FloatPose& pose, double shipHeading,
+                     double windHeel, double& outX, double& outZ);
+
+// --- Yard gangplank: climb aboard instead of teleporting -------------------
+// A straight ramp along Z, from the dock end (z0, y0) up to the deck edge
+// (z1, y1). x is the centreline; halfWidth is the walkable half-breadth.
+struct Ramp {
+    double x = 0, halfWidth = 0.9;
+    double z0 = 0, z1 = 0;
+    double y0 = 0, y1 = 0;
+};
+struct RampHit { bool on = false; double y = 0; double t = 0; };
+
+// Stern gangplank in the build scene. z1 meets yardDeckRect's aft edge so a
+// walker steps onto the deck without a position snap. `dockFeetY` / `deckFeetY`
+// are feet heights in that scene.
+Ramp yardGangplank(double shipLength, double dockFeetY, double deckFeetY);
+RampHit sampleRamp(const Ramp& ramp, double x, double z);
+
+// Walkable top of a hull on the stocks: hull footprint inset 0.5 m, feet at
+// `feetY` (the stand height is a scene concern; pass it in).
+DeckRect yardDeckRect(const Ship& ship, double feetY);
+
+struct Aabb2 { double minX = 0, maxX = 0, minZ = 0, maxZ = 0; };
+struct YardMove { double x = 0, z = 0, y = 0; bool onDeck = false; };
+
+// Integrate one yard step. On the dock, walking up the gangplank raises the
+// feet and boards at the top. On deck, walking aft off the stern mouth steps
+// back onto the plank. Elsewhere the point is clamped to the dock or the deck.
+YardMove stepYardFooting(const Ramp& ramp, const Aabb2& dock, const DeckRect& deck,
+                         double dockFeetY, double x, double z, double heading,
+                         double forward, bool onDeck);
+
 std::vector<TestResult> runSelfTest();
 
 } // namespace sea

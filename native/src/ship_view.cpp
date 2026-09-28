@@ -58,6 +58,13 @@ void setFreeCamera(bool enabled, float ex, float ey, float ez, float ax, float a
     s_freeCam = enabled; s_freeEye = { ex, ey, ez }; s_freeAt = { ax, ay, az };
 }
 
+static bool s_deckCam = false;
+static float s_deckX = 0.0f, s_deckY = 0.0f, s_deckZ = 0.0f, s_deckFx = 0.0f, s_deckFz = 1.0f;
+void setDeckFollow(bool enabled, float x, float y, float z, float fx, float fz) {
+    s_deckCam = enabled;
+    s_deckX = x; s_deckY = y; s_deckZ = z; s_deckFx = fx; s_deckFz = fz;
+}
+
 // ---------------------------------------------------------------------------
 // ISOLATION TEST. Every building in the town, numbered. The same numbers gate
 // renderIsland: with --isolate N only building N is drawn, moved to the scene
@@ -372,6 +379,14 @@ void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>
     const float fwdZ = bx::cos(heading);
     bx::Vec3 eye = s_freeCam ? s_freeEye : bx::Vec3{ -fwdX * dist, 9.0f, -fwdZ * dist };
     bx::Vec3 at  = s_freeCam ? s_freeAt  : bx::Vec3{ fwdX * 5.0f, -0.4f, fwdZ * 5.0f };
+    if (s_deckCam && !s_freeCam && s_isoId <= 0) {
+        float fl = std::sqrt(s_deckFx * s_deckFx + s_deckFz * s_deckFz);
+        float fx = s_deckFx, fz = s_deckFz;
+        if (fl < 1e-4f) { fx = 0.0f; fz = 1.0f; fl = 1.0f; }
+        fx /= fl; fz /= fl;
+        eye = { s_deckX - fx * 7.0f, s_deckY + 4.2f, s_deckZ - fz * 7.0f };
+        at  = { s_deckX + fx * 3.0f, s_deckY + 1.4f, s_deckZ + fz * 3.0f };
+    }
     if (s_isoId > 0 && !s_freeCam) isoCamera(s_isoView, eye, at); // orbit the isolated building
     const bx::Vec3 up = { 0.0f, 1.0f, 0.0f };
 
@@ -1483,16 +1498,18 @@ void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
     box(-1.6f, 0.7f, -len * 0.2f, 0.9f, 0.6f, len * 1.35f, wood[0], wood[1], wood[2]);
     box( 1.6f, 0.7f, -len * 0.2f, 0.9f, 0.6f, len * 1.35f, wood[0], wood[1], wood[2]);
 
-    // Gangplank: a stair of timber steps up to the deck at the stern.
+    // Gangplank: a stair of timber steps from the dock up to the walkable stern
+    // edge. The endpoints come from the same ramp the yard walker climbs.
     {
         const float deckY = deckStandHeight(ship);
-        const float hl = len * 0.5f;
+        const sea::Ramp ramp = sea::yardGangplank(double(len), kYardDockFeet, deckY);
         const int steps = 6;
         for (int i = 0; i < steps; ++i) {
             const float t = i / float(steps - 1);
-            const float sy = 1.0f + t * (deckY - 1.0f);      // top of this step
-            const float sz = -hl - 3.4f + t * 3.4f;          // dock (-hl-3.4) up to deck edge (-hl)
-            box(0.0f, sy * 0.5f, sz, 1.8f, sy, 1.1f, wood[0], wood[1], wood[2]);
+            const float sy = float(ramp.y0 + (ramp.y1 - ramp.y0) * t); // top of this step
+            const float sz = float(ramp.z0 + (ramp.z1 - ramp.z0) * t);
+            box(float(ramp.x), sy * 0.5f, sz, float(ramp.halfWidth * 2.0), sy, 1.1f,
+                wood[0], wood[1], wood[2]);
         }
     }
 
