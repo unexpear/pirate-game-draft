@@ -366,15 +366,66 @@ void renderCharacter(uint16_t viewId, float x, float y, float z, float heading, 
                        | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA);
         bgfx::submit(viewId, s_prog);
     };
-    const float sw = std::sin(walkPhase) * 0.18f;             // leg/arm swing (fore-aft)
-    const float bob = std::fabs(std::sin(walkPhase)) * 0.04f; // step bob
+    // pitch > 0 swings the free end toward local +Z (forward). The limb is a
+    // box of height `sy` rotated about its top (hip / knee / shoulder).
+    auto limb = [&](float hx, float hy, float hz, float sx, float sy, float sz, float pitch,
+                    float r, float g, float b) {
+        const float theta = -pitch;
+        const float c = std::cos(theta);
+        const float s = std::sin(theta);
+        const float half = sy * 0.5f;
+        const float cx = hx;
+        const float cy = hy - half * c;
+        const float cz = hz - half * s;
+        // Column-major T * Rx(theta) * S. Cube +Y hangs from the joint.
+        const float local[16] = {
+            sx, 0.0f, 0.0f, 0.0f,
+            0.0f, c * sy, s * sy, 0.0f,
+            0.0f, -s * sz, c * sz, 0.0f,
+            cx, cy, cz, 1.0f
+        };
+        float model[16];
+        bx::mtxMul(model, local, root);
+        if (s_depthPass) { submitDepth(viewId, model); return; }
+        const float col[4] = { r, g, b, 1.0f };
+        bgfx::setUniform(u_color, col);
+        setMat(0.0f);
+        shadow::bindRead(4);
+        bgfx::setTransform(model);
+        bgfx::setVertexBuffer(0, s_vbh);
+        bgfx::setIndexBuffer(s_ibh);
+        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z
+                       | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA);
+        bgfx::submit(viewId, s_prog);
+    };
+    // lead > 0: left leg forward, right leg back. Bob peaks as the legs pass.
+    const float lead = std::sin(walkPhase);
+    const float bob = (1.0f - std::fabs(lead)) * 0.055f;
+    const float hipY = 0.84f + bob;
+    const float thighLen = 0.44f;
+    const float shinLen = 0.42f;
+    const float thighAmp = 0.70f;
+    const float kneeAmp = 0.55f;
     const float skin = 0.80f, coatR = 0.45f, coatG = 0.28f, coatB = 0.20f;
-    part(0.0f, 1.55f + bob, 0.0f, 0.28f, 0.30f, 0.28f, skin, 0.62f, 0.48f);      // head
-    part(0.0f, 1.08f + bob, 0.0f, 0.52f, 0.66f, 0.30f, coatR, coatG, coatB);      // torso (coat)
-    part(-0.14f, 0.42f,  sw, 0.22f, 0.82f, 0.24f, 0.26f, 0.22f, 0.30f);           // left leg
-    part( 0.14f, 0.42f, -sw, 0.22f, 0.82f, 0.24f, 0.26f, 0.22f, 0.30f);           // right leg
-    part(-0.34f, 1.08f + bob, -sw, 0.16f, 0.62f, 0.20f, coatR, coatG, coatB);     // left arm
-    part( 0.34f, 1.08f + bob,  sw, 0.16f, 0.62f, 0.20f, coatR, coatG, coatB);     // right arm
+    const float trouserR = 0.26f, trouserG = 0.22f, trouserB = 0.30f;
+    part(0.0f, 1.56f + bob, 0.0f, 0.28f, 0.30f, 0.28f, skin, 0.62f, 0.48f); // head
+    part(0.0f, 1.12f + bob, 0.0f, 0.50f, 0.62f, 0.30f, coatR, coatG, coatB); // torso
+    auto swingLeg = [&](float hipX, float phase) {
+        const float thighPitch = phase * thighAmp;
+        // Forward leg bends at the knee; the trailing leg stays straight.
+        const float shinPitch = thighPitch - std::max(0.0f, phase) * kneeAmp;
+        limb(hipX, hipY, 0.0f, 0.20f, thighLen, 0.22f, thighPitch, trouserR, trouserG, trouserB);
+        const float kneeY = hipY - thighLen * std::cos(thighPitch);
+        const float kneeZ = thighLen * std::sin(thighPitch);
+        limb(hipX, kneeY, kneeZ, 0.16f, shinLen, 0.18f, shinPitch,
+             trouserR * 0.85f, trouserG * 0.85f, trouserB * 0.85f);
+    };
+    swingLeg(-0.13f,  lead);
+    swingLeg( 0.13f, -lead);
+    const float shoulderY = 1.34f + bob;
+    const float armAmp = 0.62f;
+    limb(-0.36f, shoulderY, 0.0f, 0.14f, 0.58f, 0.16f, -lead * armAmp, coatR, coatG, coatB);
+    limb( 0.36f, shoulderY, 0.0f, 0.14f, 0.58f, 0.16f,  lead * armAmp, coatR, coatG, coatB);
 }
 
 void setDepthPass(bool on) { s_depthPass = on; }

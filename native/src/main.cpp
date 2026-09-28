@@ -20,6 +20,7 @@
 #include "screenshot.h"
 
 #include "ship_model.hpp"
+#include "character_collision.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -601,21 +602,32 @@ int main(int argc, char** argv) {
                 if (wk[SDL_SCANCODE_A]) tn -= 1.0f;
             }
             charHeading += tn * 2.2f * dt;
-            charX += std::sin(charHeading) * mv * 3.4f * dt;
-            charZ += std::cos(charHeading) * mv * 3.4f * dt;
+            // Hull origin matches renderBuildScene (keel on the blocks).
+            const double originY = 2.9 + ship.bounds.depth * 0.55;
+            if (onDeck) charY = ship_view::deckStandHeight(ship);
+            else charY = 1.8f; // dock top
+            double cx = charX, cz = charZ;
+            const auto solids = sea::yardWalkSolids(ship, originY, onDeck);
+            const double dx = std::sin(charHeading) * double(mv) * 3.4 * dt;
+            const double dz = std::cos(charHeading) * double(mv) * 3.4 * dt;
+            const sea::CharacterBody body;
+            sea::moveCharacter(cx, cz, charY, dx, dz, body, solids);
             if (onDeck) {
                 // Stay on the deck of the ship (at the origin on the stocks).
                 const float hw = float(ship.bounds.width) * 0.5f - 0.5f;
                 const float hl = float(ship.bounds.length) * 0.5f - 0.5f;
-                charX = clampf(charX, -hw, hw);
-                charZ = clampf(charZ, -hl, hl);
-                charY = ship_view::deckStandHeight(ship);
+                cx = clampf(float(cx), -hw, hw);
+                cz = clampf(float(cz), -hl, hl);
             } else {
-                charX = clampf(charX, -26.0f, 26.0f);
-                charZ = clampf(charZ, -20.0f, 26.0f);
-                charY = 1.8f; // dock top
+                // Wide enough to meet the hall and the timber stacks; collision
+                // stops the body, the clamp is only the edge of the berth.
+                cx = clampf(float(cx), -27.5f, 27.5f);
+                cz = clampf(float(cz), -20.0f, 32.0f);
             }
-            if (mv != 0.0f) walkPhase += dt * 9.0f;
+            sea::moveCharacter(cx, cz, charY, 0.0, 0.0, body, solids);
+            charX = float(cx);
+            charZ = float(cz);
+            if (mv != 0.0f) walkPhase += dt * 7.5f;
         }
 
         imgui_bgfx::beginFrame(width, height, dt, mouseX, mouseY, mouseButtons, wheel);
@@ -663,6 +675,7 @@ int main(int argc, char** argv) {
                         }
                         ImGui::TextColored(kGreen, "  On deck - WASD walk, A/D turn.");
                     }
+                    ImGui::TextDisabled("Hull, masts, rails, and the yard buildings stop you.");
                 }
                 ImGui::Separator();
                 // Shape the hull (until freeform placement exists, drive L/B/depth).
