@@ -1,5 +1,6 @@
 // Sea Trial — native ship model (Milestone 0). Public domain (The Unlicense).
 #include "ship_model.hpp"
+#include "character_collision.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -1100,6 +1101,11 @@ std::vector<TestResult> runSelfTest() {
              num(l1.cannonCount) + " -> " + num(l5.cannonCount));
         push("Higher-level enemies are larger", l5.length > l1.length && l5.width > l1.width);
         push("Enemy broadsides are even (guns split per side)", (l1.cannonCount % 2) == 0 && (l5.cannonCount % 2) == 0);
+    }
+
+    {
+        const auto extra = runCharacterCollisionTests();
+        r.insert(r.end(), extra.begin(), extra.end());
     }
 
     return r;
