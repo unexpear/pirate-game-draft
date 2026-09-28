@@ -205,6 +205,61 @@ struct HullProfile {
 };
 HullProfile bakeHullProfile(const Ship& ship);
 
+// The four handling numbers Sail mode must read from a baked profile. Kept as
+// one struct so the sail loop cannot quietly fall back to a hard-coded sloop.
+struct SailFactors {
+    double topSpeed = 1;
+    double turn = 1;
+    double heel = 1;
+    double accel = 1;
+};
+SailFactors sailFactors(const HullProfile& profile);
+
+// Build → Sail handoff. `prepareLaunch` validates the yard hull, stamps an
+// identity (a shaped hull is not the hard-coded Test Sloop), bakes its
+// profile, and picks a spawn just off the shipyard slip in the harbour.
+// `adoptLaunch` copies that into the session the player actually sails.
+// Reset restores the launched hull, not a fresh reference sloop.
+struct LaunchHandoff {
+    bool ok = false;
+    std::vector<Issue> errors;
+    std::vector<Issue> warnings;
+    Ship ship;
+    HullProfile profile;
+    double spawnX = 0, spawnZ = 0, spawnHeading = 0;
+};
+
+struct SailSession {
+    Ship ship;       // live hull (cargo and damage mutate this)
+    Ship pristine;   // hull as launched; reset restores it
+    HullProfile profile;
+    bool active = false; // a yard launch has replaced the boot hull
+    double spawnX = 0, spawnZ = 0, spawnHeading = 0;
+};
+
+// Yard flags that must all drop when the hull leaves the stocks, so walk /
+// on-deck state cannot leak into sailing.
+struct YardState {
+    bool buildMode = false;
+    bool walkMode = false;
+    bool onDeck = false;
+    bool launching = false;
+};
+
+LaunchHandoff prepareLaunch(const Ship& yardShip, const std::string& displayName,
+                            double islandX, double islandZ, double shoreRadius);
+void adoptLaunch(SailSession& session, const LaunchHandoff& handoff);
+void resetSailSession(SailSession& session);
+void clearYardForSail(YardState& yard);
+
+// Local stand-in for the Steam Cloud user folder (see interop.md). Writes
+// `<directory>/<ship_id>.ship` and `<directory>/last.ship`. Returns the named
+// path, or empty if the write failed.
+std::string saveUserShip(const std::string& directory, const Ship& ship);
+std::string userShipFilePath(const std::string& directory, const std::string& shipId);
+bool saveShipFile(const std::string& path, const Ship& ship);
+bool loadShipFile(const std::string& path, Ship& ship);
+
 // --- Build mode: how a hull goes together, per historical tradition --------
 // See references/shipbuilding-history.md. Roman & Viking build SHELL-FIRST
 // (planking shell before internal frames); English Age-of-Sail builds

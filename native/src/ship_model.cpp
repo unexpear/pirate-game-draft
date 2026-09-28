@@ -2,9 +2,12 @@
 #include "ship_model.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <sstream>
 
 namespace sea {
@@ -692,6 +695,145 @@ HullProfile bakeHullProfile(const Ship& ship) {
     return p;
 }
 
+SailFactors sailFactors(const HullProfile& profile) {
+    SailFactors f;
+    f.topSpeed = profile.topSpeedFactor;
+    f.turn = profile.turnFactor;
+    f.heel = profile.heelFactor;
+    f.accel = profile.accelFactor;
+    return f;
+}
+
+namespace {
+
+std::string trimCopy(const std::string& s) {
+    const auto b = s.find_first_not_of(" \t\r");
+    if (b == std::string::npos) return {};
+    const auto e = s.find_last_not_of(" \t\r");
+    return s.substr(b, e - b + 1);
+}
+
+std::string slugShipId(const std::string& name, double length, double beam) {
+    std::string slug;
+    for (unsigned char c : name) {
+        if (std::isalnum(c)) slug.push_back(static_cast<char>(std::tolower(c)));
+        else if (c == ' ' || c == '-' || c == '_') {
+            if (!slug.empty() && slug.back() != '_') slug.push_back('_');
+        }
+    }
+    while (!slug.empty() && slug.back() == '_') slug.pop_back();
+    if (slug.empty()) slug = "hull";
+    if (slug.size() > 40) slug.resize(40);
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), "user_%s_%dx%d", slug.c_str(),
+                  (int)std::lround(length), (int)std::lround(beam));
+    return buf;
+}
+
+bool isReferenceSloop(const Ship& ship) {
+    return ship.display_name == "Test Sloop"
+        && std::fabs(ship.bounds.length - 12.0) < 1e-6
+        && std::fabs(ship.bounds.width - 4.0) < 1e-6
+        && std::fabs(ship.bounds.depth - 2.8) < 1e-6;
+}
+
+std::string sanitizeFileId(const std::string& id) {
+    std::string o;
+    for (unsigned char c : id) {
+        if (std::isalnum(c) || c == '_' || c == '-') o.push_back(static_cast<char>(c));
+        else o.push_back('_');
+    }
+    if (o.empty()) o = "ship";
+    return o;
+}
+
+} // namespace
+
+LaunchHandoff prepareLaunch(const Ship& yardShip, const std::string& displayName,
+                            double islandX, double islandZ, double shoreRadius) {
+    LaunchHandoff h;
+    h.ship = yardShip;
+    const std::string named = trimCopy(displayName.empty() ? yardShip.display_name : displayName);
+    if (!named.empty()) h.ship.display_name = named;
+    for (auto& p : h.ship.pieces) p.damage = 0.0;
+    if (isReferenceSloop(h.ship)) h.ship.ship_id = "test_sloop_001";
+    else h.ship.ship_id = slugShipId(h.ship.display_name, h.ship.bounds.length, h.ship.bounds.width);
+    h.ship.created_by = "local";
+    h.ship.build_version = "native-m0";
+
+    const ValidationResult v = validateShip(h.ship);
+    h.errors = v.errors;
+    h.warnings = v.warnings;
+    if (!v.valid) return h;
+
+    h.profile = bakeHullProfile(h.ship);
+    // East-shore slipway, a few metres into the harbour water. Local offset
+    // from the island centre (shipyard faces south; see ship_view).
+    double sx = islandX + 57.0;
+    double sz = islandZ - 52.0;
+    const double clear = std::max(0.0, shoreRadius) + 8.0;
+    keepOutsideCircle(sx, sz, islandX, islandZ, clear);
+    h.spawnX = sx;
+    h.spawnZ = sz;
+    const double dx = sx - islandX, dz = sz - islandZ;
+    h.spawnHeading = std::atan2(dx, dz); // forward (sin, cos) points out of the harbour
+    h.ok = true;
+    return h;
+}
+
+void adoptLaunch(SailSession& session, const LaunchHandoff& handoff) {
+    if (!handoff.ok) return;
+    session.ship = handoff.ship;
+    session.pristine = handoff.ship;
+    session.profile = handoff.profile;
+    session.active = true;
+    session.spawnX = handoff.spawnX;
+    session.spawnZ = handoff.spawnZ;
+    session.spawnHeading = handoff.spawnHeading;
+}
+
+void resetSailSession(SailSession& session) {
+    if (!session.pristine.pieces.empty()) session.ship = session.pristine;
+}
+
+void clearYardForSail(YardState& yard) {
+    yard.buildMode = false;
+    yard.walkMode = false;
+    yard.onDeck = false;
+    yard.launching = false;
+}
+
+std::string userShipFilePath(const std::string& directory, const std::string& shipId) {
+    return (std::filesystem::path(directory) / (sanitizeFileId(shipId) + ".ship")).string();
+}
+
+bool saveShipFile(const std::string& path, const Ship& ship) {
+    std::ofstream out(path, std::ios::binary);
+    if (!out) return false;
+    out << serialize(ship);
+    return static_cast<bool>(out);
+}
+
+bool loadShipFile(const std::string& path, Ship& ship) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    ship = deserialize(ss.str());
+    return !ship.pieces.empty();
+}
+
+std::string saveUserShip(const std::string& directory, const Ship& ship) {
+    std::error_code ec;
+    std::filesystem::create_directories(directory, ec);
+    if (ec) return {};
+    const std::string named = userShipFilePath(directory, ship.ship_id);
+    if (!saveShipFile(named, ship)) return {};
+    const std::string last = (std::filesystem::path(directory) / "last.ship").string();
+    if (!saveShipFile(last, ship)) return {};
+    return named;
+}
+
 ApparentWind apparentWind(double windDir, double trueWindSpeed,
                           double heading, double boatSpeed) {
     // Air velocity relative to the boat = true-wind velocity - boat velocity.
@@ -744,7 +886,13 @@ Ship deserialize(const std::string& text) {
         ls >> key;
         if (key == "schema_version") ls >> s.schema_version;
         else if (key == "ship_id") ls >> s.ship_id;
-        else if (key == "display_name") ls >> s.display_name;
+        else if (key == "display_name") {
+            std::string rest;
+            std::getline(ls, rest);
+            const auto b = rest.find_first_not_of(" \t");
+            s.display_name = (b == std::string::npos) ? std::string() : rest.substr(b);
+            if (!s.display_name.empty() && s.display_name.back() == '\r') s.display_name.pop_back();
+        }
         else if (key == "created_by") ls >> s.created_by;
         else if (key == "build_version") ls >> s.build_version;
         else if (key == "bounds") ls >> s.bounds.length >> s.bounds.width >> s.bounds.depth >> s.bounds.height;
@@ -830,6 +978,12 @@ std::vector<TestResult> runSelfTest() {
     const std::string roundTripped = serialize(restored);
     push("Ship round-trips through serialize/deserialize without data loss",
          ser == roundTripped, ser == roundTripped ? "" : "serialization differs after round-trip");
+
+    Ship named = base;
+    named.display_name = "Swift Lady";
+    const Ship namedBack = deserialize(serialize(named));
+    push("Display names with spaces round-trip", namedBack.display_name == "Swift Lady"
+         && namedBack.ship_id == named.ship_id);
 
     // Buoyancy pose: a heavier ship rides lower on the same water.
     const auto poseWaves = makeWaveField("selftest-pose");
@@ -1100,6 +1254,120 @@ std::vector<TestResult> runSelfTest() {
              num(l1.cannonCount) + " -> " + num(l5.cannonCount));
         push("Higher-level enemies are larger", l5.length > l1.length && l5.width > l1.width);
         push("Enemy broadsides are even (guns split per side)", (l1.cannonCount % 2) == 0 && (l5.cannonCount % 2) == 0);
+    }
+
+    // --- Build → Sail handoff ------------------------------------------------
+    {
+        const HullProfile ref = bakeHullProfile(makeShipFromConfig(ShipConfig{}));
+
+        ShipConfig fineCfg;
+        fineCfg.name = "Swift Lady";
+        fineCfg.length = 18;
+        fineCfg.width = 3.2;
+        fineCfg.depth = 2.6;
+        Ship fine = makeShipFromConfig(fineCfg);
+        fine.pieces[0].damage = 0.75; // yard damage must not sail out
+        const LaunchHandoff launched = prepareLaunch(fine, "Swift Lady", 0.0, 120.0, 56.0);
+
+        push("Launch accepts a shaped hull", launched.ok && launched.errors.empty());
+        push("Launched hull is not the hard-coded Test Sloop",
+             launched.ship.display_name == "Swift Lady" && launched.ship.ship_id != "test_sloop_001");
+        const HullProfile baked = bakeHullProfile(launched.ship);
+        const SailFactors factors = sailFactors(launched.profile);
+        push("Sail factors are the bake of the launched hull",
+             std::fabs(factors.topSpeed - baked.topSpeedFactor) < 1e-9
+             && std::fabs(factors.turn - baked.turnFactor) < 1e-9
+             && std::fabs(factors.heel - baked.heelFactor) < 1e-9
+             && std::fabs(factors.accel - baked.accelFactor) < 1e-9);
+        push("Launched fine hull does not sail like the Test Sloop",
+             factors.topSpeed > ref.topSpeedFactor + 0.05
+             && std::fabs(factors.topSpeed - ref.topSpeedFactor) > 0.05);
+        push("Launch leaves the yard with a sound hull", launched.ship.pieces[0].damage == 0.0);
+
+        const double dx = launched.spawnX - 0.0, dz = launched.spawnZ - 120.0;
+        const double dist = std::sqrt(dx * dx + dz * dz);
+        const double seaward = std::sin(launched.spawnHeading) * dx + std::cos(launched.spawnHeading) * dz;
+        push("Launch floats the hull in the harbour, clear of the shore",
+             dist > 56.0 && dist < 95.0, num(dist) + " m from the island");
+        push("Launch heading points out of the harbour", seaward > 0.0);
+
+        SailSession session;
+        session.ship = makeShipFromConfig(ShipConfig{});
+        session.pristine = session.ship;
+        session.profile = ref;
+        adoptLaunch(session, launched);
+        const SailFactors sailed = sailFactors(session.profile);
+        push("Sailing adopts the launched hull and its profile",
+             session.active
+             && session.ship.ship_id == launched.ship.ship_id
+             && session.ship.display_name == "Swift Lady"
+             && session.ship.pieces.size() == launched.ship.pieces.size()
+             && std::fabs(sailed.topSpeed - factors.topSpeed) < 1e-9
+             && std::fabs(sailed.turn - factors.turn) < 1e-9
+             && std::fabs(sailed.heel - factors.heel) < 1e-9
+             && std::fabs(sailed.accel - factors.accel) < 1e-9);
+
+        session.ship.pieces[0].damage = 1.0;
+        session.ship.systems.cargo_mass = 900;
+        resetSailSession(session);
+        push("Reset restores the launched hull, not a new sloop",
+             session.ship.ship_id == launched.ship.ship_id
+             && session.ship.pieces[0].damage == 0.0
+             && session.ship.systems.cargo_mass == launched.ship.systems.cargo_mass
+             && session.profile.topSpeedFactor == launched.profile.topSpeedFactor);
+
+        // A reshaped hull keeps the Test Sloop *name* only if the player typed it;
+        // the identity and profile still must not be the reference boat.
+        ShipConfig renamed = fineCfg;
+        renamed.name = "Test Sloop";
+        const LaunchHandoff shaped = prepareLaunch(makeShipFromConfig(renamed), "Test Sloop", 0.0, 120.0, 56.0);
+        push("A reshaped hull is not ship_id test_sloop_001",
+             shaped.ok && shaped.ship.ship_id != "test_sloop_001"
+             && std::fabs(shaped.profile.topSpeedFactor - ref.topSpeedFactor) > 0.05);
+
+        Ship broken = fine;
+        broken.systems.helm_count = 0;
+        broken.systems.sail_count = 0;
+        const LaunchHandoff refused = prepareLaunch(broken, "Broken", 0.0, 120.0, 56.0);
+        const std::string beforeId = session.ship.ship_id;
+        const bool beforeActive = session.active;
+        adoptLaunch(session, refused);
+        push("An unseaworthy hull is refused and does not replace the sailed ship",
+             !refused.ok && !refused.errors.empty()
+             && session.active == beforeActive && session.ship.ship_id == beforeId);
+
+        YardState yard{true, true, true, true};
+        clearYardForSail(yard);
+        push("Launch clears yard, walk, and deck state",
+             !yard.buildMode && !yard.walkMode && !yard.onDeck && !yard.launching);
+
+        namespace fs = std::filesystem;
+        const fs::path dir = fs::temp_directory_path() / "sea_trial_launch_test";
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        const std::string saved = saveUserShip(dir.string(), launched.ship);
+        Ship loaded;
+        const bool loadedOk = !saved.empty() && loadShipFile(saved, loaded);
+        Ship last;
+        const bool lastOk = loadShipFile((dir / "last.ship").string(), last);
+        const HullProfile reloaded = bakeHullProfile(loaded);
+        push("Launched hull saves and reloads with the same identity",
+             loadedOk && lastOk
+             && loaded.ship_id == launched.ship.ship_id
+             && loaded.display_name == "Swift Lady"
+             && last.ship_id == launched.ship.ship_id
+             && loaded.pieces.size() == launched.ship.pieces.size()
+             && std::fabs(loaded.bounds.length - launched.ship.bounds.length) < 1e-6
+             && std::fabs(reloaded.topSpeedFactor - launched.profile.topSpeedFactor) < 1e-6
+             && std::fabs(reloaded.heelFactor - launched.profile.heelFactor) < 1e-6
+             && std::fabs(reloaded.accelFactor - launched.profile.accelFactor) < 1e-6,
+             saved);
+        fs::remove_all(dir, ec);
+
+        const LaunchHandoff stock = prepareLaunch(makeShipFromConfig(ShipConfig{}), "Test Sloop", 0.0, 120.0, 56.0);
+        push("The unmodified Test Sloop keeps its reference id",
+             stock.ok && stock.ship.ship_id == "test_sloop_001"
+             && std::fabs(sailFactors(stock.profile).topSpeed - ref.topSpeedFactor) < 1e-9);
     }
 
     return r;
