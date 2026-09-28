@@ -255,6 +255,9 @@ int main(int argc, char** argv) {
     std::vector<sea::Projectile> shots;      // ours -> hit the enemy
     std::vector<sea::Projectile> enemyShots; // theirs -> hit us
     float reload = 0.0f;
+    sea::BraceState brace; // Shift hold: timed cover against an incoming broadside
+    int braceFlashKind = 0; // 2 = negated, 1 = softened
+    float braceFlashTime = 0.0f;
     bool wantFire = false;
     bool enemyStruck = false, boarding = false, captured = false;
     float boardTimer = 0.0f;
@@ -339,6 +342,7 @@ int main(int argc, char** argv) {
     auto resetShip = [&]() {
         ship = sea::makeShipFromConfig(cfg);
         sinkDepth = 0.0f; sailTier = 1; wHoldTime = 0.0f; speed = 0.0f; heading = 0.0f; worldX = 0.0f; worldZ = 0.0f;
+        brace = {}; braceFlashKind = 0; braceFlashTime = 0.0f;
         shots.clear();
         spawnEnemyForZone();
     };
@@ -426,6 +430,8 @@ int main(int argc, char** argv) {
         // Sail-state stepping (debounced), then hold-W-at-full for travel speed.
         const bool wHeld = kbFree && keys[SDL_SCANCODE_W];
         const bool sHeld = kbFree && keys[SDL_SCANCODE_S];
+        // Brace is a hold, not a tap. Shift (either) — Space already fires.
+        const bool braceHeld = kbFree && (keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT]);
         sailStepCooldown = clampf(sailStepCooldown - dt, 0.0f, 1.0f);
         if (sailStepCooldown == 0.0f) {
             if (wHeld && sailTier < 2) { sailTier++; sailStepCooldown = 0.28f; }
@@ -546,11 +552,21 @@ int main(int argc, char** argv) {
         wantFire = false;
 
         // Advance both volleys; ours flood the enemy, theirs flood us.
+        // Brace is stepped first so a hold this frame covers balls that land now.
+        sea::stepBrace(brace, braceHeld, dt);
+        braceFlashTime = clampf(braceFlashTime - dt, 0.0f, 2.0f);
         sea::stepProjectiles(shots, dt);
         sea::stepProjectiles(enemyShots, dt);
         if (!enemyGone && !enemyStruck) // struck/surrendered ships take no more damage; enemy is never in the zone
             sea::resolveHits(shots, enemy, enemyWorldX, enemyPose.heaveY, enemyWorldZ, enemyHeading);
-        if (!buildMode && !inSafeZone) sea::resolveHits(enemyShots, ship, worldX, pose.heaveY, worldZ, heading);
+        if (!buildMode && !inSafeZone) {
+            const double braceScale = sea::braceDamageScale(brace);
+            const int taken = sea::resolveHits(enemyShots, ship, worldX, pose.heaveY, worldZ, heading, braceScale);
+            if (taken > 0 && braceScale < 1.0) {
+                braceFlashKind = braceScale <= 0.0 ? 2 : 1;
+                braceFlashTime = 1.2f;
+            }
+        }
         auto dead = [](const sea::Projectile& p) { return !p.alive; };
         shots.erase(std::remove_if(shots.begin(), shots.end(), dead), shots.end());
         enemyShots.erase(std::remove_if(enemyShots.begin(), enemyShots.end(), dead), enemyShots.end());
@@ -641,7 +657,7 @@ int main(int argc, char** argv) {
             ImGui::SameLine();
             if (ImGui::Button("Reset")) resetShip();
             ImGui::TextDisabled("Keys: W raise sail (hold at full = travel), S lower, A/D steer");
-            ImGui::TextDisabled("      Space fire, B board  ·  C/V cargo, X damage, Z repair, R reset");
+            ImGui::TextDisabled("      Space fire, Shift brace (hold), B board  ·  C/V cargo, X damage, Z repair, R reset");
         }
         if (ImGui::CollapsingHeader("Build mode", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Checkbox("Guided assembly (freeze & build)", &buildMode);
@@ -745,6 +761,23 @@ int main(int argc, char** argv) {
             if (enemyResolved && !inSafeZone) ImGui::Text("         next patrol inbound...");
             ImGui::Text("Range:   %.0f m", enemyRange);
             ImGui::Text("Incoming: %d shots", int(enemyShots.size()));
+            if (braceFlashTime > 0.0f && braceFlashKind == 2)
+                ImGui::TextColored(kGreen, ">> Broadside braced - damage negated <<");
+            else if (braceFlashTime > 0.0f && braceFlashKind == 1)
+                ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.2f, 1.0f), ">> Late brace - damage softened <<");
+            if (brace.cooldown > 0.0)
+                ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.2f, 1.0f), "Brace:   cooling down  %.1fs", brace.cooldown);
+            else if (brace.active && brace.held <= sea::kBraceWindowSec)
+                ImGui::TextColored(kGreen, "Brace:   BRACED (timed - damage negated)");
+            else if (brace.active)
+                ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.2f, 1.0f), "Brace:   late (damage softened)");
+            else if (brace.stamina < sea::kBraceEngageCost)
+                ImGui::TextDisabled("Brace:   recovering - release and press Shift");
+            else if (brace.wasHolding)
+                ImGui::TextDisabled("Brace:   release Shift, then press again");
+            else
+                ImGui::TextDisabled("Press Shift: brace (hold to cover the broadside)");
+            ImGui::ProgressBar(float(brace.stamina), ImVec2(220.0f, 0.0f), "brace meter");
             if (inSafeZone)     ImGui::TextColored(kGreen, "Safe zone - no combat");
             else if (boarding)  ImGui::TextColored(kGreen, "Boarding...");
             else if (boardable) ImGui::TextColored(kGreen, "Alongside - press B to board!");

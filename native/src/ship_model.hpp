@@ -136,15 +136,47 @@ void stepProjectiles(std::vector<Projectile>& shots, double dt);
 // Is world point (px,py,pz) inside `target`'s hull box (centre tx,ty,tz, yaw)?
 bool pointInHull(const Ship& target, double tx, double ty, double tz, double heading,
                  double px, double py, double pz);
-// Kill each live projectile inside `target` and flood one hull piece; returns hits.
+// Kill each live projectile inside `target` and flood one hull piece (or the
+// rig, if the shot is high). `damageScale` multiplies that damage: 0 negates
+// the hit, 1 is a full hit. The shot still counts and the ball is spent.
+// Returns the number of hits.
 int resolveHits(std::vector<Projectile>& shots, Ship& target,
-                double tx, double ty, double tz, double heading);
+                double tx, double ty, double tz, double heading,
+                double damageScale = 1.0);
 // Flood (damage) the least-damaged intact hull plank/rib by `amount`.
 void damageHull(Ship& ship, double amount);
 // Damage the mast/rigging by `amount` (a high shot rakes the rig).
 void damageRig(Ship& ship, double amount);
 // Fraction of the rig (mast) still intact, 0..1 — scales the ship's sail drive.
 double rigIntegrity(const Ship& ship);
+
+// --- Brace (Black Flag's defensive hold) ------------------------------------
+// The player holds brace to meet an incoming broadside. The app binds this to
+// Shift; Space stays "fire". For the first `kBraceWindowSec` of a brace, hull
+// and rig damage is negated. Holding past that window only softens it
+// (`kBraceSoftenScale`). Brace is not free: engaging spends `kBraceEngageCost`
+// stamina up front, the meter then drains while held, refills while released,
+// and emptying it locks brace out (`kBraceLockoutSec`, no refill during the
+// lockout). Re-engaging takes a fresh press once stamina can pay the cost.
+struct BraceState {
+    double stamina = 1.0;    // 0..1 remaining meter
+    double cooldown = 0.0;   // seconds of lockout after the meter empties
+    double held = 0.0;       // seconds of the current continuous brace
+    bool active = false;     // bracing right now
+    bool wasHolding = false; // previous tick's hold, so engage is a rising edge
+};
+
+constexpr double kBraceWindowSec = 0.75;      // timed window: damage negated
+constexpr double kBraceSoftenScale = 0.35;    // residual damage after the window
+constexpr double kBraceEngageCost = 0.35;     // stamina paid to start a brace
+constexpr double kBraceDrainPerSec = 0.25;    // meter drain while held
+constexpr double kBraceRecoverPerSec = 0.22;  // meter refill while released
+constexpr double kBraceLockoutSec = 2.50;     // cooldown after the meter empties
+
+// Advance the brace meter. `holding` is the player's hold input this tick.
+void stepBrace(BraceState& s, bool holding, double dt);
+// Damage scale for a hit landing now: 0 timed, `kBraceSoftenScale` late, else 1.
+double braceDamageScale(const BraceState& s);
 
 // Mechanical advantage of a block-and-tackle with `parts` rope parts supporting
 // the load: hauling `load / parts` of effort raises the load (frictionless). The
