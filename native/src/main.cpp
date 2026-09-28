@@ -299,7 +299,9 @@ int main(int argc, char** argv) {
     }
 
     auto clampf = [](float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); };
-    auto isHull = [](const sea::Piece& p) { return p.type == "plank" || p.type == "rib" || p.type == "keel"; };
+    auto isHull = [](const sea::Piece& p) {
+        return sea::isSkinPiece(p.type) || sea::isFramePiece(p.type) || p.type == "keel";
+    };
     auto damagePlank = [&]() {
         int n = 0;
         for (const auto& p : ship.pieces) if (isHull(p) && p.damage < 1.0) ++n;
@@ -646,8 +648,19 @@ int main(int argc, char** argv) {
         if (ImGui::CollapsingHeader("Build mode", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Checkbox("Guided assembly (freeze & build)", &buildMode);
             const char* trads[] = { "Roman", "Viking", "English (Age of Sail)" };
-            ImGui::Combo("Tradition", &buildTrad, trads, 3);
+            if (ImGui::Combo("Tradition", &buildTrad, trads, 3)) {
+                // The lap is baked into the strake positions, so switching
+                // tradition rebuilds the hull. Shape (and the baked profile)
+                // stay as they are; only the pieces and the reveal reset.
+                cfg.tradition = sea::BuildTradition(buildTrad);
+                ship = sea::makeShipFromConfig(cfg);
+                placed = 0;
+            }
             ImGui::TextDisabled("%s", sea::traditionName(sea::BuildTradition(buildTrad)));
+            ImGui::TextDisabled("Planking: %s",
+                sea::isClinker(sea::BuildTradition(buildTrad))
+                    ? "clinker - each strake overlaps the one below"
+                    : "carvel - strakes sit flush, edge to edge");
             if (buildMode) {
                 ImGui::Checkbox("Walk the yard (on foot)", &walkMode);
                 if (walkMode) {
