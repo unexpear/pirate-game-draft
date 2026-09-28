@@ -509,6 +509,239 @@ AiOrders aiCaptain(double ex, double ez, double eHeading,
     return o;
 }
 
+// --- On-deck boarding melee ------------------------------------------------
+namespace {
+
+constexpr double kPlayerHp       = 100.0;
+constexpr double kCrewHp         = 100.0;
+constexpr double kPlayerDamage   = 50.0;  // two clean hits fell a sailor
+constexpr double kCrewDamage     = 34.0;  // an unblocked hit; three will down you
+constexpr double kPlayerRange    = 1.80;
+constexpr double kCrewRange      = 1.55;
+constexpr double kArcCos         = 0.50;  // ~60 deg half-angle in front of the blade
+constexpr double kPlayerCooldown = 0.45;
+constexpr double kCrewCooldown   = 1.15;
+constexpr double kPlayerSpeed    = 4.4;
+constexpr double kCrewSpeed      = 2.5;
+constexpr double kTurnRate       = 2.6;   // rad/s
+constexpr double kHitstun        = 0.32;
+constexpr double kSwingTime      = 0.28;
+constexpr double kHurtTime       = 0.18;
+constexpr double kBodyGap        = 0.72;  // centre-to-centre separation
+constexpr double kLunge          = 0.22;
+
+double wrapPi(double a) {
+    while (a > PI) a -= PI * 2.0;
+    while (a < -PI) a += PI * 2.0;
+    return a;
+}
+
+double fighterDist(const MeleeFighter& a, const MeleeFighter& b) {
+    return std::hypot(a.x - b.x, a.z - b.z);
+}
+
+// 1 = target dead ahead, -1 = dead astern. Overlap counts as in front.
+double facingDot(const MeleeFighter& a, double tx, double tz) {
+    const double dx = tx - a.x, dz = tz - a.z;
+    const double d = std::hypot(dx, dz);
+    if (d < 1e-6) return 1.0;
+    return (dx * std::sin(a.heading) + dz * std::cos(a.heading)) / d;
+}
+
+void clampFighter(MeleeFighter& f, const BoardingMelee& m) {
+    f.x = clampd(f.x, -m.deckHalfWidth, m.deckHalfWidth);
+    f.z = clampd(f.z, m.deckCenterZ - m.deckHalfLength, m.deckCenterZ + m.deckHalfLength);
+}
+
+void woundFighter(MeleeFighter& f, double dmg) {
+    f.hp = std::max(0.0, f.hp - dmg);
+    f.hurt = kHurtTime;
+    f.hitstun = std::max(f.hitstun, kHitstun);
+    if (f.hp <= 0.0) { f.hp = 0.0; f.alive = false; }
+}
+
+void separateFighters(MeleeFighter& a, MeleeFighter& b) {
+    double dx = b.x - a.x, dz = b.z - a.z;
+    const double d = std::hypot(dx, dz);
+    if (d >= kBodyGap) return;
+    double nx, nz;
+    if (d < 1e-4) { nx = 1.0; nz = 0.0; }
+    else { nx = dx / d; nz = dz / d; }
+    const double push = (kBodyGap - d) * 0.5;
+    a.x -= nx * push; a.z -= nz * push;
+    b.x += nx * push; b.z += nz * push;
+}
+
+int nearestInArc(const BoardingMelee& m) {
+    int best = -1;
+    double bestD = 1e9;
+    for (int i = 0; i < static_cast<int>(m.crew.size()); ++i) {
+        const MeleeFighter& c = m.crew[i];
+        if (!c.alive) continue;
+        const double d = fighterDist(m.player, c);
+        if (d > kPlayerRange) continue;
+        if (facingDot(m.player, c.x, c.z) < kArcCos) continue;
+        if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+}
+
+} // namespace
+
+BoardingMelee startBoardingMelee(const Ship& deck, int boardSide, int crewCount) {
+    BoardingMelee m;
+    m.phase = MeleePhase::Fighting;
+    m.deckHalfWidth = std::max(0.9, deck.bounds.width * 0.28);
+    m.deckHalfLength = std::max(1.6, deck.bounds.length * 0.30);
+    m.deckCenterZ = -deck.bounds.length * 0.02;
+    for (const auto& p : deck.pieces) {
+        if (p.type != "deck") continue;
+        m.deckHalfWidth = std::max(0.9, p.bounds.x * 0.5 - 0.28);
+        m.deckHalfLength = std::max(1.6, p.bounds.z * 0.5 - 0.28);
+        m.deckCenterZ = p.position.z;
+        break;
+    }
+
+    const int side = boardSide >= 0 ? 1 : -1;
+    m.player.maxHp = kPlayerHp;
+    m.player.hp = kPlayerHp;
+    m.player.alive = true;
+    m.player.x = side * m.deckHalfWidth * 0.55;
+    m.player.z = m.deckCenterZ - m.deckHalfLength * 0.45;
+    m.player.heading = side > 0 ? -PI * 0.5 : PI * 0.5; // face inboard until the crew is placed
+    clampFighter(m.player, m);
+
+    int n = crewCount < 1 ? 3 : crewCount;
+    if (n > 5) n = 5;
+    m.crewTotal = n;
+    m.crew.resize(n);
+    for (int i = 0; i < n; ++i) {
+        MeleeFighter& c = m.crew[i];
+        const double u = (i + 1.0) / (n + 1.0);
+        c.maxHp = kCrewHp;
+        c.hp = kCrewHp;
+        c.alive = true;
+        c.z = m.deckCenterZ + lerp(-m.deckHalfLength * 0.10, m.deckHalfLength * 0.82, u);
+        c.x = ((i % 2 == 0) ? -0.42 : 0.42) * m.deckHalfWidth;
+        c.attackCooldown = 0.50 + 0.38 * i; // stagger so they don't swing as one
+        c.heading = std::atan2(m.player.x - c.x, m.player.z - c.z);
+        clampFighter(c, m);
+    }
+    // Open facing the nearest sailor, so W walks you into the fight.
+    const MeleeFighter& lead = m.crew[n / 2];
+    m.player.heading = std::atan2(lead.x - m.player.x, lead.z - m.player.z);
+    return m;
+}
+
+void stepBoardingMelee(BoardingMelee& m, const MeleeInput& in, double dt) {
+    if (m.phase != MeleePhase::Fighting) return;
+    dt = clampd(dt, 0.0, 0.1);
+
+    auto tick = [&](MeleeFighter& f) {
+        f.attackCooldown = std::max(0.0, f.attackCooldown - dt);
+        f.hitstun = std::max(0.0, f.hitstun - dt);
+        f.swing = std::max(0.0, f.swing - dt);
+        f.hurt = std::max(0.0, f.hurt - dt);
+    };
+    tick(m.player);
+    for (auto& c : m.crew) tick(c);
+
+    const bool canAct = m.player.alive && m.player.hitstun <= 0.0;
+    m.player.blocking = canAct && in.block;
+    if (canAct) {
+        m.player.heading = wrapPi(m.player.heading + in.turn * kTurnRate * dt);
+        const double throttle = clampd(in.throttle, -1.0, 1.0);
+        const double spd = kPlayerSpeed * (m.player.blocking ? 0.35 : 1.0) * throttle;
+        m.player.x += std::sin(m.player.heading) * spd * dt;
+        m.player.z += std::cos(m.player.heading) * spd * dt;
+        if (std::fabs(throttle) > 0.05) m.player.walkPhase += dt * 9.0;
+        clampFighter(m.player, m);
+
+        // Swing resolves where you stand, then a short lunge sells the step-in.
+        if (in.attack && !m.player.blocking && m.player.attackCooldown <= 0.0) {
+            m.player.swing = kSwingTime;
+            m.player.attackCooldown = kPlayerCooldown;
+            const int idx = nearestInArc(m);
+            if (idx >= 0) woundFighter(m.crew[idx], kPlayerDamage);
+            m.player.x += std::sin(m.player.heading) * kLunge;
+            m.player.z += std::cos(m.player.heading) * kLunge;
+            clampFighter(m.player, m);
+        }
+    }
+
+    const int nCrew = static_cast<int>(m.crew.size());
+    for (int i = 0; i < nCrew; ++i) {
+        MeleeFighter& c = m.crew[i];
+        if (!c.alive || c.hitstun > 0.0) continue;
+        const double dx = m.player.x - c.x, dz = m.player.z - c.z;
+        const double d0 = std::hypot(dx, dz);
+        // A little flank so three sailors don't stack on one plank.
+        const double flank = ((i % 2 == 0) ? -1.0 : 1.0) * 0.40;
+        const double nx = (d0 < 1e-6) ? 1.0 : -dz / d0;
+        const double nz = (d0 < 1e-6) ? 0.0 : dx / d0;
+        const double ax = m.player.x + nx * flank;
+        const double az = m.player.z + nz * flank;
+        c.heading = std::atan2(ax - c.x, az - c.z);
+        const double stop = kCrewRange * 0.72;
+        if (d0 > stop) {
+            const double step = std::min(kCrewSpeed * dt, d0 - stop);
+            c.x += std::sin(c.heading) * step;
+            c.z += std::cos(c.heading) * step;
+            c.walkPhase += dt * 8.0;
+            clampFighter(c, m);
+        }
+        if (m.player.alive && c.attackCooldown <= 0.0 && fighterDist(c, m.player) <= kCrewRange) {
+            c.swing = kSwingTime;
+            c.attackCooldown = kCrewCooldown + 0.08 * i;
+            if (!m.player.blocking) woundFighter(m.player, kCrewDamage);
+        }
+    }
+
+    for (int i = 0; i < nCrew; ++i) {
+        if (!m.crew[i].alive) continue;
+        if (m.player.alive) {
+            separateFighters(m.player, m.crew[i]);
+            clampFighter(m.player, m);
+            clampFighter(m.crew[i], m);
+        }
+        for (int j = i + 1; j < nCrew; ++j) {
+            if (!m.crew[j].alive) continue;
+            separateFighters(m.crew[i], m.crew[j]);
+            clampFighter(m.crew[i], m);
+            clampFighter(m.crew[j], m);
+        }
+    }
+
+    if (!m.player.alive || m.player.hp <= 0.0) {
+        m.player.hp = 0.0;
+        m.player.alive = false;
+        m.player.blocking = false;
+        m.phase = MeleePhase::Lost; // repulsed — see MeleePhase comment
+        return;
+    }
+    if (meleeCrewLeft(m) == 0) m.phase = MeleePhase::Won;
+}
+
+double meleeDeckSurfaceY(const Ship& deck) {
+    for (const auto& p : deck.pieces)
+        if (p.type == "deck") return p.position.y + p.bounds.y * 0.5;
+    return deck.bounds.depth * 0.03 + 0.04;
+}
+
+double meleeAttackSwing(const MeleeFighter& f) {
+    return kSwingTime <= 0.0 ? 0.0 : clampd(f.swing / kSwingTime, 0.0, 1.0);
+}
+
+void meleeDeckToWorld(double shipHeading, double originX, double originZ,
+                      double localX, double localZ, double localHeading,
+                      double& worldX, double& worldZ, double& worldHeading) {
+    const double ch = std::cos(shipHeading), sh = std::sin(shipHeading);
+    // Starboard (cos, -sin), forward (sin, cos) — matches the hull mesh yaw.
+    worldX = originX + localX * ch + localZ * sh;
+    worldZ = originZ - localX * sh + localZ * ch;
+    worldHeading = localHeading + shipHeading;
+}
+
 double sailPower(double windAngleOffBowDeg) {
     double a = clampd(std::fabs(windAngleOffBowDeg), 0.0, 180.0);
     // Polar of boat-speed fraction vs wind angle off the bow. No-go zone near the
@@ -1100,6 +1333,123 @@ std::vector<TestResult> runSelfTest() {
              num(l1.cannonCount) + " -> " + num(l5.cannonCount));
         push("Higher-level enemies are larger", l5.length > l1.length && l5.width > l1.width);
         push("Enemy broadsides are even (guns split per side)", (l1.cannonCount % 2) == 0 && (l5.cannonCount % 2) == 0);
+    }
+
+    // --- On-deck boarding melee ----------------------------------------------
+    {
+        const Ship deck = makeShipFromConfig(enemyConfigForLevel(1));
+        const BoardingMelee spawned = startBoardingMelee(deck, 1, 3);
+        auto onDeck = [](const BoardingMelee& m, const MeleeFighter& f) {
+            return std::fabs(f.x) <= m.deckHalfWidth + 1e-6
+                && f.z >= m.deckCenterZ - m.deckHalfLength - 1e-6
+                && f.z <= m.deckCenterZ + m.deckHalfLength + 1e-6;
+        };
+        bool crewParked = spawned.crew.size() == 3;
+        for (const auto& c : spawned.crew)
+            if (!c.alive || !onDeck(spawned, c)) crewParked = false;
+        push("Boarding melee starts as a fight, not a capture",
+             spawned.phase == MeleePhase::Fighting && meleeCrewLeft(spawned) == 3
+             && spawned.player.alive && spawned.player.hp == spawned.player.maxHp
+             && spawned.player.maxHp > 0 && onDeck(spawned, spawned.player) && crewParked);
+
+        BoardingMelee idle = spawned;
+        stepBoardingMelee(idle, {}, 0.05);
+        push("Idling on deck does not hand you the prize",
+             idle.phase == MeleePhase::Fighting && meleeCrewLeft(idle) == 3 && idle.player.alive);
+
+        const double x0 = idle.player.x, z0 = idle.player.z, face = idle.player.heading;
+        MeleeInput walk; walk.throttle = 1.0;
+        stepBoardingMelee(idle, walk, 0.1);
+        const double dx = idle.player.x - x0, dz = idle.player.z - z0;
+        const double along = dx * std::sin(face) + dz * std::cos(face);
+        push("Walking carries the boarder along the deck",
+             along > 0.2 && onDeck(idle, idle.player) && idle.phase == MeleePhase::Fighting);
+
+        double wx = 0, wz = 0, wh = 0;
+        meleeDeckToWorld(PI * 0.5, 10.0, 20.0, 0.0, 1.0, 0.0, wx, wz, wh);
+        push("Deck-local forward follows the ship's heading",
+             std::fabs(wx - 11.0) < 1e-6 && std::fabs(wz - 20.0) < 1e-6 && std::fabs(wh - PI * 0.5) < 1e-6);
+
+        // Park a single sailor at `crewZ` (player at the origin, facing the bow)
+        // and send the rest off the fight so a swing has one target.
+        auto placeDuel = [](BoardingMelee& m, double crewZ) {
+            m.player.x = 0; m.player.z = 0; m.player.heading = 0;
+            m.player.hp = m.player.maxHp; m.player.alive = true;
+            m.player.attackCooldown = 0; m.player.hitstun = 0; m.player.blocking = false;
+            m.crew[0].x = 0; m.crew[0].z = crewZ; m.crew[0].heading = PI;
+            m.crew[0].hp = m.crew[0].maxHp; m.crew[0].alive = true;
+            m.crew[0].attackCooldown = 10; m.crew[0].hitstun = 0;
+            for (int i = 1; i < static_cast<int>(m.crew.size()); ++i) {
+                m.crew[i].alive = false; m.crew[i].hp = 0;
+                m.crew[i].x = 0; m.crew[i].z = -2;
+            }
+        };
+
+        BoardingMelee hit = startBoardingMelee(deck, 1, 3);
+        placeDuel(hit, 1.2);
+        const double full = hit.crew[0].hp;
+        MeleeInput atk; atk.attack = true;
+        stepBoardingMelee(hit, atk, 0.0);
+        const double afterOne = hit.crew[0].hp;
+        const bool wounded = hit.crew[0].alive && afterOne < full && afterOne > 0.0;
+        stepBoardingMelee(hit, atk, 0.0); // still on cooldown
+        const bool gated = std::fabs(hit.crew[0].hp - afterOne) < 1e-9 && hit.crew[0].alive;
+        hit.player.attackCooldown = 0;
+        stepBoardingMelee(hit, atk, 0.0);
+        const bool felled = !hit.crew[0].alive && hit.crew[0].hp <= 0.0;
+        push("A swing wounds the sailor in front; the next fells him",
+             wounded && gated && felled && hit.phase == MeleePhase::Won);
+
+        BoardingMelee miss = startBoardingMelee(deck, -1, 3);
+        placeDuel(miss, -1.2); // astern of a bow-facing blade
+        const double behind = miss.crew[0].hp;
+        stepBoardingMelee(miss, atk, 0.0);
+        push("A swing misses a sailor behind you",
+             std::fabs(miss.crew[0].hp - behind) < 1e-9 && miss.crew[0].alive
+             && miss.phase == MeleePhase::Fighting);
+
+        BoardingMelee win = startBoardingMelee(deck, 1, 3);
+        bool cleared = true;
+        for (int i = 0; i < 3; ++i) {
+            win.player.x = 0; win.player.z = 0; win.player.heading = 0;
+            win.player.alive = true; win.player.hp = win.player.maxHp;
+            win.player.attackCooldown = 0; win.player.hitstun = 0;
+            for (int j = 0; j < 3; ++j) {
+                win.crew[j].attackCooldown = 10;
+                win.crew[j].hitstun = 0;
+                if (j == i) {
+                    win.crew[j].x = 0; win.crew[j].z = 1.2;
+                    win.crew[j].alive = true; win.crew[j].hp = win.crew[j].maxHp;
+                } else if (win.crew[j].alive) {
+                    win.crew[j].x = 0; win.crew[j].z = -2.4; // astern, out of the blade arc
+                }
+            }
+            stepBoardingMelee(win, atk, 0.0);
+            win.player.attackCooldown = 0;
+            stepBoardingMelee(win, atk, 0.0);
+            if (win.crew[i].alive) cleared = false;
+        }
+        push("Clearing the deck wins the capture",
+             cleared && win.phase == MeleePhase::Won && meleeCrewLeft(win) == 0);
+
+        BoardingMelee loss = startBoardingMelee(deck, 1, 3);
+        placeDuel(loss, 1.0);
+        loss.player.hp = 1;
+        loss.crew[0].attackCooldown = 0;
+        stepBoardingMelee(loss, {}, 0.0);
+        push("A crew strike that downs you loses the melee",
+             loss.phase == MeleePhase::Lost && loss.player.hp <= 0.0 && !loss.player.alive
+             && meleeCrewLeft(loss) > 0);
+
+        BoardingMelee guard = startBoardingMelee(deck, 1, 3);
+        placeDuel(guard, 1.0);
+        guard.player.hp = 1;
+        guard.crew[0].attackCooldown = 0;
+        MeleeInput block; block.block = true;
+        stepBoardingMelee(guard, block, 0.0);
+        push("Blocking negates a crew strike",
+             guard.phase == MeleePhase::Fighting && guard.player.alive && guard.player.hp == 1.0
+             && meleeCrewLeft(guard) > 0);
     }
 
     return r;

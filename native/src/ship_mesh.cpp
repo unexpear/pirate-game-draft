@@ -341,7 +341,8 @@ void renderShadow(uint16_t viewId, float x, float y, float z, float sx, float sz
     bgfx::submit(viewId, s_prog);
 }
 
-void renderCharacter(uint16_t viewId, float x, float y, float z, float heading, float walkPhase) {
+void renderCharacter(uint16_t viewId, float x, float y, float z, float heading, float walkPhase,
+                     float coatR, float coatG, float coatB, float swing, bool downed) {
     if (s_capture) return;                                  // not scenery: nothing to measure
     const float lightV[4] = { 0.42f, 0.68f, -0.55f, 0.0f };
     bgfx::setUniform(u_lightDir, lightV);
@@ -366,15 +367,26 @@ void renderCharacter(uint16_t viewId, float x, float y, float z, float heading, 
                        | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA);
         bgfx::submit(viewId, s_prog);
     };
+    if (downed) {
+        // Fallen on the planks, along the way they were facing.
+        part(0.0f, 0.16f, 0.05f, 0.48f, 0.22f, 1.15f, coatR, coatG, coatB);
+        part(0.0f, 0.28f, 0.62f, 0.26f, 0.22f, 0.26f, 0.80f, 0.62f, 0.48f);
+        return;
+    }
     const float sw = std::sin(walkPhase) * 0.18f;             // leg/arm swing (fore-aft)
     const float bob = std::fabs(std::sin(walkPhase)) * 0.04f; // step bob
-    const float skin = 0.80f, coatR = 0.45f, coatG = 0.28f, coatB = 0.20f;
+    const float skin = 0.80f;
+    const float slash = swing < 0.0f ? 0.0f : (swing > 1.0f ? 1.0f : swing);
     part(0.0f, 1.55f + bob, 0.0f, 0.28f, 0.30f, 0.28f, skin, 0.62f, 0.48f);      // head
     part(0.0f, 1.08f + bob, 0.0f, 0.52f, 0.66f, 0.30f, coatR, coatG, coatB);      // torso (coat)
     part(-0.14f, 0.42f,  sw, 0.22f, 0.82f, 0.24f, 0.26f, 0.22f, 0.30f);           // left leg
     part( 0.14f, 0.42f, -sw, 0.22f, 0.82f, 0.24f, 0.26f, 0.22f, 0.30f);           // right leg
-    part(-0.34f, 1.08f + bob, -sw, 0.16f, 0.62f, 0.20f, coatR, coatG, coatB);     // left arm
-    part( 0.34f, 1.08f + bob,  sw, 0.16f, 0.62f, 0.20f, coatR, coatG, coatB);     // right arm
+    part(-0.34f, 1.08f + bob, -sw * 0.4f, 0.16f, 0.62f, 0.20f, coatR, coatG, coatB); // left arm
+    part( 0.36f, 1.05f + bob - slash * 0.22f, sw + slash * 0.42f,
+         0.16f, 0.62f, 0.20f, coatR, coatG, coatB);                               // right arm (the swing)
+    // A short blade: at the hip at rest, extended on the swing.
+    part(0.40f, 0.92f + slash * 0.28f, 0.22f + slash * 0.48f,
+         0.05f, 0.05f, 0.62f, 0.74f, 0.76f, 0.80f);
 }
 
 void setDepthPass(bool on) { s_depthPass = on; }

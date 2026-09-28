@@ -122,6 +122,29 @@ void drawWindVane(int width, float trueSrcRel, float appSrcRel, float awaDeg,
     ImGui::End();
 }
 
+// On-deck melee card: HP, crew still standing, and the verbs. Drawn only while
+// the fight is live (the gunnery panel repeats the same state).
+void drawMeleeHud(int width, const sea::BoardingMelee& melee) {
+    const float w = 280.0f;
+    ImGui::SetNextWindowPos(ImVec2(float(width) * 0.5f - w * 0.5f, 28.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.72f);
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove
+        | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings
+        | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav
+        | ImGuiWindowFlags_NoInputs;
+    ImGui::Begin("MeleeHud", nullptr, flags);
+    ImGui::TextUnformatted("ON DECK");
+    const float hp = melee.player.maxHp > 0.0
+        ? float(melee.player.hp / melee.player.maxHp) : 0.0f;
+    char buf[48];
+    std::snprintf(buf, sizeof(buf), "HP  %.0f / %.0f", melee.player.hp, melee.player.maxHp);
+    ImGui::ProgressBar(hp, ImVec2(w - 16.0f, 0.0f), buf);
+    ImGui::Text("Crew left  %d / %d", sea::meleeCrewLeft(melee), melee.crewTotal);
+    if (melee.player.blocking) ImGui::TextColored(ImVec4(0.65f, 0.85f, 1.0f, 1.0f), "BLOCKING");
+    ImGui::TextDisabled("WASD move    Space / LMB attack    Shift / RMB block");
+    ImGui::End();
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -256,8 +279,10 @@ int main(int argc, char** argv) {
     std::vector<sea::Projectile> enemyShots; // theirs -> hit us
     float reload = 0.0f;
     bool wantFire = false;
-    bool enemyStruck = false, boarding = false, captured = false;
-    float boardTimer = 0.0f;
+    bool wantAttack = false;
+    bool enemyStruck = false, captured = false;
+    float repelledTimer = 0.0f; // >0 : cut down and thrown back to your own ship
+    sea::BoardingMelee melee;
     bool wantBoard = false;
 
     // Build mode: freeze and assemble the hull plank-by-plank in a tradition's order.
@@ -333,7 +358,7 @@ int main(int argc, char** argv) {
         enemyWorldX = float(sx); enemyWorldZ = float(sz);
         enemyHeading = float(ang + 3.14159);
         enemySink = 0.0f; enemySpeed = 0.0f; enemyReload = 1.0f; respawnTimer = 0.0f;
-        enemyStruck = false; boarding = false; captured = false; boardTimer = 0.0f;
+        enemyStruck = false; captured = false; melee = {}; repelledTimer = 0.0f;
         enemyShots.clear();
     };
     auto resetShip = [&]() {
@@ -373,7 +398,12 @@ int main(int argc, char** argv) {
                     case SDL_SCANCODE_X: damagePlank(); break;
                     case SDL_SCANCODE_Z: repairAll(); break;
                     case SDL_SCANCODE_R: resetShip(); break;
-                    case SDL_SCANCODE_SPACE: if (!e.key.repeat) wantFire = true; break;
+                    case SDL_SCANCODE_SPACE:
+                        if (!e.key.repeat) {
+                            if (sea::meleeFighting(melee)) wantAttack = true;
+                            else wantFire = true;
+                        }
+                        break;
                     case SDL_SCANCODE_B: if (!e.key.repeat) wantBoard = true; break;
                     default: break; // W/S/A/D sailing is polled below (hold-aware)
                     }
@@ -396,6 +426,9 @@ int main(int argc, char** argv) {
                 else if (e.button.button == SDL_BUTTON_RIGHT) bit = 0x02;
                 else if (e.button.button == SDL_BUTTON_MIDDLE) bit = 0x04;
                 if (down) mouseButtons |= bit; else mouseButtons &= ~bit;
+                if (down && e.button.button == SDL_BUTTON_LEFT && sea::meleeFighting(melee)
+                    && !ImGui::GetIO().WantCaptureMouse)
+                    wantAttack = true;
                 break;
             }
             case SDL_EVENT_MOUSE_WHEEL:
@@ -417,7 +450,9 @@ int main(int argc, char** argv) {
         // speed, so a near-stop pivots sharpest while full/travel turn wide (the
         // stop-to-turn tactic). Ship-centric: the ship holds the origin, ocean scrolls.
         const bool* keys = SDL_GetKeyboardState(nullptr);
-        const bool kbFree = !ImGui::GetIO().WantCaptureKeyboard && !buildMode; // no sailing input while building/walking
+        // Grappled alongside: WASD belongs to the deck fight, not the helm.
+        const bool meleeLock = sea::meleeFighting(melee);
+        const bool kbFree = !ImGui::GetIO().WantCaptureKeyboard && !buildMode && !meleeLock;
         float steer = 0.0f;
         if (kbFree) {
             if (keys[SDL_SCANCODE_D]) steer += 1.0f;
@@ -456,15 +491,20 @@ int main(int argc, char** argv) {
                               : (effTier == 2 ? pFull : pTravel));
         const float rig = float(sea::rigIntegrity(ship)); // a shot-up rig loses drive
         const float targetSpeed = tierSpeed * windFactor * rig;
-        // Heavier hulls gather (and lose) way more slowly.
-        speed += (targetSpeed - speed) * clampf(dt * 1.2f * float(activeProfile.accelFactor), 0.0f, 1.0f);
-        const float speedFrac = clampf(speed / (pTravel > 0.1f ? pTravel : kTravelSpeed), 0.0f, 1.0f);
-        // Turn radius couples to speed AND the hull's agility (short & beamy turns tighter).
-        const float turnRate = 1.35f * (1.0f - 0.62f * speedFrac) * float(activeProfile.turnFactor);
-        heading += steer * turnRate * dt;
-        if (buildMode) speed = 0.0f; // frozen on the stocks while building
-        worldX += std::sin(heading) * speed * dt;
-        worldZ += std::cos(heading) * speed * dt;
+        if (meleeLock) {
+            // Grappled: bleed off way, hold the hull still under the fight.
+            speed += (0.0f - speed) * clampf(dt * 3.0f, 0.0f, 1.0f);
+        } else {
+            // Heavier hulls gather (and lose) way more slowly.
+            speed += (targetSpeed - speed) * clampf(dt * 1.2f * float(activeProfile.accelFactor), 0.0f, 1.0f);
+            const float speedFrac = clampf(speed / (pTravel > 0.1f ? pTravel : kTravelSpeed), 0.0f, 1.0f);
+            // Turn radius couples to speed AND the hull's agility (short & beamy turns tighter).
+            const float turnRate = 1.35f * (1.0f - 0.62f * speedFrac) * float(activeProfile.turnFactor);
+            heading += steer * turnRate * dt;
+            if (buildMode) speed = 0.0f; // frozen on the stocks while building
+            worldX += std::sin(heading) * speed * dt;
+            worldZ += std::cos(heading) * speed * dt;
+        }
         // Run aground: keep the hull out of the island's shore circle.
         {
             double px = worldX, pz = worldZ;
@@ -523,11 +563,15 @@ int main(int argc, char** argv) {
                 enemyShots.insert(enemyShots.end(), ev.begin(), ev.end());
                 enemyReload = 1.6f;
             }
-        } else {
+        } else if (!meleeLock) {
             // Struck / going down: dead in the water, coasting to a stop.
             enemySpeed += (0.0f - enemySpeed) * clampf(dt * 0.8f, 0.0f, 1.0f);
             enemyWorldX += std::sin(enemyHeading) * enemySpeed * dt;
             enemyWorldZ += std::cos(enemyHeading) * enemySpeed * dt;
+            enemyPose = sea::computeFloatPose(enemy, waves, timeSec, enemyWorldX, enemyWorldZ, enemyHeading);
+        } else {
+            // Grappled for the deck fight: hold her still so the planks don't slide away.
+            enemySpeed = 0.0f;
             enemyPose = sea::computeFloatPose(enemy, waves, timeSec, enemyWorldX, enemyWorldZ, enemyHeading);
         }
         const sea::Stats enemyStats = sea::getShipStats(enemy);
@@ -535,7 +579,7 @@ int main(int argc, char** argv) {
 
         // Our broadside (Space) fires from whichever side faces the enemy.
         reload = clampf(reload - dt, 0.0f, 10.0f);
-        if (wantFire && reload <= 0.0f && !buildMode && !inSafeZone) {
+        if (wantFire && reload <= 0.0f && !buildMode && !inSafeZone && !meleeLock) {
             const float dxE = enemyWorldX - worldX, dzE = enemyWorldZ - worldZ;
             const float starboardComp = dxE * std::cos(heading) - dzE * std::sin(heading);
             const int side = starboardComp >= 0.0f ? 1 : -1;
@@ -555,8 +599,10 @@ int main(int argc, char** argv) {
         shots.erase(std::remove_if(shots.begin(), shots.end(), dead), shots.end());
         enemyShots.erase(std::remove_if(enemyShots.begin(), enemyShots.end(), dead), enemyShots.end());
 
-        // A captured prize stops foundering; otherwise a struck ship slowly goes down.
-        if (enemyStats.sinking && !captured) enemySink += dt * clampf(std::fabs(float(enemyStats.floatMargin)) / 1200.0f, 0.3f, 3.0f);
+        // A captured prize stops foundering; so does a deck fight (she waits out the
+        // melee). Otherwise a struck ship slowly goes down.
+        if (enemyStats.sinking && !captured && !meleeLock)
+            enemySink += dt * clampf(std::fabs(float(enemyStats.floatMargin)) / 1200.0f, 0.3f, 3.0f);
         enemyPose.heaveY -= enemySink;
 
         // Endless zone patrol: once the current enemy is sunk or taken, a fresh one
@@ -570,13 +616,48 @@ int main(int argc, char** argv) {
             respawnTimer = 0.0f;
         }
 
-        // Boarding: pull alongside a struck (surrendered) enemy at low speed, press B.
+        // Boarding: pull alongside a struck (surrendered) enemy at low speed, press B
+        // to climb aboard. B starts the on-deck melee — it does not capture by itself.
         const float bdx = enemyWorldX - worldX, bdz = enemyWorldZ - worldZ;
         const float enemyRange = std::sqrt(bdx * bdx + bdz * bdz);
-        const bool boardable = enemyStruck && !captured && !enemyGone && enemyRange < 12.0f && speed < 4.5f;
-        if (wantBoard && boardable && !boarding) { boarding = true; boardTimer = 1.5f; }
+        const bool boardable = enemyStruck && !captured && !enemyGone && !buildMode
+                            && !sea::meleeFighting(melee) && enemyRange < 12.0f && speed < 4.5f;
+        if (wantBoard && boardable) {
+            // Climb the rail that faces us. Starboard unit is (cos, -sin).
+            const float chE = std::cos(enemyHeading), shE = std::sin(enemyHeading);
+            const float aboard = (worldX - enemyWorldX) * chE - (worldZ - enemyWorldZ) * shE;
+            melee = sea::startBoardingMelee(enemy, aboard >= 0.0f ? 1 : -1, 3);
+            repelledTimer = 0.0f;
+        }
         wantBoard = false;
-        if (boarding) { boardTimer -= dt; if (boardTimer <= 0.0f) { boarding = false; captured = true; } }
+        if (sea::meleeFighting(melee)) {
+            sea::MeleeInput in;
+            const bool uiKey = ImGui::GetIO().WantCaptureKeyboard;
+            const bool uiMouse = ImGui::GetIO().WantCaptureMouse;
+            if (!uiKey) {
+                if (keys[SDL_SCANCODE_W]) in.throttle += 1.0;
+                if (keys[SDL_SCANCODE_S]) in.throttle -= 1.0;
+                if (keys[SDL_SCANCODE_D]) in.turn += 1.0;
+                if (keys[SDL_SCANCODE_A]) in.turn -= 1.0;
+                if (keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT]) in.block = true;
+            }
+            if (!uiMouse && (mouseButtons & 0x02)) in.block = true;
+            in.attack = wantAttack;
+            sea::stepBoardingMelee(melee, in, dt);
+            if (melee.phase == sea::MeleePhase::Won) captured = true;
+            else if (melee.phase == sea::MeleePhase::Lost) {
+                // Cut down: thrown back to your own deck. The prize stays struck.
+                repelledTimer = 4.0f;
+                melee = {};
+            }
+        }
+        wantAttack = false;
+        if (repelledTimer > 0.0f) repelledTimer -= dt;
+        // The fight lives on her deck. Drop it if she founders, or if the yard UI
+        // takes over the keys — a sunk prize is the existing gunnery victory.
+        if (buildMode && melee.phase != sea::MeleePhase::Inactive) melee = {};
+        if (enemyGone && sea::meleeFighting(melee)) melee = {};
+        const bool inMeleeFight = sea::meleeFighting(melee);
         const bool weSank = sinkDepth > 22.0f;
 
         // Build mode: the ship's pieces in this tradition's construction order.
@@ -628,6 +709,8 @@ int main(int argc, char** argv) {
         ImGui::Text("Renderer: %s", bgfx::getRendererName(bgfx::getRendererType()));
         ImGui::TextColored(stats.sinking ? kRed : kGreen, stats.sinking ? "Status: SINKING" : "Status: afloat");
         if (captured)      ImGui::TextColored(kGreen, ">>> PRIZE TAKEN - enemy boarded & captured <<<");
+        else if (inMeleeFight) ImGui::TextColored(kGreen, ">>> ON DECK - cut down her crew <<<");
+        else if (repelledTimer > 0.0f) ImGui::TextColored(kRed, ">>> REPULSED - thrown back to your ship <<<");
         else if (enemyGone) ImGui::TextColored(kGreen, ">>> ENEMY SUNK <<<");
         else if (weSank)   ImGui::TextColored(kRed, ">>> DEFEAT - you sank <<<");
         ImGui::Separator();
@@ -642,6 +725,7 @@ int main(int argc, char** argv) {
             if (ImGui::Button("Reset")) resetShip();
             ImGui::TextDisabled("Keys: W raise sail (hold at full = travel), S lower, A/D steer");
             ImGui::TextDisabled("      Space fire, B board  ·  C/V cargo, X damage, Z repair, R reset");
+            ImGui::TextDisabled("On deck: WASD move, Space/LMB attack, Shift/RMB block");
         }
         if (ImGui::CollapsingHeader("Build mode", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Checkbox("Guided assembly (freeze & build)", &buildMode);
@@ -737,7 +821,8 @@ int main(int argc, char** argv) {
         }
         if (ImGui::CollapsingHeader("Gunnery & boarding", ImGuiTreeNodeFlags_DefaultOpen)) {
             const char* est = captured ? "captured" : (enemyGone ? "sunk"
-                            : (enemyStruck ? "STRUCK - boardable" : (enemyStats.sinking ? "SINKING" : "afloat")));
+                            : (inMeleeFight ? "boarded - melee"
+                            : (enemyStruck ? "STRUCK - boardable" : (enemyStats.sinking ? "SINKING" : "afloat"))));
             ImGui::Text("Enemy:   %s (level %d)", enemy.display_name.c_str(), enemyLevel);
             ImGui::TextColored(captured ? kGreen
                                : ((enemyGone || enemyStruck || enemyStats.sinking) ? kRed : kGreen),
@@ -745,8 +830,17 @@ int main(int argc, char** argv) {
             if (enemyResolved && !inSafeZone) ImGui::Text("         next patrol inbound...");
             ImGui::Text("Range:   %.0f m", enemyRange);
             ImGui::Text("Incoming: %d shots", int(enemyShots.size()));
-            if (inSafeZone)     ImGui::TextColored(kGreen, "Safe zone - no combat");
-            else if (boarding)  ImGui::TextColored(kGreen, "Boarding...");
+            if (inMeleeFight) {
+                const float hp = melee.player.maxHp > 0.0 ? float(melee.player.hp / melee.player.maxHp) : 0.0f;
+                ImGui::Text("On deck: HP %.0f / %.0f", melee.player.hp, melee.player.maxHp);
+                ImGui::ProgressBar(hp, ImVec2(-1.0f, 0.0f));
+                ImGui::TextColored(kGreen, "Crew left: %d / %d", sea::meleeCrewLeft(melee), melee.crewTotal);
+                if (melee.player.blocking) ImGui::TextColored(ImVec4(0.65f, 0.85f, 1.0f, 1.0f), "Blocking");
+                ImGui::TextDisabled("WASD move, Space/LMB attack, Shift/RMB block");
+            } else if (repelledTimer > 0.0f) {
+                ImGui::TextColored(kRed, "Repulsed - you were thrown back aboard.");
+                ImGui::TextDisabled("She is still struck. Alongside, press B to try again.");
+            } else if (inSafeZone) ImGui::TextColored(kGreen, "Safe zone - no combat");
             else if (boardable) ImGui::TextColored(kGreen, "Alongside - press B to board!");
             else                ImGui::TextDisabled(reload > 0.0f ? "Reloading..." : "Space: fire broadside");
         }
@@ -777,6 +871,7 @@ int main(int argc, char** argv) {
         } // !hideUI
 
         // Wind vane HUD (hidden while building on the stocks, or capturing a clean shot).
+        if (!buildMode && !hideUI && inMeleeFight) drawMeleeHud(width, melee);
         if (!buildMode && !hideUI) {
             auto norm = [](float a) {
                 while (a > 3.14159265f) a -= 6.28318531f;
@@ -818,11 +913,26 @@ int main(int argc, char** argv) {
             float shCx = 0.0f, shCz = 0.0f, shR = 30.0f; bool shIsland = false;
             ship_view::shadowFrame(islX, islZ, shCx, shCz, shR, shIsland);
             shadow::beginPass(kShadowView, kSunX, kSunY, kSunZ, shCx, shCz, shR);
+            const float enemySceneX = enemyWorldX - worldX, enemySceneZ = enemyWorldZ - worldZ;
+            if (inMeleeFight && !enemyGone) {
+                float mex, mey, mez, max_, may, maz;
+                ship_view::meleeFollowCamera(melee, enemy, enemyPose, enemyHeading,
+                                             enemySceneX, enemySceneZ, mex, mey, mez, max_, may, maz);
+                ship_view::setMeleeCamera(true, mex, mey, mez, max_, may, maz);
+            } else {
+                ship_view::setMeleeCamera(false, 0, 0, 0, 0, 0, 0);
+            }
             if (!iso && !noShadow) {
                 ship_mesh::renderDepth(kShadowView, ship, pose, heading, windDir, sailFullness, 0.0f, 0.0f, float(activeProfile.heelFactor));
                 if (!enemyGone)
                     ship_mesh::renderDepth(kShadowView, enemy, enemyPose, enemyHeading, windDir,
-                                           enemyStruck ? 0.0f : 0.75f, enemyWorldX - worldX, enemyWorldZ - worldZ);
+                                           enemyStruck ? 0.0f : 0.75f, enemySceneX, enemySceneZ);
+                if (inMeleeFight && !enemyGone) {
+                    ship_mesh::setDepthPass(true);
+                    ship_view::renderBoardingMelee(kShadowView, melee, enemy, enemyPose,
+                                                   enemyHeading, enemySceneX, enemySceneZ);
+                    ship_mesh::setDepthPass(false);
+                }
             }
             if (shIsland && !noShadow) {
                 ship_mesh::setDepthPass(true);
@@ -833,7 +943,10 @@ int main(int argc, char** argv) {
             if (!enemyGone && !iso) {
                 ship_view::renderShip(kClearView, enemy, enemyPose, enemyHeading, windDir,
                                       enemyStruck ? 0.0f : 0.75f, timeSec, // furled sails once she strikes
-                                      enemyWorldX - worldX, enemyWorldZ - worldZ);
+                                      enemySceneX, enemySceneZ);
+                if (inMeleeFight)
+                    ship_view::renderBoardingMelee(kClearView, melee, enemy, enemyPose,
+                                                   enemyHeading, enemySceneX, enemySceneZ);
             }
             if (!iso) for (const auto& p : shots)
                 ship_view::renderTracer(kClearView, float(p.x) - worldX, float(p.y), float(p.z) - worldZ, 0.35f);
