@@ -360,6 +360,25 @@ void shadowFrame(float relX, float relZ, float& cx, float& cz, float& radius, bo
     else { cx = relX * 0.5f; cz = relZ * 0.5f; radius = dist * 0.5f + 72.0f; }
 }
 
+// One pose for the picture and for gunnery. Chase sits 24 m astern looking
+// 5 m ahead, so its horizontal look is the ship's forward. Free-cam and the
+// isolation orbit replace that; a mouse-orbit should do the same here.
+static void sailEyeAt(float heading, bx::Vec3& eye, bx::Vec3& at) {
+    const float dist = 24.0f;
+    const float fwdX = bx::sin(heading);
+    const float fwdZ = bx::cos(heading);
+    eye = s_freeCam ? s_freeEye : bx::Vec3{ -fwdX * dist, 9.0f, -fwdZ * dist };
+    at  = s_freeCam ? s_freeAt  : bx::Vec3{ fwdX * 5.0f, -0.4f, fwdZ * 5.0f };
+    if (s_isoId > 0 && !s_freeCam) isoCamera(s_isoView, eye, at);
+}
+
+void sailCameraLook(float heading, float& x, float& z) {
+    bx::Vec3 eye, at;
+    sailEyeAt(heading, eye, at);
+    x = at.x - eye.x;
+    z = at.z - eye.z;
+}
+
 void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>& waves,
             const sea::FloatPose& pose, float timeSec, float heading,
             float worldX, float worldZ, float windDir, float sailFullness,
@@ -367,12 +386,8 @@ void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>
             float cutWorldX, float cutWorldZ, float cutR, float speed) {
     // Chase camera behind the ship's heading (ship stays at the origin; the
     // ocean scrolls past via worldX/worldZ).
-    const float dist = 24.0f;
-    const float fwdX = bx::sin(heading);
-    const float fwdZ = bx::cos(heading);
-    bx::Vec3 eye = s_freeCam ? s_freeEye : bx::Vec3{ -fwdX * dist, 9.0f, -fwdZ * dist };
-    bx::Vec3 at  = s_freeCam ? s_freeAt  : bx::Vec3{ fwdX * 5.0f, -0.4f, fwdZ * 5.0f };
-    if (s_isoId > 0 && !s_freeCam) isoCamera(s_isoView, eye, at); // orbit the isolated building
+    bx::Vec3 eye, at;
+    sailEyeAt(heading, eye, at);
     const bx::Vec3 up = { 0.0f, 1.0f, 0.0f };
 
     float view[16];

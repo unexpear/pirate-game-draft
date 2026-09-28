@@ -22,6 +22,14 @@ void shutdown();
 // chase camera.
 void setFreeCamera(bool enabled, float ex, float ey, float ez, float ax, float ay, float az);
 
+// Horizontal look of the sail camera (scene XZ, ship at the origin — the same
+// axes as the ship's world heading). This is `at - eye` from the pose render()
+// will use for `heading`: the chase view, the --cam free camera, or the
+// isolation framing. Gunnery reads this one vector, so a later mouse-orbit
+// only has to supply the same eye/at (its yaw 0 is the chase look, down the
+// bow). y is dropped; an upward mortar is not part of this pass.
+void sailCameraLook(float heading, float& x, float& z);
+
 // Chase camera behind `heading`, scrolling ocean at the ship's virtual world
 // position (worldX/worldZ), and the ship riding the surface at `pose`, yawed to
 // `heading`. The sail trims toward `windDir` and is reefed to `sailFullness`

@@ -377,6 +377,84 @@ FloatPose computeFloatPose(const Ship& ship, const std::vector<Wave>& waves, dou
     return p;
 }
 
+const char* gunArcName(GunArc arc) {
+    switch (arc) {
+        case GunArc::Port:      return "port broadside";
+        case GunArc::Starboard: return "starboard broadside";
+        case GunArc::Stern:     return "stern chasers";
+        case GunArc::Bow:       break;
+    }
+    return "bow chasers";
+}
+
+GunArc selectGunArc(double camFwdX, double camFwdZ, double heading) {
+    const double ch = std::cos(heading), sh = std::sin(heading);
+    // Same ship axes as fireBroadside / aiCaptain: forward (sin, cos),
+    // starboard (cos, -sin).
+    const double ahead = camFwdX * sh + camFwdZ * ch;
+    const double stbd  = camFwdX * ch - camFwdZ * sh;
+    if (ahead * ahead + stbd * stbd < 1e-12) return GunArc::Bow;
+    const double yaw = std::atan2(stbd, ahead); // 0 ahead, +starboard, ±pi astern
+    const double absY = std::fabs(yaw);
+    const double bow = PI * 0.25;
+    const double stern = PI * 0.75;
+    if (absY <= bow) return GunArc::Bow;
+    if (absY >= stern) return GunArc::Stern;
+    return yaw > 0.0 ? GunArc::Starboard : GunArc::Port;
+}
+
+// Chase guns are not in the hull model. Half a broadside, never more than two,
+// and never zero — a one-gun boat still gets a single chaser.
+static int chaseGunCount(int cannonCount) {
+    const int broadside = std::max(1, cannonCount);
+    const int half = std::max(1, broadside / 2);
+    return half < 2 ? half : 2;
+}
+
+// dir +1 = bow (along forward), -1 = stern (along aft).
+static std::vector<Projectile> fireChase(const Ship& ship, int dir,
+                                         double sx, double sy, double sz,
+                                         double heading, double muzzleSpeed) {
+    const int n = chaseGunCount(ship.systems.cannon_count);
+    const double ch = std::cos(heading), sh = std::sin(heading);
+    const double rx = ch, rz = -sh;  // starboard unit
+    const double fx = sh, fz = ch;   // forward unit
+    const double halfL = ship.bounds.length * 0.5;
+    const int d = dir >= 0 ? 1 : -1;
+    const double elev = 0.16; // a touch higher than a broadside's ~8 deg lob
+    const double ce = std::cos(elev), se = std::sin(elev);
+    std::vector<Projectile> shots;
+    shots.reserve(n);
+    for (int i = 0; i < n; ++i) {
+        // A pair sits astride the centreline; a single chaser is on it.
+        const double across = (n == 1) ? 0.0
+            : lerp(-ship.bounds.width * 0.15, ship.bounds.width * 0.15, i / double(n - 1));
+        Projectile p;
+        p.x = sx + fx * d * (halfL + 0.4) + rx * across;
+        p.y = sy + 1.5;
+        p.z = sz + fz * d * (halfL + 0.4) + rz * across;
+        p.vx = fx * d * muzzleSpeed * ce;
+        p.vz = fz * d * muzzleSpeed * ce;
+        p.vy = muzzleSpeed * se;
+        p.life = 4.0;
+        p.alive = true;
+        shots.push_back(p);
+    }
+    return shots;
+}
+
+std::vector<Projectile> fireGunArc(const Ship& ship, GunArc arc,
+                                   double sx, double sy, double sz,
+                                   double heading, double muzzleSpeed) {
+    switch (arc) {
+        case GunArc::Port:      return fireBroadside(ship, -1, sx, sy, sz, heading, muzzleSpeed);
+        case GunArc::Starboard: return fireBroadside(ship, +1, sx, sy, sz, heading, muzzleSpeed);
+        case GunArc::Stern:     return fireChase(ship, -1, sx, sy, sz, heading, muzzleSpeed);
+        case GunArc::Bow:       break;
+    }
+    return fireChase(ship, +1, sx, sy, sz, heading, muzzleSpeed);
+}
+
 std::vector<Projectile> fireBroadside(const Ship& ship, int side,
                                       double sx, double sy, double sz,
                                       double heading, double muzzleSpeed) {
@@ -893,6 +971,110 @@ std::vector<TestResult> runSelfTest() {
         resolveHits(low, hullTarget, 0, 0, 0, 0.0);
         push("A low shot floods the hull, not the rig",
              getShipStats(hullTarget).damageRatio > 0.0 && rigIntegrity(hullTarget) > 0.99);
+    }
+
+    // --- Camera-direction batteries -----------------------------------------
+    // Look yaw is relative to the ship: 0 = down the bow, + = starboard beam,
+    // ±pi = astern. The chase camera's look is yaw 0, so it arms the bow.
+    {
+        struct Look { double x, z; };
+        auto look = [](double heading, double rel) {
+            const double sh = std::sin(heading), ch = std::cos(heading);
+            const double c = std::cos(rel), s = std::sin(rel);
+            return Look{ sh * c + ch * s, ch * c - sh * s };
+        };
+        auto arcAt = [&](double heading, double rel) {
+            const Look L = look(heading, rel);
+            return selectGunArc(L.x, L.z, heading);
+        };
+        const bool cardinals = arcAt(0.0, 0.0) == GunArc::Bow
+                            && arcAt(0.0, PI * 0.5) == GunArc::Starboard
+                            && arcAt(0.0, -PI * 0.5) == GunArc::Port
+                            && arcAt(0.0, PI) == GunArc::Stern;
+        push("Looking ahead, abeam, or astern arms bow, that beam, or stern", cardinals);
+
+        const double h = 1.7; // not a cardinal heading
+        const bool turned = arcAt(h, 0.0) == GunArc::Bow
+                         && arcAt(h, PI * 0.5) == GunArc::Starboard
+                         && arcAt(h, -PI * 0.5) == GunArc::Port
+                         && arcAt(h, PI) == GunArc::Stern;
+        push("Arc selection follows camera yaw relative to ship heading", turned);
+
+        // 0.70 rad ~ 40° (still the front quarter), 0.87 ~ 50° (onto the beam),
+        // 2.20 ~ 126° (still the beam), 2.44 ~ 140° (into the stern quarter).
+        const bool quarters = arcAt(h, 0.70) == GunArc::Bow
+                           && arcAt(h, 0.87) == GunArc::Starboard
+                           && arcAt(h, -0.87) == GunArc::Port
+                           && arcAt(h, 2.20) == GunArc::Starboard
+                           && arcAt(h, 2.44) == GunArc::Stern
+                           && arcAt(h, -2.44) == GunArc::Stern;
+        push("Front and rear arcs are the 45-degree quarters; the beams fill the rest", quarters);
+
+        push("A missing look direction arms the bow", selectGunArc(0.0, 0.0, h) == GunArc::Bow);
+
+        const bool names = std::string(gunArcName(GunArc::Port)) == "port broadside"
+                        && std::string(gunArcName(GunArc::Starboard)) == "starboard broadside"
+                        && std::string(gunArcName(GunArc::Bow)) == "bow chasers"
+                        && std::string(gunArcName(GunArc::Stern)) == "stern chasers";
+        push("Battery names name the four arcs", names);
+
+        struct Axes { double ahead, stbd; };
+        auto axes = [](double dx, double dz, double heading) {
+            const double sh = std::sin(heading), ch = std::cos(heading);
+            return Axes{ dx * sh + dz * ch, dx * ch - dz * sh };
+        };
+        const double fh = 0.9, sx = 4.0, sz = -7.0;
+        const auto bow = fireGunArc(base, GunArc::Bow, sx, 1.0, sz, fh);
+        const auto stern = fireGunArc(base, GunArc::Stern, sx, 1.0, sz, fh);
+        const auto stbd = fireGunArc(base, GunArc::Starboard, sx, 1.0, sz, fh);
+        const auto port = fireGunArc(base, GunArc::Port, sx, 1.0, sz, fh);
+        const auto stbdSide = fireBroadside(base, +1, sx, 1.0, sz, fh);
+        const auto portSide = fireBroadside(base, -1, sx, 1.0, sz, fh);
+
+        bool bowOk = !bow.empty() && bow.size() < stbdSide.size() && stern.size() == bow.size();
+        for (const auto& p : bow) {
+            const Axes pos = axes(p.x - sx, p.z - sz, fh);
+            const Axes vel = axes(p.vx, p.vz, fh);
+            bowOk = bowOk && p.alive && pos.ahead > base.bounds.length * 0.4
+                 && vel.ahead > 20.0 && std::fabs(vel.stbd) < 1.0;
+        }
+        push("Bow chase spawns fewer balls ahead and shoots forward", bowOk,
+             num(double(bow.size())) + " vs " + num(double(stbdSide.size())) + " broadside");
+
+        ShipConfig heavyCfg = baseCfg;
+        heavyCfg.cannonCount = 12;
+        const Ship heavy = makeShipFromConfig(heavyCfg);
+        const auto heavyBow = fireGunArc(heavy, GunArc::Bow, 0, 0, 0, 0.0);
+        const auto heavySide = fireBroadside(heavy, +1, 0, 0, 0, 0.0);
+        push("A heavy ship's chase volley stays a pair, not a full broadside",
+             heavyBow.size() == 2 && heavyBow.size() < heavySide.size(),
+             num(double(heavyBow.size())) + " vs " + num(double(heavySide.size())));
+
+        bool sternOk = !stern.empty();
+        for (const auto& p : stern) {
+            const Axes pos = axes(p.x - sx, p.z - sz, fh);
+            const Axes vel = axes(p.vx, p.vz, fh);
+            sternOk = sternOk && p.alive && pos.ahead < -base.bounds.length * 0.4
+                   && vel.ahead < -20.0 && std::fabs(vel.stbd) < 1.0;
+        }
+        push("Stern chase spawns astern and shoots aft", sternOk);
+
+        bool beamOk = stbd.size() == stbdSide.size() && port.size() == portSide.size();
+        for (size_t i = 0; i < stbd.size() && beamOk; ++i) {
+            beamOk = eq(stbd[i].x, stbdSide[i].x) && eq(stbd[i].z, stbdSide[i].z)
+                  && eq(stbd[i].vx, stbdSide[i].vx) && eq(stbd[i].vz, stbdSide[i].vz)
+                  && eq(port[i].x, portSide[i].x) && eq(port[i].z, portSide[i].z)
+                  && eq(port[i].vx, portSide[i].vx) && eq(port[i].vz, portSide[i].vz);
+            const Axes spos = axes(stbd[i].x - sx, stbd[i].z - sz, fh);
+            const Axes svel = axes(stbd[i].vx, stbd[i].vz, fh);
+            const Axes ppos = axes(port[i].x - sx, port[i].z - sz, fh);
+            const Axes pvel = axes(port[i].vx, port[i].vz, fh);
+            beamOk = beamOk && spos.stbd > base.bounds.width * 0.4 && svel.stbd > 20.0
+                  && std::fabs(svel.ahead) < 1.0
+                  && ppos.stbd < -base.bounds.width * 0.4 && pvel.stbd < -20.0
+                  && std::fabs(pvel.ahead) < 1.0;
+        }
+        push("Port and starboard batteries fire from that side, matching the broadside", beamOk);
     }
 
     // --- Enemy AI captain ---

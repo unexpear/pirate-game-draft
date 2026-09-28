@@ -125,12 +125,42 @@ std::string serialize(const Ship& ship);
 Ship deserialize(const std::string& text);
 
 // --- Gunnery ---------------------------------------------------------------
+// Which battery is armed. Black Flag picks this from where the camera looks
+// relative to the ship's heading, not from which side faces the target:
+// the forward quarter is the bow, the aft quarter the stern, and either beam
+// is that broadside.
+enum class GunArc { Bow, Starboard, Stern, Port };
+
+// Short HUD name: "bow chasers", "stern chasers", "port broadside",
+// "starboard broadside".
+const char* gunArcName(GunArc arc);
+
+// Arm a battery from the camera's horizontal look (camFwdX, camFwdZ), in the
+// same world axes as `heading` (ship forward is (sin heading, cos heading)).
+// The vector need not be unit length. A zero look arms the bow — the chase
+// camera's forward view — so a missing direction still fires.
+// Quarters are 45 degrees: |yaw| <= 45° bow, |yaw| >= 135° stern, else the beam
+// (positive yaw = starboard). Balls do not home; they leave along that arc.
+GunArc selectGunArc(double camFwdX, double camFwdZ, double heading);
+
 // Fire a broadside from `ship` (centred at world sx,sy,sz, yawed `heading`) out
 // the given `side` (+1 = starboard, -1 = port): one cannonball per cannon,
 // spread along the hull and lobbed slightly up. Returns the new projectiles.
+// The AI still calls this with the side that faces its target. The player's
+// fire key uses fireGunArc instead.
 std::vector<Projectile> fireBroadside(const Ship& ship, int side,
                                       double sx, double sy, double sz,
                                       double heading, double muzzleSpeed = 34.0);
+
+// Fire the armed battery. Port and starboard are fireBroadside (dead abeam).
+// Bow and stern are a chase-gun shortcut: the hull has no bow or stern gun
+// pieces, so a chase volley is fewer balls (half the broadside, at least one,
+// at most two), spawned just past the stem or sternpost and shot along the
+// centreline. Same muzzle and lob as a broadside, so the range stays readable
+// in the existing duel.
+std::vector<Projectile> fireGunArc(const Ship& ship, GunArc arc,
+                                   double sx, double sy, double sz,
+                                   double heading, double muzzleSpeed = 34.0);
 // Advance projectiles under gravity; kill spent/underwater ones.
 void stepProjectiles(std::vector<Projectile>& shots, double dt);
 // Is world point (px,py,pz) inside `target`'s hull box (centre tx,ty,tz, yaw)?
