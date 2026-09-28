@@ -16,20 +16,6 @@ bool overlapsBody(double feetY, const CharacterBody& body, const Aabb& box) {
     return box.maxY > lo && box.minY < hi;
 }
 
-bool insideExpanded(double x, double z, const CharacterBody& body, const Aabb& box) {
-    return x > box.minX - body.radius && x < box.maxX + body.radius
-        && z > box.minZ - body.radius && z < box.maxZ + body.radius;
-}
-
-bool hits(double x, double z, double feetY, const CharacterBody& body,
-          const std::vector<Aabb>& solids) {
-    for (const Aabb& box : solids) {
-        if (!overlapsBody(feetY, body, box)) continue;
-        if (insideExpanded(x, z, body, box)) return true;
-    }
-    return false;
-}
-
 // Least-penetration push onto the expanded face. Standing on the face is free
 // (the inside test is strict).
 bool pushOut(double& x, double& z, double feetY, const CharacterBody& body,
@@ -106,35 +92,37 @@ bool moveCharacter(double& x, double& z, double feetY, double dx, double dz,
     const bool pushed = pushOut(x, z, feetY, body, solids);
     if (dx == 0.0 && dz == 0.0) return pushed;
 
-    auto clear = [&](double px, double pz) {
-        return !hits(px, pz, feetY, body, solids);
-    };
-    if (clear(x + dx, z + dz)) {
-        x += dx;
-        z += dz;
-        return pushed;
-    }
-
-    // Slide: finish the free part of X, then the free part of Z from there.
-    auto approach = [&](double& coord, double delta, bool alongX) {
-        if (delta == 0.0) return;
-        const double other = alongX ? z : x;
-        auto at = [&](double t) {
-            return alongX ? clear(coord + t, other) : clear(other, coord + t);
-        };
-        if (at(delta)) { coord += delta; return; }
-        double lo = 0.0;
-        double hi = delta;
-        for (int i = 0; i < 12; ++i) {
-            const double mid = (lo + hi) * 0.5;
-            if (at(mid)) lo = mid;
-            else hi = mid;
+    // Axis slide against the expanded faces. The clamp is the first face the
+    // segment actually crosses, so a long step cannot tunnel through a thin wall
+    // whose far side is clear.
+    auto sweep = [&](double pos, double delta, double other, bool alongX) {
+        if (delta == 0.0) return pos;
+        const double dest = pos + delta;
+        double best = dest;
+        const double r = body.radius;
+        for (const Aabb& box : solids) {
+            if (!overlapsBody(feetY, body, box)) continue;
+            const double crossMin = (alongX ? box.minZ : box.minX) - r;
+            const double crossMax = (alongX ? box.maxZ : box.maxX) + r;
+            if (!(other > crossMin && other < crossMax)) continue;
+            const double enter = (alongX ? box.minX : box.minZ) - r;
+            const double exit = (alongX ? box.maxX : box.maxZ) + r;
+            if (pos > enter && pos < exit) return pos;
+            if (delta > 0.0) {
+                if (pos <= enter && dest > enter) best = std::min(best, enter);
+            } else if (pos >= exit && dest < exit) {
+                best = std::max(best, exit);
+            }
         }
-        coord += lo;
+        return best;
     };
-    approach(x, dx, true);
-    approach(z, dz, false);
-    return true;
+
+    const double x1 = sweep(x, dx, z, true);
+    const double z1 = sweep(z, dz, x1, false);
+    const bool clipped = (x1 != x + dx) || (z1 != z + dz);
+    x = x1;
+    z = z1;
+    return pushed || clipped;
 }
 
 std::vector<Aabb> shipWalkSolids(const Ship& ship, double originX, double originY,

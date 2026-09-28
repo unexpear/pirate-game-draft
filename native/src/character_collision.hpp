@@ -25,9 +25,9 @@ struct CharacterBody {
 };
 
 // Push the body out of any overlap, then apply (dx, dz). A clear step is taken
-// whole. A blocked step slides: X advances to contact, then Z from that X
-// (binary search, so the body stops flush with the face). Returns true when the
-// requested delta was not fully applied or a push-out moved the body.
+// whole. A blocked step slides: X advances to the first face it crosses, then Z
+// from that X, so a long step cannot tunnel through a thin solid. Returns true
+// when the requested delta was not fully applied or a push-out moved the body.
 bool moveCharacter(double& x, double& z, double feetY, double dx, double dz,
                    const CharacterBody& body, const std::vector<Aabb>& solids);
 
