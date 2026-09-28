@@ -55,7 +55,8 @@ The Three.js browser spike at [spikes/threejs-sea-trial/](spikes/threejs-sea-tri
 - [ ] **Shadow-mapped cast shadows** — a light-space depth pass + PCF so boats/rigging/buildings/hill cast shadows onto water & terrain. The unanimous composition "lighting gives form / grounded" blocker across all gauntlet panels; contact-shadow blobs are already in but the critics want real projected shadows.
 - [ ] **Waterline foam + bow wave + wake** — hull-vs-water intersection foam ring + bow spray + a scrolling V-wake, so the ship displaces water instead of clipping/hovering. The ship "sits in the water" gauntlet blocker.
 - [ ] Brace (hold, timed) — negate/soften an incoming broadside; the BF defensive verb, pairs with enemy return fire.
-- [ ] Mouse camera control (drag-orbit / scroll-zoom) — also unlocks Black Flag's real *camera-direction* weapon selection (side/front/rear).
+- [x] **Camera-direction batteries** — Space fires the arc the sail camera is looking along, not the side that faces the enemy. Ahead → bow chasers, astern → stern chasers, a beam → that broadside (45° quarters). The hull has no bow/stern gun pieces, so a chase volley is a shortcut: half a broadside, at most two balls, from the stem or sternpost along the centreline. Balls fly along the battery (they never homed). The chase cam on main looks down the bow, so bow chasers stay armed until the view swings; selection reads that camera's horizontal look, which a later mouse-orbit can supply the same way. The gunnery panel names the armed arc. AI broadsides are unchanged.
+- [ ] Mouse camera control (drag-orbit / scroll-zoom) — orbit/zoom the sail camera. Weapon arcs already follow whatever horizontal look that camera supplies.
 - [ ] The full Build → Sail loop per [vertical-slice.md](vertical-slice.md); Jolt + Steamworks after.
 
 ## Done

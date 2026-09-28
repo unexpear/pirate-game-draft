@@ -533,13 +533,15 @@ int main(int argc, char** argv) {
         const sea::Stats enemyStats = sea::getShipStats(enemy);
         if (enemyStats.sinking) enemyStruck = true; // floods to the waterline -> strikes her colours
 
-        // Our broadside (Space) fires from whichever side faces the enemy.
+        // Space fires the battery the camera is looking along, not the side
+        // that faces the enemy. The chase cam looks down the bow, so that arms
+        // the bow chasers; a later orbit supplies the same look vector.
+        float lookX = 0.0f, lookZ = 0.0f;
+        ship_view::sailCameraLook(heading, lookX, lookZ);
+        const sea::GunArc armed = sea::selectGunArc(lookX, lookZ, heading);
         reload = clampf(reload - dt, 0.0f, 10.0f);
         if (wantFire && reload <= 0.0f && !buildMode && !inSafeZone) {
-            const float dxE = enemyWorldX - worldX, dzE = enemyWorldZ - worldZ;
-            const float starboardComp = dxE * std::cos(heading) - dzE * std::sin(heading);
-            const int side = starboardComp >= 0.0f ? 1 : -1;
-            auto volley = sea::fireBroadside(ship, side, worldX, pose.heaveY, worldZ, heading);
+            auto volley = sea::fireGunArc(ship, armed, worldX, pose.heaveY, worldZ, heading);
             shots.insert(shots.end(), volley.begin(), volley.end());
             reload = 1.2f;
         }
@@ -641,7 +643,7 @@ int main(int argc, char** argv) {
             ImGui::SameLine();
             if (ImGui::Button("Reset")) resetShip();
             ImGui::TextDisabled("Keys: W raise sail (hold at full = travel), S lower, A/D steer");
-            ImGui::TextDisabled("      Space fire, B board  ·  C/V cargo, X damage, Z repair, R reset");
+            ImGui::TextDisabled("      Space fires the camera's battery, B board  ·  C/V cargo, X damage, Z repair, R reset");
         }
         if (ImGui::CollapsingHeader("Build mode", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Checkbox("Guided assembly (freeze & build)", &buildMode);
@@ -745,10 +747,15 @@ int main(int argc, char** argv) {
             if (enemyResolved && !inSafeZone) ImGui::Text("         next patrol inbound...");
             ImGui::Text("Range:   %.0f m", enemyRange);
             ImGui::Text("Incoming: %d shots", int(enemyShots.size()));
-            if (inSafeZone)     ImGui::TextColored(kGreen, "Safe zone - no combat");
-            else if (boarding)  ImGui::TextColored(kGreen, "Boarding...");
-            else if (boardable) ImGui::TextColored(kGreen, "Alongside - press B to board!");
-            else                ImGui::TextDisabled(reload > 0.0f ? "Reloading..." : "Space: fire broadside");
+            if (buildMode)      ImGui::TextDisabled("Gunnery frozen on the stocks");
+            else if (inSafeZone) ImGui::TextColored(kGreen, "Safe zone - no combat");
+            else {
+                ImGui::TextColored(kGreen, "Armed:   %s", sea::gunArcName(armed));
+                ImGui::TextDisabled("Camera look: ahead bow, astern stern, abeam that side");
+                if (boarding)       ImGui::TextColored(kGreen, "Boarding...");
+                else if (boardable) ImGui::TextColored(kGreen, "Alongside - press B to board!");
+                else ImGui::TextDisabled(reload > 0.0f ? "Reloading..." : "Space: fire the armed battery");
+            }
         }
         ImGui::Separator();
         ImGui::TextColored(passing == total ? kGreen : kRed, "Model self-tests: %d / %d passing", passing, total);
