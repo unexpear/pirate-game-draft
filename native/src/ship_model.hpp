@@ -147,9 +147,66 @@ void damageRig(Ship& ship, double amount);
 double rigIntegrity(const Ship& ship);
 
 // Mechanical advantage of a block-and-tackle with `parts` rope parts supporting
-// the load: hauling `load / parts` of effort raises the load (frictionless). The
-// yard's pulleys hoist heavy spars & timbers this way.
+// the load (frictionless): advantage == parts, and fewer than 1 part counts as a
+// single whip. Hauling `load / parts` of the weight raises the load, and the
+// load moves `1 / parts` as far as the fall you pull. The yard crane and the
+// ship's halyard both hoist through this.
 double tackleAdvantage(int parts);
+// Newtons the hauler must pull on the fall to lift `loadKg` (weight / advantage).
+double tackleEffort(double loadKg, int parts);
+// Tension in each supporting part (Newtons): the weight shared across the parts.
+double tacklePartTension(double loadKg, int parts);
+// How fast the LOAD rises (m/s) when the fall is hauled at `haulRate` m/s.
+// More parts buy advantage and spend it as a slower hoist.
+double tackleHoistSpeed(double haulRate, int parts);
+
+// A reeved purchase hoisting a load between two stops. `height` is metres above
+// the world origin for the yard crane, or a 0..1 fraction of yard travel for the
+// halyard — the stepper only cares that it lives in [low, high].
+// `ropeRatingN` is the most tension one part may carry; 0 means the rope is not
+// the limit (only the hauler's pull is).
+struct TackleHoist {
+    int parts = 4;
+    double loadKg = 0;
+    double height = 0;
+    double low = 0;
+    double high = 1;
+    double ropeRatingN = 0;
+};
+
+enum class HoistVerb { Hold, Raise, Lower };
+
+// One tick of a hoist. `refused` means a Raise did not move the load: either the
+// crew cannot pull `effortN`, or a part's tension would exceed the rope rating
+// (`overTension`). Lowering eases the fall and is not refused. Hold is a belay:
+// the load stays where it is.
+struct HoistTick {
+    double height = 0;
+    double effortN = 0;
+    double tensionN = 0;
+    double speed = 0;          // signed load speed, metres (or fraction) per second; + is up
+    bool refused = false;
+    bool overTension = false;
+    bool atTop = false;
+    bool atBottom = false;
+};
+
+// Step `hoist` by `dt` seconds. `maxPullN` is the most the crew can haul on the
+// fall; `haulRate` is how fast they can pull or ease rope (m/s). Raise speed is
+// `tackleHoistSpeed`; the load stops hard at `low` and `high`.
+HoistTick stepHoist(TackleHoist& hoist, HoistVerb verb, double dt,
+                    double maxPullN, double haulRate);
+
+// v1 rope: a polyline with parabolic sag, not a solved catenary. `segments`
+// straight pieces join `a` to `b`. The midpoint bows `sag` metres perpendicular
+// to the chord, downward (a vertical rope bows toward +Z). The ends stay put.
+// Fewer than 1 segment is a single straight piece.
+std::vector<Vec3> ropeSag(Vec3 a, Vec3 b, int segments, double sag);
+
+// Parts in the ship's halyard purchase, from the blocks actually reeved on it.
+// Masthead + mast-foot blocks are a 2-part gun tackle. Sheet blocks are a
+// separate purchase and do not add parts. A bare halyard (no blocks) is 1.
+int halyardParts(const Ship& ship);
 
 // Decide orders for an enemy captain at (ex,ez,eHeading) engaging a foe at
 // (ox,oz): close to `engageRange`, then turn to present a broadside and fire the

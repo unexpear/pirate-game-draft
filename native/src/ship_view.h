@@ -10,7 +10,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace sea { struct Ship; struct Wave; struct FloatPose; }
+namespace sea { struct Ship; struct Wave; struct FloatPose; struct TackleHoist; }
 
 namespace ship_view {
 
@@ -33,7 +33,7 @@ void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>
             float worldX, float worldZ, float windDir, float sailFullness,
             int width, int height, float heelScale = 1.0f,
             float cutWorldX = 0.0f, float cutWorldZ = 0.0f, float cutR = 0.0f,
-            float speed = 0.0f);
+            float speed = 0.0f, float yardHoist = 1.0f);
 
 // Draw another ship into the same view (camera already set by render()), placed
 // at scene position (posX,posZ) relative to our ship at the origin.
@@ -91,9 +91,13 @@ float deckStandHeight(const sea::Ship& ship);
 // the island's shipyard. Orbit camera (`orbitAngle`) to look the ship over, or
 // (`walk`) a third-person follow camera on a character walking the yard at
 // (cx,cy,cz) facing `cheading`, stride animated by `walkPhase`.
+// `yardHoist` (0..1) sets the ship's halyard. `crane` is the port gantry's
+// block-and-tackle: its height is the spar, and its parts are drawn as sagging
+// rope spans between the fixed block and the travelling block.
 void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
                       const std::vector<sea::Wave>& waves, float timeSec,
                       float orbitAngle, int width, int height,
-                      bool walk, float cx, float cy, float cz, float cheading, float walkPhase);
+                      bool walk, float cx, float cy, float cz, float cheading, float walkPhase,
+                      float yardHoist, const sea::TackleHoist& crane);
 
 } // namespace ship_view

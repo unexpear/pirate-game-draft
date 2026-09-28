@@ -80,10 +80,10 @@ The clarified loop we're building toward, and how it maps to the native C++ prot
 **Beyond the profile (big, separate increments):**
 - **Freeform placement** — click-to-place each plank/rib to shape the hull; per-tradition validation (backbone before planking; shell- vs frame-first; clinker vs carvel). Then the bake reads the *actual placed geometry*, not just L/B/T sliders.
 - **Walkable human character** — a third-person avatar you control on foot: walk the yard, walk the deck, climb aboard (Black Flag's seamless ship↔foot). New: character controller + camera + animation. Big.
-- **Pulleys & ropes** — block-and-tackle: yard **cranes/gantries** hoist timbers & masts with visible rope + sheaves; the ship's **rigging** (halyards/sheets). Rope as a simple constraint/catenary; pulley as a hoist ratio. Big.
+- **Pulleys & ropes (v1, in)** — block-and-tackle on the yard crane (hoist a timber; parts change effort and speed; overload refuses) and the ship's halyard (yard up/down). Rope is a sagging polyline between blocks, not a solved catenary. Still deferred: soft-body rope, a snapped fall, freeform reeving.
 - **Per-section buoyancy sample points** baked from the hull → `computeFloatPose` rides/pitches per the real shape.
 
-**Status (native prototype):** the whole ship is real piece-by-piece (backbone keel/stem/sternpost/ribs → planking → nails → deck → mast/bowsprit → helm/capstan → standing rigging lines); the shipyard build **berth with a stand** + orbit camera is in; the **launch → `bakeHullProfile` → sail-differently** loop is in (driven by hull-shape sliders for now); and a **walkable box-figure character (v0)** can walk the yard on foot (WASD, follow cam). **Next up: freeform plank/rib placement**, then **climbing aboard + walking the deck**, then **running rigging / pulleys & ropes**. See [next-steps.md](next-steps.md).
+**Status (native prototype):** the whole ship is real piece-by-piece (backbone keel/stem/sternpost/ribs → planking → nails → deck → mast/bowsprit → helm/capstan → standing rigging lines); the shipyard build **berth with a stand** + orbit camera is in; the **launch → `bakeHullProfile` → sail-differently** loop is in (driven by hull-shape sliders for now); a **walkable box-figure character (v0)** can walk the yard and the deck on the stocks; and **pulleys & ropes v1** hoists a timber on the yard crane and the yard on the halyard. **Next up: freeform plank/rib placement**, then walking the moving deck at sea. See [next-steps.md](next-steps.md).
 
 ## Open questions
 

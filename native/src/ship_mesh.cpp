@@ -70,6 +70,17 @@ float pieceMat(const sea::Piece& p) {
     return 1.0f;
 }
 
+// Mastheaded yard (yardHoist >= 1) sits where the sail has always sat. Lowering
+// the halyard drops that yard toward the deck without changing sail trim; the
+// foot stays just above the deck.
+float hoistedYardTop(float depth, float mastH, float sailH, float yardHoist) {
+    const float full = depth * 0.03f + mastH * 0.90f;
+    if (yardHoist >= 0.999f) return full;
+    const float yf = yardHoist < 0.0f ? 0.0f : yardHoist;
+    const float low = depth * 0.03f + 0.55f + sailH;
+    return low + (full - low) * yf;
+}
+
 void pieceColor(const sea::Piece& p, float out[4]) {
     auto set = [&](float r, float g, float b) { out[0] = r; out[1] = g; out[2] = b; out[3] = 1.0f; };
     if (p.damage >= 1.0) set(0.11f, 0.11f, 0.13f);          // destroyed
@@ -121,7 +132,7 @@ void shutdown() {
 
 void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
             float heading, float windDir, float sailFullness, float timeSec,
-            float posX, float posZ, float heelScale) {
+            float posX, float posZ, float heelScale, float yardHoist) {
     // Real sailing visuals: the wind angle off the bow drives sail trim, luffing,
     // and how far the hull heels to leeward under sail pressure.
     const float align = std::cos(heading - windDir);
@@ -141,11 +152,21 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
     bgfx::setUniform(u_lightDir, lightV);
 
     for (const auto& p : ship.pieces) {
+        float bw = float(p.bounds.x), by = float(p.bounds.y), bz = float(p.bounds.z);
+        float px = float(p.position.x), py = float(p.position.y), pz = float(p.position.z);
+        // The halyard runs from the foot block up to the yard. Mastheaded it is
+        // the generated piece; easing the halyard shortens it from the head down.
+        if (p.id == "halyard" && yardHoist < 0.999f) {
+            const float yf = yardHoist < 0.0f ? 0.0f : yardHoist;
+            const float foot = py - by * 0.5f;
+            const float reach = by * (0.18f + 0.82f * yf);
+            by = std::max(0.2f, reach);
+            py = foot + by * 0.5f;
+        }
         float local[16];
-        bx::mtxSRT(local,
-            float(p.bounds.x), float(p.bounds.y), float(p.bounds.z),
+        bx::mtxSRT(local, bw, by, bz,
             float(p.rotation.x), float(p.rotation.y), float(p.rotation.z),
-            float(p.position.x), float(p.position.y), float(p.position.z));
+            px, py, pz);
         float model[16];
         bx::mtxMul(model, local, shipRoot); // world = local composed under ship root
 
@@ -178,8 +199,8 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
         const float trim = lee * (1.57079633f - awa * 0.5f) + flap;
         const float mastH = depth * 0.9f + 6.0f;              // matches ship_model's mast
         const float fullH = mastH * 0.76f;                    // spans yard down to just above the deck
-        const float yardTop = depth * 0.03f + mastH * 0.90f;  // top edge below the masthead
         const float h = fullH * sailFullness * (luffing ? 0.85f : 1.0f); // slack when luffing
+        const float yardTop = hoistedYardTop(depth, mastH, h, yardHoist); // halyard sets the yard
         const float sailW = wid * 1.45f;                      // square-rig width (not oversized)
         // Sail root: trimmed + positioned; strips billow within this frame.
         float sailRoot[16];
@@ -214,7 +235,8 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
 }
 
 void renderDepth(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
-                 float heading, float windDir, float sailFullness, float posX, float posZ, float heelScale) {
+                 float heading, float windDir, float sailFullness, float posX, float posZ,
+                 float heelScale, float yardHoist) {
     // Same ship root as render(), so the shadow matches the visible hull. Submits
     // the hull/mast/rig pieces with the depth-only program to the shadow view.
     const float align = std::cos(heading - windDir);
@@ -226,11 +248,18 @@ void renderDepth(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& p
     bx::mtxSRT(shipRoot, 1.0f, 1.0f, 1.0f,
         float(pose.pitch), heading, float(pose.heel) + windHeel, posX, float(pose.heaveY), posZ);
     for (const auto& p : ship.pieces) {
+        float bxn = float(p.bounds.x), by = float(p.bounds.y), bz = float(p.bounds.z);
+        float px = float(p.position.x), py = float(p.position.y), pz = float(p.position.z);
+        if (p.id == "halyard" && yardHoist < 0.999f) {
+            const float yf = yardHoist < 0.0f ? 0.0f : yardHoist;
+            const float foot = py - by * 0.5f;
+            by = std::max(0.2f, by * (0.18f + 0.82f * yf));
+            py = foot + by * 0.5f;
+        }
         float local[16];
-        bx::mtxSRT(local,
-            float(p.bounds.x), float(p.bounds.y), float(p.bounds.z),
+        bx::mtxSRT(local, bxn, by, bz,
             float(p.rotation.x), float(p.rotation.y), float(p.rotation.z),
-            float(p.position.x), float(p.position.y), float(p.position.z));
+            px, py, pz);
         float model[16];
         bx::mtxMul(model, local, shipRoot);
         bgfx::setTransform(model);
@@ -249,8 +278,8 @@ void renderDepth(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& p
         const float trim = lee * (1.57079633f - awa * 0.5f);
         const float mastH = depth * 0.9f + 6.0f;
         const float fullH = mastH * 0.76f;
-        const float yardTop = depth * 0.03f + mastH * 0.90f;
         const float h = fullH * sailFullness * (luffing ? 0.85f : 1.0f);
+        const float yardTop = hoistedYardTop(depth, mastH, h, yardHoist);
         const float sailW = wid * 1.45f;
         float sailRoot[16];
         bx::mtxSRT(sailRoot, 1.0f, 1.0f, 1.0f, 0.0f, trim, 0.0f, 0.0f, yardTop - h * 0.5f, -len * 0.05f);
