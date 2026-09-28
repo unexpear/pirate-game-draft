@@ -5,6 +5,7 @@
 // gone).
 #include "ship_view.h"
 
+#include "camera_orbit.h"
 #include "ship_model.hpp"
 #include "water_gpu.h"
 #include "island_gpu.h"
@@ -24,7 +25,13 @@ namespace ship_view {
 static const float kSkyTop[3]     = { 0.28f, 0.45f, 0.68f }; // clear day-blue zenith
 static const float kSkyHorizon[3] = { 0.90f, 0.85f, 0.74f }; // warm pale daylight haze
 
+static ship_cam::Rig s_sailOrbit = { 0.0f, 0.31f, 30.0f };
+static float s_buildPitch = 0.35f, s_buildDist = 25.0f;
+
 void init() {
+    s_sailOrbit = ship_cam::defaultSailRig();
+    s_buildPitch = ship_cam::buildDefaultPitch();
+    s_buildDist = ship_cam::buildDefaultDist();
     sky_gpu::init();
     water_gpu::init();
     island_gpu::init();
@@ -56,6 +63,14 @@ static bool s_freeCam = false;
 static bx::Vec3 s_freeEye = { 0, 0, 0 }, s_freeAt = { 0, 0, 0 };
 void setFreeCamera(bool enabled, float ex, float ey, float ez, float ax, float ay, float az) {
     s_freeCam = enabled; s_freeEye = { ex, ey, ez }; s_freeAt = { ax, ay, az };
+}
+
+void setSailOrbit(float yaw, float pitch, float dist) {
+    s_sailOrbit = { yaw, pitch, dist };
+}
+
+void setBuildOrbit(float pitch, float dist) {
+    s_buildPitch = pitch; s_buildDist = dist;
 }
 
 // ---------------------------------------------------------------------------
@@ -366,13 +381,20 @@ void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>
             int width, int height, float heelScale,
             float cutWorldX, float cutWorldZ, float cutR, float speed) {
     // Chase camera behind the ship's heading (ship stays at the origin; the
-    // ocean scrolls past via worldX/worldZ).
-    const float dist = 24.0f;
-    const float fwdX = bx::sin(heading);
-    const float fwdZ = bx::cos(heading);
-    bx::Vec3 eye = s_freeCam ? s_freeEye : bx::Vec3{ -fwdX * dist, 9.0f, -fwdZ * dist };
-    bx::Vec3 at  = s_freeCam ? s_freeAt  : bx::Vec3{ fwdX * 5.0f, -0.4f, fwdZ * 5.0f };
-    if (s_isoId > 0 && !s_freeCam) isoCamera(s_isoView, eye, at); // orbit the isolated building
+    // ocean scrolls past via worldX/worldZ). Mouse orbit is a yaw offset from
+    // that heading; the free screenshot camera and the isolation view win.
+    bx::Vec3 eye = { 0.0f, 0.0f, 0.0f };
+    bx::Vec3 at  = { 0.0f, 0.0f, 0.0f };
+    if (s_freeCam) {
+        eye = s_freeEye;
+        at = s_freeAt;
+    } else if (s_isoId > 0) {
+        isoCamera(s_isoView, eye, at);
+    } else {
+        const ship_cam::Pose cam = ship_cam::toScene(ship_cam::sailLocal(s_sailOrbit), heading);
+        eye = { cam.eye.x, cam.eye.y, cam.eye.z };
+        at  = { cam.at.x, cam.at.y, cam.at.z };
+    }
     const bx::Vec3 up = { 0.0f, 1.0f, 0.0f };
 
     float view[16];
@@ -1403,9 +1425,9 @@ void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
         eye = { cx - fx * 7.0f, cy + 4.2f, cz - fz * 7.0f };
         at  = { cx + fx * 3.0f, cy + 1.4f, cz + fz * 3.0f };
     } else {
-        const float dist = 24.0f, camH = 12.0f;
-        eye = { bx::sin(orbitAngle) * dist, camH, bx::cos(orbitAngle) * dist };
-        at  = { 0.0f, 3.2f, 0.0f };
+        const ship_cam::Pose cam = ship_cam::buildLocal(orbitAngle, s_buildPitch, s_buildDist);
+        eye = { cam.eye.x, cam.eye.y, cam.eye.z };
+        at  = { cam.at.x, cam.at.y, cam.at.z };
     }
     float view[16], proj[16];
     bx::mtxLookAt(view, eye, at, up);

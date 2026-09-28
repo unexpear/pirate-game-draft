@@ -55,7 +55,7 @@ The Three.js browser spike at [spikes/threejs-sea-trial/](spikes/threejs-sea-tri
 - [ ] **Shadow-mapped cast shadows** — a light-space depth pass + PCF so boats/rigging/buildings/hill cast shadows onto water & terrain. The unanimous composition "lighting gives form / grounded" blocker across all gauntlet panels; contact-shadow blobs are already in but the critics want real projected shadows.
 - [ ] **Waterline foam + bow wave + wake** — hull-vs-water intersection foam ring + bow spray + a scrolling V-wake, so the ship displaces water instead of clipping/hovering. The ship "sits in the water" gauntlet blocker.
 - [ ] Brace (hold, timed) — negate/soften an incoming broadside; the BF defensive verb, pairs with enemy return fire.
-- [ ] Mouse camera control (drag-orbit / scroll-zoom) — also unlocks Black Flag's real *camera-direction* weapon selection (side/front/rear).
+- [x] Mouse camera control (drag-orbit / scroll-zoom) — sail chase and the build-berth orbit. Left/right/middle drag orbits, wheel zooms; ignored while ImGui wants the mouse, and while walking the yard (follow cam unchanged). Pitch ~3–69° and distance clamped (closer-in limited by hull length, sail eye kept above the waves). `--cam` / `--head` screenshots unchanged. Camera-direction weapon selection (side/front/rear) still waits; sail yaw is a heading offset so that pass can read it.
 - [ ] The full Build → Sail loop per [vertical-slice.md](vertical-slice.md); Jolt + Steamworks after.
 
 ## Done
