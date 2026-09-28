@@ -462,6 +462,99 @@ double tackleAdvantage(int parts) {
     return parts < 1 ? 1.0 : double(parts);
 }
 
+double tackleEffort(double loadKg, int parts) {
+    const double w = std::max(0.0, loadKg) * GRAVITY;
+    return w / tackleAdvantage(parts);
+}
+
+double tacklePartTension(double loadKg, int parts) {
+    // Frictionless: every supporting part carries the same share of the weight,
+    // which is also the pull on the fall.
+    return tackleEffort(loadKg, parts);
+}
+
+double tackleHoistSpeed(double haulRate, int parts) {
+    if (haulRate <= 0.0) return 0.0;
+    return haulRate / tackleAdvantage(parts);
+}
+
+HoistTick stepHoist(TackleHoist& hoist, HoistVerb verb, double dt,
+                    double maxPullN, double haulRate) {
+    HoistTick t;
+    if (hoist.high < hoist.low) std::swap(hoist.high, hoist.low);
+    hoist.height = clampd(hoist.height, hoist.low, hoist.high);
+    t.effortN = tackleEffort(hoist.loadKg, hoist.parts);
+    t.tensionN = tacklePartTension(hoist.loadKg, hoist.parts);
+    t.height = hoist.height;
+    t.atTop = hoist.height >= hoist.high - 1e-9;
+    t.atBottom = hoist.height <= hoist.low + 1e-9;
+    if (!(dt > 0.0) || verb == HoistVerb::Hold) return t;
+
+    const bool ropeLimit = hoist.ropeRatingN > 0.0 && t.tensionN > hoist.ropeRatingN + 1e-6;
+    const double mag = tackleHoistSpeed(haulRate, hoist.parts);
+    if (verb == HoistVerb::Raise) {
+        if (t.atTop) return t;
+        if (ropeLimit) { t.refused = true; t.overTension = true; return t; }
+        if (t.effortN > maxPullN + 1e-6) { t.refused = true; return t; }
+        t.speed = mag;
+        hoist.height = std::min(hoist.high, hoist.height + mag * dt);
+        t.atTop = hoist.height >= hoist.high - 1e-9;
+    } else {
+        // Easing the fall: the purchase still sets how fast the load descends,
+        // and a stop at the bottom holds it. Over-tension does not jam a lower.
+        if (t.atBottom) return t;
+        t.speed = -mag;
+        hoist.height = std::max(hoist.low, hoist.height - mag * dt);
+        t.atBottom = hoist.height <= hoist.low + 1e-9;
+    }
+    t.height = hoist.height;
+    return t;
+}
+
+std::vector<Vec3> ropeSag(Vec3 a, Vec3 b, int segments, double sag) {
+    // Parabolic sag: 4t(1-t) is 0 at the ends and 1 at the midpoint, applied
+    // perpendicular to the chord so a hanging part actually bows instead of
+    // just bunching along a straight line. Stand-in for a catenary — cheap,
+    // stable, and enough for a rope to read as a line between blocks.
+    if (segments < 1) segments = 1;
+    sag = std::max(0.0, sag);
+    const double cx = b.x - a.x, cy = b.y - a.y, cz = b.z - a.z;
+    const double clen = std::sqrt(cx * cx + cy * cy + cz * cz);
+    double ux = 0, uy = 1, uz = 0;
+    if (clen > 1e-9) { ux = cx / clen; uy = cy / clen; uz = cz / clen; }
+    // Gravity (0,-1,0) with the along-chord part removed.
+    double sx = ux * uy;
+    double sy = -1.0 + uy * uy;
+    double sz = uz * uy;
+    const double slen = std::sqrt(sx * sx + sy * sy + sz * sz);
+    if (slen < 1e-6) { sx = 0; sy = 0; sz = 1; } // vertical fall: bow toward +Z
+    else { sx /= slen; sy /= slen; sz /= slen; }
+
+    std::vector<Vec3> pts;
+    pts.reserve(static_cast<size_t>(segments) + 1);
+    for (int i = 0; i <= segments; ++i) {
+        const double t = double(i) / double(segments);
+        const double belly = 4.0 * t * (1.0 - t) * sag;
+        Vec3 p;
+        p.x = a.x + cx * t + sx * belly;
+        p.y = a.y + cy * t + sy * belly;
+        p.z = a.z + cz * t + sz * belly;
+        pts.push_back(p);
+    }
+    return pts;
+}
+
+int halyardParts(const Ship& ship) {
+    bool head = false, foot = false;
+    for (const auto& p : ship.pieces) {
+        if (p.id == "block_head") head = true;
+        else if (p.id == "block_foot") foot = true;
+    }
+    if (head && foot) return 2; // gun tackle: two blocks, two parts
+    if (head || foot) return 1;
+    return 1;
+}
+
 int resolveHits(std::vector<Projectile>& shots, Ship& target,
                 double tx, double ty, double tz, double heading) {
     int hits = 0;
@@ -995,6 +1088,86 @@ std::vector<TestResult> runSelfTest() {
         push("Ship is rigged with blocks (pulleys)", blocks >= 4, num(blocks) + " blocks");
         push("A block-and-tackle multiplies hauling force",
              tackleAdvantage(4) > tackleAdvantage(2) && tackleAdvantage(1) == 1.0 && tackleAdvantage(3) == 3.0);
+
+        // Advantage is the hoist: less effort, more parts, slower rise. A crew
+        // that can pull 2500 N lifts 900 kg on 4 parts (2205 N) and not on 2.
+        const double e4 = tackleEffort(900.0, 4);
+        const double e2 = tackleEffort(900.0, 2);
+        push("More parts hoist the same load with less effort",
+             e4 < e2 && eq(e4, 900.0 * 9.8 / 4.0) && eq(tacklePartTension(900.0, 4), e4),
+             num(e2) + " N -> " + num(e4) + " N");
+        push("More parts raise the load slower for the same rope speed",
+             tackleHoistSpeed(1.6, 4) < tackleHoistSpeed(1.6, 2) && eq(tackleHoistSpeed(1.6, 4), 0.4));
+
+        {
+            TackleHoist light;
+            light.parts = 2; light.loadKg = 100; light.low = 0; light.high = 10; light.height = 1;
+            TackleHoist bought = light; bought.parts = 4;
+            const HoistTick fast = stepHoist(light, HoistVerb::Raise, 1.0, 5000.0, 1.6);
+            const HoistTick slow = stepHoist(bought, HoistVerb::Raise, 1.0, 5000.0, 1.6);
+            push("Hauling a tackle raises the load",
+                 fast.height > 1.0 && !fast.refused && light.height == fast.height && fast.speed > 0.0);
+            push("Advantage slows the hoist",
+                 slow.speed < fast.speed && slow.height < fast.height && eq(slow.speed, fast.speed * 0.5));
+        }
+        {
+            TackleHoist heavy;
+            heavy.parts = 2; heavy.loadKg = 900; heavy.low = 0; heavy.high = 10; heavy.height = 0.5;
+            const HoistTick no = stepHoist(heavy, HoistVerb::Raise, 1.0, 2500.0, 1.6);
+            heavy.parts = 4;
+            const HoistTick yes = stepHoist(heavy, HoistVerb::Raise, 1.0, 2500.0, 1.6);
+            push("Too few parts refuses the hoist", no.refused && eq(no.height, 0.5) && !no.overTension);
+            push("Adding parts lets the same load rise", !yes.refused && yes.height > 0.5);
+        }
+        {
+            TackleHoist rated;
+            rated.parts = 1; rated.loadKg = 400; rated.low = 0; rated.high = 8; rated.height = 1;
+            rated.ropeRatingN = 3500; // crew can pull 5000 N, the rope cannot carry 3920 N
+            const HoistTick parted = stepHoist(rated, HoistVerb::Raise, 1.0, 5000.0, 1.6);
+            rated.parts = 2; // tension halves to 1960 N, under the rating
+            const HoistTick sound = stepHoist(rated, HoistVerb::Raise, 1.0, 5000.0, 1.6);
+            push("A rope over its rating refuses the lift",
+                 parted.refused && parted.overTension && eq(parted.height, 1.0));
+            push("More parts bring the tension under the rope rating",
+                 !sound.refused && !sound.overTension && sound.height > 1.0);
+        }
+        {
+            TackleHoist top;
+            top.parts = 2; top.loadKg = 50; top.low = 0; top.high = 5; top.height = 5;
+            const HoistTick capped = stepHoist(top, HoistVerb::Raise, 2.0, 5000.0, 1.6);
+            TackleHoist bot = top; bot.height = 0;
+            const HoistTick floored = stepHoist(bot, HoistVerb::Lower, 2.0, 5000.0, 1.6);
+            TackleHoist mid = top; mid.height = 2;
+            const HoistTick held = stepHoist(mid, HoistVerb::Hold, 2.0, 5000.0, 1.6);
+            const HoistTick down = stepHoist(mid, HoistVerb::Lower, 1.0, 5000.0, 1.6);
+            push("A hoist stops at the top", capped.atTop && eq(capped.height, 5.0) && eq(capped.speed, 0.0));
+            push("A hoist stops at the bottom", floored.atBottom && eq(floored.height, 0.0) && eq(floored.speed, 0.0));
+            push("Easing the fall lowers the load; a belay holds",
+                 eq(held.height, 2.0) && held.speed == 0.0 && down.height < 2.0 && down.speed < 0.0);
+            // A long haul clamps on the stop instead of overshooting.
+            TackleHoist near = top; near.height = 4.9; near.parts = 1;
+            const HoistTick clamped = stepHoist(near, HoistVerb::Raise, 5.0, 5000.0, 1.6);
+            push("A hoist clamps on the top stop", clamped.atTop && eq(clamped.height, 5.0));
+        }
+        {
+            const Vec3 a{ 0, 10, 0 }, b{ 0, 10, 8 };
+            const std::vector<Vec3> sag = ropeSag(a, b, 8, 2.0);
+            const Vec3& midpt = sag[4];
+            const bool ends = sag.front().x == a.x && sag.front().y == a.y && sag.front().z == a.z
+                           && sag.back().x == b.x && sag.back().y == b.y && sag.back().z == b.z;
+            push("Rope span sags between its blocks",
+                 sag.size() == 9 && ends && eq(midpt.y, 8.0) && eq(midpt.z, 4.0),
+                 "mid y " + std::to_string(midpt.y));
+            const std::vector<Vec3> taut = ropeSag(a, b, 4, 0.0);
+            bool flat = taut.size() == 5;
+            for (const auto& p : taut) if (std::fabs(p.y - 10.0) > 1e-9) flat = false;
+            push("A rope with no sag is a straight span", flat && eq(taut[2].z, 4.0));
+            const std::vector<Vec3> hang = ropeSag(Vec3{ 0, 10, 0 }, Vec3{ 0, 0, 0 }, 4, 1.0);
+            push("A vertical rope bows sideways",
+                 hang.size() == 5 && eq(hang[2].y, 5.0) && eq(hang[2].z, 1.0) && eq(hang[2].x, 0.0));
+        }
+        push("Halyard purchase follows the masthead and foot blocks",
+             halyardParts(base) == 2, num(halyardParts(base)) + " parts");
 
         // Backbone: a stem and a sternpost exist, laid (with the keel) before planking.
         int stems = 0, sternposts = 0;

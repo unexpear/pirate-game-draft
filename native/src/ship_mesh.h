@@ -20,15 +20,20 @@ void shutdown();
 // (animated by `timeSec`), and reefs with `sailFullness` (0 = furled .. 1 = full
 // canvas); the hull heels to leeward under sail. `posX`/`posZ` place the hull in
 // the scene (0,0 = our ship at the scrolling-ocean origin).
+// `yardHoist` is the halyard purchase, 0 = yard lowered to the deck, 1 = mastheaded
+// (the default look). It moves the yard and shortens the halyard; sheet trim is
+// unchanged.
 void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
             float heading, float windDir, float sailFullness, float timeSec,
-            float posX = 0.0f, float posZ = 0.0f, float heelScale = 1.0f);
+            float posX = 0.0f, float posZ = 0.0f, float heelScale = 1.0f,
+            float yardHoist = 1.0f);
 
 // Depth-only pass: submit the ship's pieces with the shadow program to the
 // shadow view (same pose as render), so the hull casts a real shadow.
 void renderDepth(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
                  float heading, float windDir, float sailFullness,
-                 float posX = 0.0f, float posZ = 0.0f, float heelScale = 1.0f);
+                 float posX = 0.0f, float posZ = 0.0f, float heelScale = 1.0f,
+                 float yardHoist = 1.0f);
 
 // Draw a single lit unit-cube marker (e.g. a cannonball tracer) at world (x,y,z).
 void renderBox(uint16_t viewId, float x, float y, float z, float size,

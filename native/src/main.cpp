@@ -276,6 +276,32 @@ int main(int argc, char** argv) {
     bool walkMode = false, onDeck = false;
     float charX = 9.0f, charY = 1.8f, charZ = -11.0f, charHeading = -0.7f, walkPhase = 0.0f;
 
+    // Yard crane: a 4-part purchase on a 900 kg timber. The crew can pull 2500 N;
+    // each part of the fall is rated to 4000 N. More parts cut the effort and the
+    // rise speed (see tackleAdvantage / stepHoist).
+    sea::TackleHoist crane;
+    crane.parts = 4;
+    crane.loadKg = 900;
+    crane.low = 2.4;
+    crane.high = 16.0;
+    crane.height = 5.2;
+    crane.ropeRatingN = 4000;
+    const double kCranePullN = 2500.0;
+    const double kCraneHaul = 1.6; // m/s of rope through the crew's hands
+    // Ship's halyard: parts come from the masthead + foot blocks (a 2-part gun
+    // tackle). Height is the fraction of yard travel, 1 = mastheaded.
+    sea::TackleHoist halyard;
+    halyard.parts = sea::halyardParts(ship);
+    halyard.loadKg = 80;
+    halyard.low = 0.0;
+    halyard.high = 1.0;
+    halyard.height = 1.0;
+    halyard.ropeRatingN = 2000;
+    const double kHalyardPullN = 520.0;
+    const double kHalyardHaul = 0.55; // fraction of yard travel per second of rope
+    sea::HoistTick craneTick{};
+    sea::HoistTick halyardTick{};
+
     // A large island with a port + shipyard, moored at a fixed spot to the north.
     const float islandX = 0.0f, islandZ = 120.0f;
     const float kLandRadius = 56.0f;  // run aground here
@@ -618,6 +644,30 @@ int main(int argc, char** argv) {
             if (mv != 0.0f) walkPhase += dt * 9.0f;
         }
 
+        // Block-and-tackle. Up/Down haul the yard crane (build mode). [ ] ease and
+        // hoist the ship's halyard. Both run through stepHoist, so the purchase
+        // (parts) sets effort and speed. A belay (no key) holds the load.
+        {
+            const bool* hk = SDL_GetKeyboardState(nullptr);
+            const bool keys = !ImGui::GetIO().WantCaptureKeyboard;
+            sea::HoistVerb craneVerb = sea::HoistVerb::Hold;
+            if (keys && buildMode) {
+                if (hk[SDL_SCANCODE_UP]) craneVerb = sea::HoistVerb::Raise;
+                if (hk[SDL_SCANCODE_DOWN]) craneVerb = sea::HoistVerb::Lower;
+            }
+            craneTick = sea::stepHoist(crane, craneVerb, dt, kCranePullN, kCraneHaul);
+
+            sea::HoistVerb halVerb = sea::HoistVerb::Hold;
+            if (keys) {
+                const bool ease = hk[SDL_SCANCODE_LEFTBRACKET];
+                const bool hoist = hk[SDL_SCANCODE_RIGHTBRACKET];
+                if (hoist && !ease) halVerb = sea::HoistVerb::Raise;
+                else if (ease && !hoist) halVerb = sea::HoistVerb::Lower;
+            }
+            halyard.parts = sea::halyardParts(ship);
+            halyardTick = sea::stepHoist(halyard, halVerb, dt, kHalyardPullN, kHalyardHaul);
+        }
+
         imgui_bgfx::beginFrame(width, height, dt, mouseX, mouseY, mouseButtons, wheel);
 
         if (!hideUI) {
@@ -642,6 +692,7 @@ int main(int argc, char** argv) {
             if (ImGui::Button("Reset")) resetShip();
             ImGui::TextDisabled("Keys: W raise sail (hold at full = travel), S lower, A/D steer");
             ImGui::TextDisabled("      Space fire, B board  ·  C/V cargo, X damage, Z repair, R reset");
+            ImGui::TextDisabled("      Up/Down haul the yard crane (build)   [ ] ease/hoist the halyard");
         }
         if (ImGui::CollapsingHeader("Build mode", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Checkbox("Guided assembly (freeze & build)", &buildMode);
@@ -692,6 +743,33 @@ int main(int argc, char** argv) {
                 ImGui::Text("Top speed: %.0f%%   Turn: %.0f%%",
                             activeProfile.topSpeedFactor * 100.0, activeProfile.turnFactor * 100.0);
                 ImGui::Separator();
+                ImGui::TextUnformatted("Yard crane  (block and tackle)");
+                int craneParts = crane.parts;
+                if (ImGui::SliderInt("Parts", &craneParts, 1, 8)) crane.parts = craneParts;
+                float timber = float(crane.loadKg);
+                if (ImGui::SliderFloat("Timber (kg)", &timber, 150.0f, 2200.0f, "%.0f")) crane.loadKg = timber;
+                if (ImGui::Button("Haul up"))
+                    craneTick = sea::stepHoist(crane, sea::HoistVerb::Raise, 0.45, kCranePullN, kCraneHaul);
+                ImGui::SameLine();
+                if (ImGui::Button("Ease down"))
+                    craneTick = sea::stepHoist(crane, sea::HoistVerb::Lower, 0.45, kCranePullN, kCraneHaul);
+                ImGui::Text("Advantage %.0f:1    effort %.0f N (crew %.0f)    rise %.2f m/s",
+                            sea::tackleAdvantage(crane.parts),
+                            sea::tackleEffort(crane.loadKg, crane.parts), kCranePullN,
+                            sea::tackleHoistSpeed(kCraneHaul, crane.parts));
+                ImGui::Text("Spar %.1f m    part tension %.0f N (rope %.0f N)",
+                            crane.height, sea::tacklePartTension(crane.loadKg, crane.parts), crane.ropeRatingN);
+                if (craneTick.overTension)
+                    ImGui::TextColored(kRed, "Rope would part - reeve more parts, or a lighter timber.");
+                else if (craneTick.refused)
+                    ImGui::TextColored(kRed, "Crew can't haul that - more parts share the weight.");
+                else if (craneTick.atTop)
+                    ImGui::TextDisabled("Two blocks - chock-a-block.");
+                else if (craneTick.atBottom)
+                    ImGui::TextDisabled("Spar is down on the dock.");
+                else
+                    ImGui::TextDisabled("Up/Down haul. Rope is a sagging line between the blocks.");
+                ImGui::Separator();
 
                 const int total = int(border.size());
                 ImGui::Text("Placed: %d / %d pieces", placed, total);
@@ -734,6 +812,18 @@ int main(int argc, char** argv) {
                             : (activeProfile.gm < 1.0 ? "stable" : "stiff"));
             ImGui::Text("Hull:    %.0f%% speed, %.0f%% turn (%s)",
                         activeProfile.topSpeedFactor * 100.0, activeProfile.turnFactor * 100.0, hs);
+            ImGui::Separator();
+            ImGui::Text("Halyard: %d-part    yard %.0f%%    effort %.0f N",
+                        halyard.parts, halyard.height * 100.0, halyardTick.effortN);
+            if (ImGui::Button("Hoist yard"))
+                halyardTick = sea::stepHoist(halyard, sea::HoistVerb::Raise, 0.35, kHalyardPullN, kHalyardHaul);
+            ImGui::SameLine();
+            if (ImGui::Button("Lower yard"))
+                halyardTick = sea::stepHoist(halyard, sea::HoistVerb::Lower, 0.35, kHalyardPullN, kHalyardHaul);
+            if (halyardTick.refused)
+                ImGui::TextColored(kRed, "Halyard won't hoist - the purchase is too short.");
+            else
+                ImGui::TextDisabled("[ ease   ] hoist. Sheets still trim the sail.");
         }
         if (ImGui::CollapsingHeader("Gunnery & boarding", ImGuiTreeNodeFlags_DefaultOpen)) {
             const char* est = captured ? "captured" : (enemyGone ? "sunk"
@@ -805,9 +895,10 @@ int main(int argc, char** argv) {
             // Shadow pass: the hull on the stocks casts onto the dock.
             shadow::beginPass(kShadowView, kSunX, kSunY, kSunZ, 0.0f, 0.0f, 34.0f);
             sea::FloatPose bp; bp.heaveY = 2.9f + float(ship.bounds.depth) * 0.55f;
-            ship_mesh::renderDepth(kShadowView, shown, bp, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+            ship_mesh::renderDepth(kShadowView, shown, bp, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, float(halyard.height));
             ship_view::renderBuildScene(kClearView, shown, waves, timeSec, buildOrbit, width, height,
-                                        walkMode, charX, charY, charZ, charHeading, walkPhase);
+                                        walkMode, charX, charY, charZ, charHeading, walkPhase,
+                                        float(halyard.height), crane);
         } else {
             // Shadow depth pass: the sun renders the ship(s) into the shadow map
             // (view 0, before the scene) so they cast real shadows on the sea.
@@ -819,7 +910,7 @@ int main(int argc, char** argv) {
             ship_view::shadowFrame(islX, islZ, shCx, shCz, shR, shIsland);
             shadow::beginPass(kShadowView, kSunX, kSunY, kSunZ, shCx, shCz, shR);
             if (!iso && !noShadow) {
-                ship_mesh::renderDepth(kShadowView, ship, pose, heading, windDir, sailFullness, 0.0f, 0.0f, float(activeProfile.heelFactor));
+                ship_mesh::renderDepth(kShadowView, ship, pose, heading, windDir, sailFullness, 0.0f, 0.0f, float(activeProfile.heelFactor), float(halyard.height));
                 if (!enemyGone)
                     ship_mesh::renderDepth(kShadowView, enemy, enemyPose, enemyHeading, windDir,
                                            enemyStruck ? 0.0f : 0.75f, enemyWorldX - worldX, enemyWorldZ - worldZ);
@@ -829,7 +920,7 @@ int main(int argc, char** argv) {
                 ship_view::renderIsland(kShadowView, islX, islZ);
                 ship_mesh::setDepthPass(false);
             }
-            ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height, float(activeProfile.heelFactor), islandX, islandZ, kLandCutRadius, speed);
+            ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height, float(activeProfile.heelFactor), islandX, islandZ, kLandCutRadius, speed, float(halyard.height));
             if (!enemyGone && !iso) {
                 ship_view::renderShip(kClearView, enemy, enemyPose, enemyHeading, windDir,
                                       enemyStruck ? 0.0f : 0.75f, timeSec, // furled sails once she strikes

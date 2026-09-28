@@ -364,7 +364,7 @@ void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>
             const sea::FloatPose& pose, float timeSec, float heading,
             float worldX, float worldZ, float windDir, float sailFullness,
             int width, int height, float heelScale,
-            float cutWorldX, float cutWorldZ, float cutR, float speed) {
+            float cutWorldX, float cutWorldZ, float cutR, float speed, float yardHoist) {
     // Chase camera behind the ship's heading (ship stays at the origin; the
     // ocean scrolls past via worldX/worldZ).
     const float dist = 24.0f;
@@ -396,7 +396,7 @@ void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>
                       bx::sin(heading), bx::cos(heading),
                       float(ship.bounds.length) * 0.5f, float(ship.bounds.width) * 0.6f, shipSpd);
     if (!iso)
-        ship_mesh::render(viewId, ship, pose, heading, windDir, sailFullness, timeSec, 0.0f, 0.0f, heelScale);
+        ship_mesh::render(viewId, ship, pose, heading, windDir, sailFullness, timeSec, 0.0f, 0.0f, heelScale, yardHoist);
 }
 
 void renderShadow(uint16_t viewId, float relX, float relZ, float halfWid, float halfLen) {
@@ -1393,7 +1393,8 @@ float deckStandHeight(const sea::Ship& ship) {
 void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
                       const std::vector<sea::Wave>& waves, float timeSec,
                       float orbitAngle, int width, int height,
-                      bool walk, float cx, float cy, float cz, float cheading, float walkPhase) {
+                      bool walk, float cx, float cy, float cz, float cheading, float walkPhase,
+                      float yardHoist, const sea::TackleHoist& crane) {
     // Camera: orbit the stocks to look the hull over, OR (walk mode) a third-person
     // camera following the character on foot in the yard.
     const bx::Vec3 up = { 0.0f, 1.0f, 0.0f };
@@ -1447,10 +1448,48 @@ void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
     }
     box(28.0f, 2.0f, 8.0f, 4.0f, 3.0f, 16.0f, wood[0], wood[1], wood[2]);          // timber stacks
     box(-28.0f, 2.0f, 8.0f, 4.0f, 3.0f, 16.0f, timber[0], timber[1], timber[2]);
-    // A spar hoisted on the port crane: rope from the arm -> block (pulley) -> spar.
-    box(-23.0f, 12.5f, 6.0f, 0.12f, 12.0f, 0.12f, dark[0], dark[1], dark[2], FLAT); // rope
-    box(-23.0f, 6.2f, 6.0f, 0.5f, 0.7f, 0.5f, dark[0], dark[1], dark[2], FLAT);     // block
-    box(-23.0f, 5.2f, 6.0f, 0.45f, 0.45f, 7.0f, wood[0], wood[1], wood[2]);        // suspended spar
+    // Port gantry tackle. v1 rope is a polyline with parabolic sag (see ropeSag),
+    // not a solved catenary: each part is a drooping line between the fixed block
+    // under the arm and the travelling block on the spar, plus the fall to the dock.
+    {
+        const float cxr = -23.0f, cz = 6.0f;
+        const float headY = 17.7f;
+        const float sparY = float(crane.height);
+        const float blockY = sparY + 0.85f;
+        const int parts = std::max(1, std::min(crane.parts, 8));
+        box(cxr, headY, cz, 0.62f, 0.7f, 0.55f, dark[0], dark[1], dark[2], FLAT);       // fixed block
+        box(cxr, blockY, cz, 0.55f, 0.64f, 0.5f, dark[0], dark[1], dark[2], FLAT);      // travelling block
+        box(cxr, sparY, cz, 0.45f, 0.45f, 7.0f, wood[0], wood[1], wood[2]);             // timber on the hook
+        // Strop from the travelling block down onto the spar (short, taut).
+        box(cxr, (blockY + sparY) * 0.5f, cz, 0.08f, std::max(0.15f, blockY - sparY - 0.3f), 0.08f,
+            dark[0], dark[1], dark[2], FLAT);
+        auto drawSpan = [&](const std::vector<sea::Vec3>& pts) {
+            for (size_t i = 1; i < pts.size(); ++i) {
+                const float x0 = float(pts[i - 1].x), y0 = float(pts[i - 1].y), z0 = float(pts[i - 1].z);
+                const float x1 = float(pts[i].x), y1 = float(pts[i].y), z1 = float(pts[i].z);
+                const float dy = y1 - y0, dz = z1 - z0;
+                const float len = std::sqrt(dy * dy + dz * dz);
+                if (len < 1e-3f) continue;
+                // Same tilt as the forestay: rotX = atan2(dz, dy) swings +Y toward +Z.
+                // Each span stays in a Y-Z plane, so one rotation is the whole rope.
+                ship_mesh::renderBoxRot(viewId,
+                    (x0 + x1) * 0.5f, (y0 + y1) * 0.5f, (z0 + z1) * 0.5f,
+                    0.07f, len, 0.07f, std::atan2(dz, dy), 0.0f, 0.0f,
+                    dark[0], dark[1], dark[2], FLAT);
+            }
+        };
+        for (int i = 0; i < parts; ++i) {
+            const float ox = (float(i) - 0.5f * float(parts - 1)) * 0.14f;
+            const sea::Vec3 top{ cxr + ox, headY - 0.28, cz };
+            const sea::Vec3 bot{ cxr + ox, blockY + 0.28, cz };
+            const double drop = std::fabs(top.y - bot.y);
+            drawSpan(sea::ropeSag(top, bot, 6, std::min(0.35, drop * 0.04)));
+        }
+        // The fall: from the fixed block down to a belay on the dock, with a real belly.
+        const sea::Vec3 sheave{ cxr + 0.35, headY - 0.2, cz + 0.35 };
+        const sea::Vec3 belay{ cxr + 0.35, 2.15, cz + 4.2 };
+        drawSpan(sea::ropeSag(sheave, belay, 10, 1.15));
+    }
 
     // The building stand: two ground ways, keel blocks along the spine, and a row
     // of shoring posts each side.
@@ -1499,7 +1538,7 @@ void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
     // The hull, keel resting on the blocks (with a contact shadow on the dock).
     sea::FloatPose bp;
     bp.heaveY = blockTop + float(ship.bounds.depth) * 0.55; // keel local y = -depth*0.55
-    ship_mesh::render(viewId, ship, bp, 0.0f, 0.0f, 0.0f, timeSec, 0.0f, 0.0f);
+    ship_mesh::render(viewId, ship, bp, 0.0f, 0.0f, 0.0f, timeSec, 0.0f, 0.0f, 1.0f, yardHoist);
 
     if (walk) ship_mesh::renderCharacter(viewId, cx, cy, cz, cheading, walkPhase);
 }
