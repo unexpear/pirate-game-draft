@@ -19,12 +19,22 @@ void shutdown();
 
 // Override the sail-scene camera with a fixed free camera (scene space) — used
 // for framed screenshots of the town/island. Pass enabled=false to restore the
-// chase camera.
+// chase camera. While enabled, the live orbit rig below is ignored.
 void setFreeCamera(bool enabled, float ex, float ey, float ez, float ax, float ay, float az);
 
-// Chase camera behind `heading`, scrolling ocean at the ship's virtual world
-// position (worldX/worldZ), and the ship riding the surface at `pose`, yawed to
-// `heading`. The sail trims toward `windDir` and is reefed to `sailFullness`
+// Live mouse orbit for the sail chase. yaw is an offset from the ship's heading
+// (0 = astern, the old chase). Ignored while a free camera or isolation view is on.
+void setSailOrbit(float yaw, float pitch, float dist);
+
+// Elevation and distance of the build-berth orbit. The angle itself stays the
+// orbitAngle argument of renderBuildScene (auto-spin, or a dragged angle).
+void setBuildOrbit(float pitch, float dist);
+
+// Chase camera behind `heading` (mouse orbit yaw/pitch/distance from
+// setSailOrbit; yaw 0 is the old fixed chase), scrolling ocean at the ship's
+// virtual world position (worldX/worldZ), and the ship riding the surface at
+// `pose`, yawed to `heading`. The sail trims toward `windDir` and is reefed to
+// `sailFullness`
 // (0 = furled .. 1 = full canvas). `timeSec` drives the wave animation.
 // `cut*` (world XZ centre + radius) carves the sea out under the island so land
 // reads as land, not a box floating on the water; pass radius <= 0 for none.
@@ -88,9 +98,10 @@ void renderIsland(uint16_t viewId, float relX, float relZ);
 float deckStandHeight(const sea::Ship& ship);
 
 // Build-mode scene: the hull up on a building STAND (keel blocks + shoring) at
-// the island's shipyard. Orbit camera (`orbitAngle`) to look the ship over, or
-// (`walk`) a third-person follow camera on a character walking the yard at
-// (cx,cy,cz) facing `cheading`, stride animated by `walkPhase`.
+// the island's shipyard. Orbit camera (`orbitAngle`, plus pitch/distance from
+// setBuildOrbit) to look the ship over, or (`walk`) a third-person follow
+// camera on a character walking the yard at (cx,cy,cz) facing `cheading`,
+// stride animated by `walkPhase`.
 void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
                       const std::vector<sea::Wave>& waves, float timeSec,
                       float orbitAngle, int width, int height,

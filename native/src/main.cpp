@@ -14,6 +14,7 @@
 
 #include <imgui.h>
 #include "imgui/imgui_bgfx.h"
+#include "camera_orbit.h"
 #include "ship_view.h"
 #include "ship_mesh.h"
 #include "shadow_gpu.h"
@@ -230,6 +231,11 @@ int main(int argc, char** argv) {
     int mouseX = 0, mouseY = 0;
     uint8_t mouseButtons = 0;
     float wheel = 0.0f;
+    float dragX = 0.0f, dragY = 0.0f, zoomWheel = 0.0f;
+    bool camDrag = false; // latched on a press that started off the debug UI
+    ship_cam::Rig sailRig = ship_cam::defaultSailRig();
+    ship_cam::Rig buildRig = ship_cam::defaultBuildRig();
+    bool buildOrbitManual = false; // first drag stops the berth's slow auto-spin
     uint64_t last = SDL_GetTicks();
     float timeSec = 0.0f;
     float sinkDepth = 0.0f;
@@ -360,6 +366,9 @@ int main(int argc, char** argv) {
     int frame = 0;
     while (running) {
         wheel = 0.0f;
+        dragX = 0.0f;
+        dragY = 0.0f;
+        zoomWheel = 0.0f;
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             switch (e.type) {
@@ -387,6 +396,7 @@ int main(int argc, char** argv) {
             case SDL_EVENT_MOUSE_MOTION:
                 mouseX = (int)e.motion.x;
                 mouseY = (int)e.motion.y;
+                if (camDrag) { dragX += e.motion.xrel; dragY += e.motion.yrel; }
                 break;
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
             case SDL_EVENT_MOUSE_BUTTON_UP: {
@@ -396,10 +406,18 @@ int main(int argc, char** argv) {
                 else if (e.button.button == SDL_BUTTON_RIGHT) bit = 0x02;
                 else if (e.button.button == SDL_BUTTON_MIDDLE) bit = 0x04;
                 if (down) mouseButtons |= bit; else mouseButtons &= ~bit;
+                // Orbit only from a press that missed ImGui. The drag stays latched
+                // until every orbit button is up, even if the cursor crosses a panel.
+                if (down) {
+                    if (bit && !ImGui::GetIO().WantCaptureMouse) camDrag = true;
+                } else if ((mouseButtons & 0x07) == 0) {
+                    camDrag = false;
+                }
                 break;
             }
             case SDL_EVENT_MOUSE_WHEEL:
                 wheel += e.wheel.y;
+                if (!ImGui::GetIO().WantCaptureMouse) zoomWheel += e.wheel.y;
                 break;
             default: break;
             }
@@ -642,6 +660,7 @@ int main(int argc, char** argv) {
             if (ImGui::Button("Reset")) resetShip();
             ImGui::TextDisabled("Keys: W raise sail (hold at full = travel), S lower, A/D steer");
             ImGui::TextDisabled("      Space fire, B board  ·  C/V cargo, X damage, Z repair, R reset");
+            ImGui::TextDisabled("Mouse: drag orbit, scroll zoom (ignored over this panel)");
         }
         if (ImGui::CollapsingHeader("Build mode", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Checkbox("Guided assembly (freeze & build)", &buildMode);
@@ -650,6 +669,8 @@ int main(int argc, char** argv) {
             ImGui::TextDisabled("%s", sea::traditionName(sea::BuildTradition(buildTrad)));
             if (buildMode) {
                 ImGui::Checkbox("Walk the yard (on foot)", &walkMode);
+                if (!walkMode)
+                    ImGui::TextDisabled("Drag to orbit the berth, scroll to zoom. Auto-orbit until you drag.");
                 if (walkMode) {
                     if (!onDeck) {
                         if (ImGui::Button("Board ship (up the gangplank)")) {
@@ -772,7 +793,7 @@ int main(int argc, char** argv) {
         }
         ImGui::Separator();
         ImGui::Text("Frame %d   %.1f FPS", frame, ImGui::GetIO().Framerate);
-        ImGui::TextDisabled("Orbit camera - Esc to quit");
+        ImGui::TextDisabled("Drag to orbit, scroll to zoom  -  Esc to quit");
         ImGui::End();
         } // !hideUI
 
@@ -791,6 +812,25 @@ int main(int argc, char** argv) {
                          kTrueWind, sea::pointOfSail(awaDeg), windFactor < 0.08f, timeSec);
         }
 
+        // Mouse orbit. Walk mode keeps its follow camera. A berth drag freezes
+        // the slow auto-spin on the angle that was actually on screen.
+        {
+            const float minD = ship_cam::minDistForLength(float(ship.bounds.length));
+            const bool followCam = buildMode && walkMode;
+            if (!followCam && (dragX != 0.0f || dragY != 0.0f || zoomWheel != 0.0f)) {
+                ship_cam::Rig& rig = buildMode ? buildRig : sailRig;
+                if (buildMode && (dragX != 0.0f || dragY != 0.0f) && !buildOrbitManual) {
+                    rig.yaw = shotMode ? shotHead : timeSec * 0.12f;
+                    buildOrbitManual = true;
+                }
+                ship_cam::applyOrbitInput(rig, dragX, dragY, zoomWheel, !buildMode, minD);
+            }
+            ship_cam::clampOrbit(sailRig, true, minD);
+            ship_cam::clampOrbit(buildRig, false, minD);
+            ship_view::setSailOrbit(sailRig.yaw, sailRig.pitch, sailRig.dist);
+            ship_view::setBuildOrbit(buildRig.pitch, buildRig.dist);
+        }
+
         // 3D scene. In build mode: only the pieces placed so far, on calm water,
         // in this tradition's construction order (sailing & combat frozen).
         if (buildMode) {
@@ -801,7 +841,9 @@ int main(int argc, char** argv) {
                 shown.pieces.push_back(ship.pieces[border[i]]);
             const bool complete = reveal >= int(border.size());
             if (!complete) { shown.systems.mast_count = 0; shown.systems.sail_count = 0; }
-            const float buildOrbit = shotMode ? shotHead : timeSec * 0.12f; // --head frames the shot
+            // --head still frames a shot; a drag (buildOrbitManual) holds that angle.
+            const float buildOrbit = buildOrbitManual ? buildRig.yaw
+                                   : (shotMode ? shotHead : timeSec * 0.12f);
             // Shadow pass: the hull on the stocks casts onto the dock.
             shadow::beginPass(kShadowView, kSunX, kSunY, kSunZ, 0.0f, 0.0f, 34.0f);
             sea::FloatPose bp; bp.heaveY = 2.9f + float(ship.bounds.depth) * 0.55f;
