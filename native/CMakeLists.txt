@@ -5,30 +5,86 @@ set(CMAKE_CXX_STANDARD 20) # bgfx/bx headers use C++20 features (designated init
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# The self-test runner is dependency-free; the windowed app pulls in the
-# SDL3/bgfx/imgui submodules. CI builds only the runner (no submodules, no
-# graphics), so this switch lets it skip the whole app subtree.
-option(SEA_TRIAL_BUILD_APP "Build the windowed app (SDL3 + bgfx + Dear ImGui). OFF = self-test runner only." ON)
+# The model self-test runner is dependency-free. The Jolt adapter test links
+# the vendored Jolt submodule and does not need a display. The windowed app
+# adds SDL3/bgfx/imgui on top of that. CI builds the two test runners, not the
+# app (no graphics device).
+option(SEA_TRIAL_BUILD_APP "Build the windowed app (SDL3 + bgfx + Dear ImGui). OFF = self-test runners only." ON)
+option(SEA_TRIAL_WITH_JOLT "Build the Jolt physics adapter and its headless self-test." ON)
 
-# --- Milestone 0, part 1: self-test runner (pure logic, no dependencies) ---
-add_executable(sea_trial_selftest
-    src/ship_model.cpp
-    src/self_test.cpp
-)
-target_include_directories(sea_trial_selftest PRIVATE src)
+function(sea_trial_warnings target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra)
+    endif()
+endfunction()
 
-if(MSVC)
-    target_compile_options(sea_trial_selftest PRIVATE /W4 /permissive-)
-else()
-    target_compile_options(sea_trial_selftest PRIVATE -Wall -Wextra)
-endif()
+# --- Model spine: pure logic, no external libraries ---
+add_library(sea_model STATIC src/ship_model.cpp)
+target_include_directories(sea_model PUBLIC src)
+sea_trial_warnings(sea_model)
+
+add_executable(sea_trial_selftest src/self_test.cpp)
+target_link_libraries(sea_trial_selftest PRIVATE sea_model)
+sea_trial_warnings(sea_trial_selftest)
 
 enable_testing()
 add_test(NAME model_spine COMMAND sea_trial_selftest)
 
+# --- Jolt physics adapter (headless; no SDL/bgfx) ---
+set(SEA_TRIAL_JOLT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/JoltPhysics")
+if(SEA_TRIAL_WITH_JOLT AND NOT EXISTS "${SEA_TRIAL_JOLT_DIR}/Build/CMakeLists.txt")
+    message(FATAL_ERROR
+        "Jolt Physics submodule is missing at native/extern/JoltPhysics.\n"
+        "  git submodule update --init native/extern/JoltPhysics\n"
+        "Or configure with -DSEA_TRIAL_WITH_JOLT=OFF to build the model self-test only.")
+endif()
+
+if(SEA_TRIAL_WITH_JOLT)
+    # Embedded build: keep Jolt from clobbering our flags, skip samples/install,
+    # and match the app's exceptions/RTTI. OBJECT_LAYER_BITS must stay the
+    # integer 16 — Jolt declares it with option(), which would coerce 16 to ON.
+    set(OVERRIDE_CXX_FLAGS OFF CACHE BOOL "" FORCE)
+    set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "" FORCE)
+    set(FLOATING_POINT_EXCEPTIONS_ENABLED OFF CACHE BOOL "" FORCE)
+    set(CPP_EXCEPTIONS_ENABLED ON CACHE BOOL "" FORCE)
+    set(CPP_RTTI_ENABLED ON CACHE BOOL "" FORCE)
+    set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
+    set(ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+    set(GENERATE_DEBUG_SYMBOLS OFF CACHE BOOL "" FORCE)
+    set(PROFILER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "" FORCE)
+    set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "" FORCE)
+    set(USE_ASSERTS ON CACHE BOOL "" FORCE)
+    set(OBJECT_LAYER_BITS 16 CACHE STRING "" FORCE)
+    # Rigid bodies only. Skip the graphics compute backends so configure does
+    # not search for Vulkan / DirectX / Metal.
+    set(JPH_USE_VK OFF CACHE BOOL "" FORCE)
+    set(JPH_USE_DX12 OFF CACHE BOOL "" FORCE)
+    set(JPH_USE_MTL OFF CACHE BOOL "" FORCE)
+    add_subdirectory(${SEA_TRIAL_JOLT_DIR}/Build jolt-build EXCLUDE_FROM_ALL)
+
+    add_library(sea_physics STATIC src/physics_jolt.cpp)
+    target_link_libraries(sea_physics PUBLIC sea_model)
+    target_link_libraries(sea_physics PRIVATE Jolt)
+    target_include_directories(sea_physics PUBLIC src)
+    sea_trial_warnings(sea_physics)
+
+    add_executable(sea_trial_physics_test src/physics_test.cpp)
+    target_link_libraries(sea_trial_physics_test PRIVATE sea_physics)
+    sea_trial_warnings(sea_trial_physics_test)
+    add_test(NAME physics_jolt COMMAND sea_trial_physics_test)
+endif()
+
 # --- Milestone 0, part 2: the app window ---
 if(NOT SEA_TRIAL_BUILD_APP)
-    return() # self-test runner only; skip the submodule/graphics subtree
+    return() # self-test runners only; skip the graphics subtree
+endif()
+
+if(NOT SEA_TRIAL_WITH_JOLT)
+    message(FATAL_ERROR
+        "sea_trial drives the player hull through Jolt. "
+        "Do not combine SEA_TRIAL_BUILD_APP=ON with SEA_TRIAL_WITH_JOLT=OFF.")
 endif()
 
 # SDL3 is vendored as a pinned submodule (extern/SDL). Build it static and
@@ -54,7 +110,6 @@ set(BGFX_SRC ${CMAKE_CURRENT_SOURCE_DIR}/extern/bgfx.cmake/bgfx)
 set(BGFX_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/extern/bgfx.cmake)
 add_executable(sea_trial
     src/main.cpp
-    src/ship_model.cpp
     src/ship_view.cpp
     src/water_gpu.cpp
     src/island_gpu.cpp
@@ -74,7 +129,7 @@ target_include_directories(sea_trial PRIVATE
     extern/imgui
     extern/bgfx.cmake/bimg/include
 )
-target_link_libraries(sea_trial PRIVATE SDL3::SDL3-static bgfx bx bimg)
+target_link_libraries(sea_trial PRIVATE SDL3::SDL3-static bgfx bx bimg sea_physics)
 
 # Compile shaders (D3D11 / dxbc profile) into headers via shaderc. The app
 # forces the D3D11 renderer so this single profile is enough.

@@ -22,6 +22,7 @@ submodules** under `extern/` (no package manager — see
 | SDL3 | `release-3.4.10` | window + input; built static |
 | bgfx (+ bx, bimg) | via `bgfx.cmake` wrapper | renderer; upstream is GENie/premake, wrapper gives CMake |
 | Dear ImGui | `v1.92.8` | debug UI |
+| Jolt Physics | `v5.6.0` | player-hull rigid body; MIT. See [Physics](#physics) |
 
 The Dear ImGui → bgfx renderer is a small self-contained backend
 (`src/imgui/imgui_bgfx.*`) — there's no official ImGui-bgfx backend, so it's
@@ -37,19 +38,52 @@ Next: ship + water rendering, then the full Build → Sail loop (see
 - `src/ship_model.hpp` / `.cpp` — ship generation, weight-vs-buoyancy stats,
   validation, deterministic Gerstner sampling, serialize/deserialize. Ported
   faithfully from the Three.js spike so the numbers match.
-- `src/self_test.cpp` — runs the 11 model-spine checks; exit code 0 iff all
-  pass, so it doubles as a CI gate.
-- `CMakeLists.txt` — builds `sea_trial_selftest`; `ctest` registered.
+- `src/physics_jolt.hpp` / `.cpp` — Jolt world, player hull body, island cylinder.
+- `src/self_test.cpp` — model-spine checks; exit code 0 iff all pass.
+- `src/physics_test.cpp` — headless Jolt adapter checks (no window).
+- `CMakeLists.txt` — `sea_trial_selftest` (`model_spine`) and, when Jolt is
+  present, `sea_trial_physics_test` (`physics_jolt`).
+
+## Physics
+
+Buoyancy is still the model spine. `sea::computeFloatPose` produces heave,
+pitch, and heel from the Gerstner field and the float margin. The sail model
+still produces heading and speed. `sea::PhysicsWorld` copies those into a
+dynamic hull box each fixed substep (60 Hz) and lets Jolt integrate the body.
+Gravity on the hull is off — the vertical axis chases the buoyancy target
+instead of solving displaced volume. A static cylinder at the island shore
+blocks the player box and replaces `keepOutsideCircle` for that hull only
+(the box's bow grounds about half a hull-length outside the old point test).
+
+Not simulated: character controller, soft sails and ropes, enemy rigid bodies,
+sail thrust as a force. Wind heel is still a render offset on top of the
+wave heel. Hull mass is sampled when the body is created; cargo and damage
+still change ride height through the buoyancy target.
+
+Init the submodule before configuring (the other extern deps are only needed
+for the windowed app):
+
+    git submodule update --init native/extern/JoltPhysics
+
+Model tests alone, without Jolt:
+
+    cmake -S . -B build -DSEA_TRIAL_BUILD_APP=OFF -DSEA_TRIAL_WITH_JOLT=OFF
 
 ## Build & run
 
-CMake (any generator):
+From `native/`, after the Jolt submodule is initialized:
 
-    cmake -S . -B build
+    cmake -S . -B build -DSEA_TRIAL_BUILD_APP=OFF
     cmake --build build
     ctest --test-dir build --output-on-failure
 
-Or a one-shot compile:
+That runs `model_spine` and `physics_jolt`. CI does the same on Linux and
+does not build the windowed app (no SDL/D3D11 device). Jolt itself is headless
+and runs in that job. Drop `-DSEA_TRIAL_BUILD_APP=OFF` for the SDL/bgfx app;
+that configure also needs the SDL, bgfx, and ImGui submodules
+(`git submodule update --init --recursive`).
+
+The model runner still compiles with nothing but a C++ compiler:
 
     g++ -std=c++17 -Wall -Wextra src/ship_model.cpp src/self_test.cpp -o selftest
     ./selftest
