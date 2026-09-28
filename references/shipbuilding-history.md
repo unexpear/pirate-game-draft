@@ -62,7 +62,15 @@ The keel's **rabbet** receiving the garboard is the carvel analogue of the Vikin
 ### Two orthogonal rulesets (the mechanic)
 Gate each tradition by two toggles: **(A) shell-first vs frame-first** placement order, and **(B) clinker-overlap-rivets vs carvel-flush-treenails/M&T** joinery. Roman = shell-first + carvel-M&T; Viking = shell-first + clinker-rivets; English = frame-first + carvel-treenails. Same taxonomy, two switches → three mechanically distinct builders.
 
-**Maps onto our model:** `Piece.type` now has the **backbone** — `keel / stem / sternpost / rib` — plus `plank / deck`. `buildOrder` lays the whole backbone first (keel → stem → sternpost) before any framing or planking, then **shell-first (planks before ribs) vs frame-first (ribs before planks)** — watch the hull assemble in the historically-correct order. Still to add: clinker-vs-carvel plank visuals (overlapping vs flush strakes) and the rest of the taxonomy (garboard/wales/floors/futtocks/keelson/deck-beams/knees).
+**Maps onto our model:** `Piece.type` has the backbone (`keel / stem / sternpost`) plus tradition-specific framing and skin. `makeShipFromConfig` takes a `BuildTradition` and bakes the pieces; `buildOrder` only sorts them.
+
+- **Viking** (shell-first clinker): `garboard`, then overlapping `plank` courses (`strakeLap` steps each course outboard), then `rib`, then `deckbeam` + `knee`.
+- **Roman** (shell-first carvel): `garboard` and flush `plank` courses, then `rib`, then `deckbeam`. No wales, floors, futtocks, keelson, or knees.
+- **English** (frame-first carvel): `floor`, then `futtock` (top timbers are not a separate type), then `wale`, then `garboard` + flush `plank`, then `keelson`, `deckbeam`, `knee`.
+
+`buildOrder` lays the backbone first in every tradition, then shell-first (skin before frames) or frame-first (floors and futtocks before the skin, wales before the garboard). Clinker overlap is in the piece positions, so Build mode shows it as the strakes go on.
+
+**Deferred** (would be a different generator, not another box in this one): top timbers as their own piece, the mast step / kerling, deadwoods, individual fastenings (rivets, roves, treenails, pegged tenons), caulking, ribbands, and spiled/curved plank meshes. Fastenings and caulking stay as steps in `buildSequence` text only.
 
 ---
 

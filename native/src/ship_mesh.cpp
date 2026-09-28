@@ -79,8 +79,12 @@ void pieceColor(const sea::Piece& p, float out[4]) {
     else if (p.type == "line") set(0.16f, 0.12f, 0.09f);    // rope / rigging
     else if (p.type == "block") set(0.24f, 0.18f, 0.12f);  // blocks / pulleys
     else if (p.type == "helm" || p.type == "capstan") set(0.44f, 0.32f, 0.20f);   // fittings
-    else if (p.type == "keel" || p.type == "rib") set(0.50f, 0.34f, 0.20f); // structural
-    else if (p.type == "deck") set(0.66f, 0.48f, 0.29f);    // deck
+    else if (p.type == "wale") set(0.28f, 0.19f, 0.12f);   // tarred wale, darker than the skin
+    else if (p.type == "garboard") set(0.42f, 0.28f, 0.16f); // first strake, wetter oak
+    else if (p.type == "keel" || p.type == "keelson" || p.type == "rib"
+             || p.type == "floor" || p.type == "futtock" || p.type == "knee")
+        set(0.50f, 0.34f, 0.20f);                           // structural timbers
+    else if (p.type == "deck" || p.type == "deckbeam") set(0.66f, 0.48f, 0.29f); // deck and its beams
     else set(0.66f, 0.47f, 0.28f);                          // plank (warm oak, lifted off near-black)
 }
 

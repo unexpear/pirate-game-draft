@@ -22,7 +22,9 @@ struct Vec3 { double x = 0, y = 0, z = 0; };
 
 struct Piece {
     std::string id;
-    std::string type;      // keel | rib | plank | deck
+    // Hull: keel, stem, sternpost, rib, floor, futtock, garboard, plank, wale,
+    // keelson, deckbeam, knee, deck. Rig/fit: mast, bowsprit, line, block, helm, capstan.
+    std::string type;
     std::string material;  // pine | oak | teak
     double volume = 0;
     double mass = 0;
@@ -53,6 +55,13 @@ struct Ship {
     std::vector<Piece> pieces;
 };
 
+// Historical construction method baked into the pieces. See the build-mode
+// section below and references/shipbuilding-history.md.
+//   Roman  — shell-first, carvel (flush strakes, mortise-and-tenon)
+//   Viking — shell-first, clinker (overlapping strakes, rivets)
+//   English — frame-first, carvel (floors & futtocks, then flush planking)
+enum class BuildTradition { Roman, Viking, English };
+
 struct ShipConfig {
     std::string name = "Test Sloop";
     double length = 12;
@@ -63,6 +72,8 @@ struct ShipConfig {
     bool hasSail = true;
     int cannonCount = 2;
     double cargoMass = 0;
+    // Age-of-Sail default. Viking bakes a clinker lap into each strake course.
+    BuildTradition tradition = BuildTradition::English;
 };
 
 struct Stats {
@@ -208,13 +219,24 @@ HullProfile bakeHullProfile(const Ship& ship);
 // --- Build mode: how a hull goes together, per historical tradition --------
 // See references/shipbuilding-history.md. Roman & Viking build SHELL-FIRST
 // (planking shell before internal frames); English Age-of-Sail builds
-// FRAME-FIRST (raise the skeleton, then plank it).
-enum class BuildTradition { Roman, Viking, English };
+// FRAME-FIRST (raise the skeleton, then plank it). Clinker (Viking) steps each
+// strake outboard of the one below; carvel (Roman, English) keeps them flush.
 const char* traditionName(BuildTradition t);
 bool isFrameFirst(BuildTradition t);
+// Viking only. Roman is shell-first but flush (carvel, pegged tenons);
+// English is frame-first carvel.
+bool isClinker(BuildTradition t);
+// Outward step (metres) of each strake course above the garboard. 0 for carvel,
+// so a course's centre sits on the moulded surface; clinker adds c * lap.
+double strakeLap(BuildTradition t);
+// Frames (rib / floor / futtock) vs outer skin (garboard / plank / wale).
+// buildOrder uses these so a guided or hand-placed hull sorts the same way.
+bool isFramePiece(const std::string& type);
+bool isSkinPiece(const std::string& type);
 // The ship's piece indices in the order they'd be placed on the stocks for `t`:
-// keel first; shell-first => planks before ribs; frame-first => ribs before
-// planks; deck last. Reveal them in order to watch the hull assemble.
+// backbone first; shell-first => skin before frames; frame-first => floors,
+// futtocks, then wales, then the rest of the skin; keelson, deck beams and
+// knees before the deck. Reveal them in order to watch the hull assemble.
 std::vector<int> buildOrder(const Ship& ship, BuildTradition t);
 // Ordered, human-readable build steps for `t` (with per-tradition joinery flavor).
 std::vector<std::string> buildSequence(BuildTradition t);

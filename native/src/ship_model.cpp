@@ -60,7 +60,6 @@ Ship makeShipFromConfig(const ShipConfig& cfg) {
     const double length = cfg.length;
     const double width = cfg.width;
     const double depth = cfg.depth;
-    const int plankCount = std::max(10, static_cast<int>(std::round(length * 1.35)));
     const int ribCount = std::max(5, static_cast<int>(std::round(length / 1.4)));
 
     Ship ship;
@@ -116,51 +115,159 @@ Ship makeShipFromConfig(const ShipConfig& cfg) {
         ship.pieces.push_back(p);
     }
 
-    // Ribs
-    for (int i = 0; i < ribCount; ++i) {
-        const double u = i / static_cast<double>(std::max(1, ribCount - 1)); // 0 stern .. 1 bow
-        const double z = lerp(-length / 2, length / 2, u);
-        // Beam profile: near-points at bow/stern, max beam slightly aft of centre
-        // (the pow(u,0.82) skews the peak toward the stern) — a boat, not a box.
-        const double beam = std::sin(PI * std::pow(u, 0.82));
-        const double ribWidth = width * (0.10 + 0.82 * beam);
-        const double sheer = depth * 0.16 * (1.0 - std::sin(PI * u)); // gunwale rises at the ends
+    // Shared station helpers. `u` runs stern (0) → bow (1). The pow skews the
+    // fullest section slightly aft of centre, matching the old rib stations.
+    auto stationU = [](int i, int n) {
+        return i / static_cast<double>(std::max(1, n - 1));
+    };
+    auto beamAt = [&](double u) { return std::sin(PI * std::pow(u, 0.82)); };
+    auto sheerAt = [&](double u) { return depth * 0.16 * (1.0 - std::sin(PI * u)); };
+    auto pushPiece = [&](const std::string& id, const std::string& type, double volume,
+                         Vec3 pos, Vec3 rot, Vec3 bnd) {
         Piece p;
-        p.id = "rib_" + pad3(i + 1);
-        p.type = "rib";
+        p.id = id;
+        p.type = type;
         p.material = cfg.material;
-        p.volume = ribWidth * depth * 0.014;
-        p.mass = p.volume * density;
-        p.position = { 0, -depth * 0.16 + sheer, z };
-        p.bounds = { ribWidth, depth * 0.75, 0.07 };
+        p.volume = volume;
+        p.mass = volume * density;
+        p.position = pos;
+        p.rotation = rot;
+        p.bounds = bnd;
         ship.pieces.push_back(p);
+    };
+
+    // Frames. English raises a real skeleton: floors across the keel, then a
+    // futtock each side (top timbers are not a separate piece — the futtock
+    // runs up to the gunwale). Roman and Viking keep one `rib` per station;
+    // buildOrder drops those ribs in only after the shell is planked.
+    const bool english = cfg.tradition == BuildTradition::English;
+    const bool viking = cfg.tradition == BuildTradition::Viking;
+    if (english) {
+        for (int i = 0; i < ribCount; ++i) {
+            const double u = stationU(i, ribCount);
+            const double z = lerp(-length / 2, length / 2, u);
+            const double ribWidth = width * (0.10 + 0.82 * beamAt(u));
+            // Same timber volume the monolithic rib used to carry, split across
+            // the floor and two futtocks so the crude float model stays put.
+            const double ribVol = ribWidth * depth * 0.014;
+            pushPiece("floor_" + pad3(i + 1), "floor", ribVol * 0.40,
+                      { 0, -depth * 0.42, z }, {},
+                      { ribWidth * 0.70, depth * 0.22, 0.15 });
+        }
+        for (int i = 0; i < ribCount; ++i) {
+            const double u = stationU(i, ribCount);
+            const double z = lerp(-length / 2, length / 2, u);
+            const double ribWidth = width * (0.10 + 0.82 * beamAt(u));
+            const double ribVol = ribWidth * depth * 0.014;
+            const double sheer = sheerAt(u);
+            // Keep the outer face inboard of the garboard. Amidships the floor
+            // head is already inside; at the fine ends the timber thickness is
+            // what would otherwise stick out.
+            const double garboardX = width * (0.05 + 0.42 * beamAt(u)) * 0.82;
+            const double fx = std::min(ribWidth * 0.30, std::max(0.05, garboardX - 0.12));
+            for (int side = -1; side <= 1; side += 2) {
+                const char* sideName = side > 0 ? "starboard" : "port";
+                pushPiece(std::string("futtock_") + sideName + "_" + pad3(i + 1),
+                          "futtock", ribVol * 0.30,
+                          { side * fx, -depth * 0.16 + sheer, z }, {},
+                          { 0.16, depth * 0.46, 0.13 });
+            }
+        }
+    } else {
+        for (int i = 0; i < ribCount; ++i) {
+            const double u = stationU(i, ribCount);
+            const double z = lerp(-length / 2, length / 2, u);
+            const double ribWidth = width * (0.10 + 0.82 * beamAt(u));
+            const double sheer = sheerAt(u);
+            // Visual span stays inboard of the garboard. The old full-beam box
+            // would stick out through the flared lower strakes. Volume is still
+            // the old rib figure, so the float sum does not change.
+            const double halfBeam = width * (0.05 + 0.42 * beamAt(u));
+            const double ribSpan = std::max(0.16, halfBeam * 0.82 - 0.08) * 2.0;
+            pushPiece("rib_" + pad3(i + 1), "rib", ribWidth * depth * 0.014,
+                      { 0, -depth * 0.16 + sheer, z }, {},
+                      { ribSpan, depth * 0.75, 0.07 });
+        }
     }
 
-    // Planks (port then starboard)
-    for (int side = -1; side <= 1; side += 2) {
-        for (int i = 0; i < plankCount; ++i) {
-            const double u = i / static_cast<double>(std::max(1, plankCount - 1)); // 0 stern .. 1 bow
-            const double z = lerp(-length / 2, length / 2, u);
-            // Same skewed beam profile as the ribs: the strakes taper to a stem
-            // point at the bow and a fine stern, widest slightly aft of amidships.
-            const double beam = std::sin(PI * std::pow(u, 0.82));
-            const double halfBeam = width * (0.05 + 0.42 * beam);
-            const double x = side * halfBeam;
-            const double sheer = depth * 0.16 * (1.0 - std::sin(PI * u)); // sheer rises to bow/stern
-            const double y = -depth * 0.22 + sheer;
-            // Toe the strakes inward toward the ends so they follow the converging
-            // hull instead of standing square (sharper the nearer the stem).
-            const double toeIn = -side * (u - 0.5) * 1.3;
-            Piece p;
-            p.id = std::string("plank_") + (side > 0 ? "starboard_" : "port_") + pad3(i + 1);
-            p.type = "plank";
-            p.material = cfg.material;
-            p.volume = (length / plankCount) * depth * 0.04;
-            p.mass = p.volume * density;
-            p.position = { x, y, z };
-            p.rotation = { 0, side * 0.18 + toeIn, side * 0.16 };
-            p.bounds = { 0.12, depth * 0.58, length / plankCount };
-            ship.pieces.push_back(p);
+    // Outer skin as horizontal strake courses, not vertical station boards.
+    // Course 0 is the garboard (lands on the keel). English's top course is the
+    // wale (thick, laid first). The courses between are ordinary planks.
+    // Total skin volume matches the old plank run (2 * L * depth * 0.04) so
+    // buoyancy does not jump when the strakes replace it.
+    //
+    // Clinker (Viking): each course steps outboard by strakeLap and is taller
+    // than the pitch, so it overlaps the strake below on the outside.
+    // Carvel (Roman, English): every course shares the moulded line and is
+    // slightly shorter than the pitch, leaving a seam instead of a lap.
+    const bool clinker = isClinker(cfg.tradition);
+    const double lap = strakeLap(cfg.tradition);
+    const int nCourses = 5;
+    const int nStations = std::max(4, std::min(8, static_cast<int>(std::lround(length / 2.0))));
+    const int skinCount = nStations * 2 * nCourses;
+    const double skinEach = (2.0 * length * depth * 0.04) / static_cast<double>(skinCount);
+    const double skinBot = -depth * 0.52;
+    const double skinTop = depth * 0.14;
+    const double pitch = (skinTop - skinBot) / static_cast<double>(nCourses);
+    const double courseH = pitch * (clinker ? 1.34 : 0.96);
+    const double segLen = length / static_cast<double>(nStations) * 1.06;
+    const double skinThick = clinker ? 0.12 : 0.11;
+    for (int c = 0; c < nCourses; ++c) {
+        const bool isGarboard = c == 0;
+        const bool isWale = english && c == nCourses - 1;
+        const char* type = isGarboard ? "garboard" : (isWale ? "wale" : "plank");
+        const double thick = isWale ? 0.22 : skinThick;
+        // Mild flare: the garboard is inboard of the sheer. Clinker adds the
+        // lap on top of that fair body; carvel does not.
+        const double flare = 0.82 + 0.18 * (static_cast<double>(c) / static_cast<double>(nCourses - 1));
+        for (int side = -1; side <= 1; side += 2) {
+            const char* sideName = side > 0 ? "starboard" : "port";
+            for (int i = 0; i < nStations; ++i) {
+                const double u = stationU(i, nStations);
+                const double z = lerp(-length / 2, length / 2, u);
+                const double halfBeam = width * (0.05 + 0.42 * beamAt(u));
+                double x = side * (halfBeam * flare + static_cast<double>(c) * lap);
+                if (isWale) x += side * (thick - skinThick) * 0.5; // stand proud of the flush skin
+                const double y = skinBot + (static_cast<double>(c) + 0.5) * pitch + sheerAt(u);
+                const double toeIn = -side * (u - 0.5) * 0.9;
+                // Clinker rolls each strake so the lap edge catches the light.
+                // Carvel stays upright: a flush wall, seams only.
+                const double roll = clinker ? side * 0.20 : 0.0;
+                pushPiece(std::string(type) + "_" + sideName + "_c" + std::to_string(c) + "_s" + pad3(i + 1),
+                          type, skinEach,
+                          { x, y, z },
+                          { 0, side * 0.16 + toeIn, roll },
+                          { thick, courseH, segLen });
+            }
+        }
+    }
+
+    // Internal structure. Keelson / deck beams / knees are not the float body
+    // (the skin and frames are); they carry a token volume like spars so a
+    // fully framed hull does not sink the crude buoyancy sum.
+    const double deckY = depth * 0.03;
+    if (english) {
+        pushPiece("keelson_001", "keelson", 0.025,
+                  { 0, -depth * 0.34, 0 }, {},
+                  { 0.20, 0.16, length * 0.70 });
+    }
+    const int nBeams = std::max(4, std::min(7, static_cast<int>(std::lround(length / 2.4))));
+    for (int i = 0; i < nBeams; ++i) {
+        const double u = stationU(i, nBeams);
+        // Beams live under the deck footprint, not out at the posts.
+        const double z = lerp(-length * 0.30, length * 0.28, u);
+        pushPiece("deckbeam_" + pad3(i + 1), "deckbeam", 0.012,
+                  { 0, deckY - 0.12, z }, {},
+                  { width * 0.52, 0.14, 0.16 });
+        if (english || viking) {
+            for (int side = -1; side <= 1; side += 2) {
+                const char* sideName = side > 0 ? "starboard" : "port";
+                pushPiece(std::string("knee_") + sideName + "_" + pad3(i + 1),
+                          "knee", 0.006,
+                          { side * width * 0.22, deckY - 0.36, z },
+                          { 0, 0, side * 0.80 },
+                          { 0.55, 0.12, 0.16 });
+            }
         }
     }
 
@@ -181,7 +288,6 @@ Ship makeShipFromConfig(const ShipConfig& cfg) {
     // --- Spars, fittings, and the standing rigging (lines). Rendered from their
     // bounds; given tiny volumes so they don't distort the crude float model
     // (the HullProfile bake carries the real hydrostatics). ---
-    const double deckY = depth * 0.03;
     const double mastH = depth * 0.9 + 6.0;
     const double mastZ = -length * 0.05;
     const double mastTopY = deckY + mastH;
@@ -434,12 +540,13 @@ bool pointInHull(const Ship& target, double tx, double ty, double tz, double hea
 }
 
 void damageHull(Ship& ship, double amount) {
-    // Flood the least-damaged intact plank (fallback: rib), so sustained fire
-    // progressively drops buoyancy and founders the hull.
+    // Flood the least-damaged intact skin or frame. Equal damage keeps the
+    // earlier piece (frames are generated first), so fire works through the
+    // skeleton and then the strakes — same rule the old rib-then-plank order used.
     Piece* best = nullptr;
     for (auto& p : ship.pieces) {
         if (p.damage >= 1.0) continue;
-        if (p.type != "plank" && p.type != "rib") continue;
+        if (!isSkinPiece(p.type) && !isFramePiece(p.type)) continue;
         if (!best || p.damage < best->damage) best = &p;
     }
     if (best) best->damage = clampd(best->damage + amount, 0.0, 1.0);
@@ -541,19 +648,41 @@ const char* traditionName(BuildTradition t) {
 
 bool isFrameFirst(BuildTradition t) { return t == BuildTradition::English; }
 
+bool isClinker(BuildTradition t) { return t == BuildTradition::Viking; }
+
+double strakeLap(BuildTradition t) { return isClinker(t) ? 0.075 : 0.0; }
+
+bool isFramePiece(const std::string& type) {
+    return type == "rib" || type == "floor" || type == "futtock";
+}
+
+bool isSkinPiece(const std::string& type) {
+    return type == "plank" || type == "garboard" || type == "wale";
+}
+
 std::vector<int> buildOrder(const Ship& ship, BuildTradition t) {
     const bool frameFirst = isFrameFirst(t);
+    // Stages stay comparable across traditions so a hull that only has the old
+    // rib/plank set (or a hand-placed one) still sorts shell-first vs frame-first.
+    // Finer stages slot the new taxonomy in without a second ordering system.
     auto stage = [&](const std::string& type) -> int {
-        if (type == "keel") return 0;                          // laid first
-        if (type == "stem" || type == "sternpost") return 1;   // rest of the backbone
-        if (type == "deck") return 4;                          // deck after the hull is planked
-        if (type == "mast" || type == "bowsprit") return 5;    // step the spars
-        if (type == "helm" || type == "capstan") return 6;     // fit out
-        if (type == "line" || type == "block") return 7;       // reeve the rigging (stays, halyards, blocks)
-        const bool frame = (type == "rib");
-        // shell-first: planks(2) then frames(3). frame-first: frames(2) then planks(3).
-        if (frameFirst) return frame ? 2 : 3;
-        return frame ? 3 : 2;
+        if (type == "keel") return 0;
+        if (type == "stem" || type == "sternpost") return 1;
+        if (type == "keelson") return 6;                       // over the floors, before the beams
+        if (type == "deckbeam" || type == "knee") return 7;    // internal, then the deck
+        if (type == "deck") return 8;
+        if (type == "mast" || type == "bowsprit") return 9;
+        if (type == "helm" || type == "capstan") return 10;
+        if (type == "line" || type == "block") return 11;
+        if (frameFirst) {
+            if (type == "floor") return 2;                     // bolt the floors first
+            if (type == "futtock" || type == "rib") return 3;  // then the side frames
+            if (type == "wale") return 4;                      // planking begins with the wales
+            return 5;                                          // garboard, planks, anything else
+        }
+        if (type == "garboard") return 2;                      // first strake on the keel
+        if (isFramePiece(type)) return 4;                      // frames only once the shell is up
+        return 3;                                              // planks and wales with the shell
     };
     std::vector<int> idx(ship.pieces.size());
     for (int i = 0; i < static_cast<int>(ship.pieces.size()); ++i) idx[i] = i;
@@ -567,7 +696,7 @@ std::vector<std::string> buildSequence(BuildTradition t) {
     switch (t) {
         case BuildTradition::Roman: return {
             "Lay the keel, then the stem & sternpost",
-            "Build strakes up from the keel, flush (carvel)",
+            "Fasten the garboard, then run strakes up flush (carvel)",
             "Lock every seam with pegged mortise-and-tenon (nails)",
             "Shell now rigid - drop in the frames",
             "Fit the deck beams and lay the deck",
@@ -577,20 +706,20 @@ std::vector<std::string> buildSequence(BuildTradition t) {
         };
         case BuildTradition::Viking: return {
             "Lay the T-keel, scarf on stem & sternpost",
-            "Rivet each strake overlapping the last (clinker planking)",
+            "Garboard on the keel, then rivet overlapping strakes (clinker)",
             "Clench every rivet over an iron rove (nails)",
             "Lash the ribs to cleats on the finished shell",
-            "Add the crossbeams and lay the deck",
+            "Add crossbeams and knees, and lay the deck",
             "Step the mast in the kerling; rig the bowsprit",
             "Fit out (helm, capstan)",
             "Reeve the rigging - stays, shrouds, halyards & sheets through the blocks",
         };
         case BuildTradition::English: return {
             "Scarph the keel; step the stem & sternpost",
-            "Raise the floors, futtocks & top timbers (frames)",
-            "Plank flush on the frames, from the wales down",
-            "Drive the treenails & iron fastenings (nails)",
-            "Keelson, deck beams & knees; lay the deck",
+            "Raise the floors, then the futtocks",
+            "Plank flush: wales first, then garboard and strakes",
+            "Drive the treenails and iron fastenings (nails)",
+            "Keelson, deck beams and knees; lay the deck",
             "Step the mast; rig the bowsprit",
             "Fit out (helm, capstan)",
             "Reeve the rigging - stays, shrouds, halyards & sheets through the blocks",
@@ -958,12 +1087,12 @@ std::vector<TestResult> runSelfTest() {
         };
         auto planksBeforeFrames = [&](BuildTradition t) {
             const std::vector<int> rank = ranks(t);
-            int maxPlank = -1, minRib = 1 << 30;
+            int maxSkin = -1, minFrame = 1 << 30;
             for (int i = 0; i < static_cast<int>(base.pieces.size()); ++i) {
-                if (base.pieces[i].type == "plank") maxPlank = std::max(maxPlank, rank[i]);
-                if (base.pieces[i].type == "rib") minRib = std::min(minRib, rank[i]);
+                if (isSkinPiece(base.pieces[i].type)) maxSkin = std::max(maxSkin, rank[i]);
+                if (isFramePiece(base.pieces[i].type)) minFrame = std::min(minFrame, rank[i]);
             }
-            return maxPlank < minRib;
+            return maxSkin >= 0 && minFrame < (1 << 30) && maxSkin < minFrame;
         };
         push("Shell-first (Viking) lays planks before frames", planksBeforeFrames(BuildTradition::Viking));
         push("Shell-first (Roman) lays planks before frames", planksBeforeFrames(BuildTradition::Roman));
@@ -1007,13 +1136,149 @@ std::vector<TestResult> runSelfTest() {
 
         std::vector<int> rk(base.pieces.size(), 0);
         for (int i = 0; i < static_cast<int>(ord.size()); ++i) rk[ord[i]] = i;
-        int maxBack = -1, minPlank = 1 << 30;
+        int maxBack = -1, minSkin = 1 << 30;
         for (int i = 0; i < static_cast<int>(base.pieces.size()); ++i) {
             const std::string& t = base.pieces[i].type;
             if (t == "keel" || t == "stem" || t == "sternpost") maxBack = std::max(maxBack, rk[i]);
-            if (t == "plank") minPlank = std::min(minPlank, rk[i]);
+            if (isSkinPiece(t)) minSkin = std::min(minSkin, rk[i]);
         }
-        push("The whole backbone is laid before the planking", maxBack < minPlank);
+        push("The whole backbone is laid before the planking", maxBack < minSkin);
+    }
+
+    // --- Taxonomy pieces + clinker vs carvel ------------------------------
+    {
+        auto countType = [](const Ship& s, const char* type) {
+            int n = 0;
+            for (const auto& p : s.pieces) if (p.type == type) ++n;
+            return n;
+        };
+        auto findId = [](const Ship& s, const std::string& id) -> const Piece* {
+            for (const auto& p : s.pieces) if (p.id == id) return &p;
+            return nullptr;
+        };
+        // Rank of each piece. Returns 1<<30 when the type is absent.
+        auto extremum = [](const Ship& s, BuildTradition t, const std::string& type, bool wantMax) {
+            const std::vector<int> ord = buildOrder(s, t);
+            std::vector<int> rank(s.pieces.size(), 0);
+            for (int i = 0; i < static_cast<int>(ord.size()); ++i) rank[ord[i]] = i;
+            int m = wantMax ? -1 : (1 << 30);
+            for (int i = 0; i < static_cast<int>(s.pieces.size()); ++i) {
+                if (s.pieces[i].type != type) continue;
+                m = wantMax ? std::max(m, rank[i]) : std::min(m, rank[i]);
+            }
+            return m;
+        };
+
+        ShipConfig rc = baseCfg; rc.tradition = BuildTradition::Roman;
+        ShipConfig vc = baseCfg; vc.tradition = BuildTradition::Viking;
+        ShipConfig ec = baseCfg; ec.tradition = BuildTradition::English;
+        const Ship roman = makeShipFromConfig(rc);
+        const Ship viking = makeShipFromConfig(vc);
+        const Ship english = makeShipFromConfig(ec);
+
+        push("Only Viking planking is clinker",
+             isClinker(BuildTradition::Viking) && !isClinker(BuildTradition::Roman)
+             && !isClinker(BuildTradition::English)
+             && strakeLap(BuildTradition::Viking) > 0.0
+             && strakeLap(BuildTradition::Roman) == 0.0
+             && strakeLap(BuildTradition::English) == 0.0);
+
+        const bool sets =
+            countType(roman, "garboard") > 0 && countType(roman, "plank") > 0
+            && countType(roman, "rib") > 0 && countType(roman, "deckbeam") > 0
+            && countType(roman, "floor") == 0 && countType(roman, "futtock") == 0
+            && countType(roman, "wale") == 0 && countType(roman, "keelson") == 0
+            && countType(roman, "knee") == 0
+            && countType(viking, "garboard") > 0 && countType(viking, "rib") > 0
+            && countType(viking, "deckbeam") > 0 && countType(viking, "knee") > 0
+            && countType(viking, "floor") == 0 && countType(viking, "wale") == 0
+            && countType(viking, "keelson") == 0
+            && countType(english, "floor") > 0 && countType(english, "futtock") > 0
+            && countType(english, "wale") > 0 && countType(english, "keelson") == 1
+            && countType(english, "deckbeam") > 0 && countType(english, "knee") > 0
+            && countType(english, "garboard") > 0 && countType(english, "rib") == 0;
+        push("Each tradition generates its own frame and skin pieces", sets);
+
+        // A 12 m hull has 6 strake stations; s004 is station index 3.
+        const Piece* vStrake = findId(viking, "plank_starboard_c2_s004");
+        const Piece* eStrake = findId(english, "plank_starboard_c2_s004");
+        const Piece* rStrake = findId(roman, "plank_starboard_c2_s004");
+        const double lap = strakeLap(BuildTradition::Viking);
+        const bool stepped = vStrake && eStrake && rStrake
+            && std::fabs(std::fabs(vStrake->position.x) - std::fabs(eStrake->position.x) - 2.0 * lap) < 1e-6
+            && std::fabs(eStrake->position.x - rStrake->position.x) < 1e-6;
+        push("Clinker strakes step outboard; carvel strakes share the moulded line", stepped,
+             stepped ? "" : "missing midship strake or lap mismatch");
+
+        const Piece* vGarb = findId(viking, "garboard_starboard_c0_s004");
+        const Piece* eGarb = findId(english, "garboard_starboard_c0_s004");
+        push("The garboard lands on the same line in every tradition",
+             vGarb && eGarb && vGarb->type == "garboard"
+             && std::fabs(vGarb->position.x - eGarb->position.x) < 1e-6);
+
+        auto seamGap = [](const Piece& a, const Piece& b) {
+            return std::fabs(a.position.y - b.position.y) - 0.5 * (a.bounds.y + b.bounds.y);
+        };
+        const Piece* vLo = findId(viking, "plank_port_c1_s004");
+        const Piece* vHi = findId(viking, "plank_port_c2_s004");
+        const Piece* eLo = findId(english, "plank_port_c1_s004");
+        const Piece* eHi = findId(english, "plank_port_c2_s004");
+        const bool lapRead = vLo && vHi && eLo && eHi
+            && seamGap(*vLo, *vHi) < 0.0 && seamGap(*eLo, *eHi) > 0.0;
+        push("Clinker courses overlap; carvel courses leave a seam", lapRead);
+
+        // English frame-first: floors, futtocks, wales, then garboard, then planks,
+        // then keelson, beams and knees, then the deck.
+        const int maxFloor = extremum(english, BuildTradition::English, "floor", true);
+        const int minFutt = extremum(english, BuildTradition::English, "futtock", false);
+        const int maxFutt = extremum(english, BuildTradition::English, "futtock", true);
+        const int maxWale = extremum(english, BuildTradition::English, "wale", true);
+        const int minGarb = extremum(english, BuildTradition::English, "garboard", false);
+        const int maxGarb = extremum(english, BuildTradition::English, "garboard", true);
+        const int minPlank = extremum(english, BuildTradition::English, "plank", false);
+        const int maxPlank = extremum(english, BuildTradition::English, "plank", true);
+        const int keelson = extremum(english, BuildTradition::English, "keelson", false);
+        const int minBeam = extremum(english, BuildTradition::English, "deckbeam", false);
+        const int maxKnee = extremum(english, BuildTradition::English, "knee", true);
+        const int deck = extremum(english, BuildTradition::English, "deck", false);
+        push("English lays floors, futtocks, wales, then the rest of the skin",
+             maxFloor < minFutt && maxFutt < maxWale && maxWale < minGarb && maxGarb < minPlank);
+        push("English fits keelson, beams and knees after the skin and before the deck",
+             maxPlank < keelson && keelson < minBeam && maxKnee < deck);
+
+        // Viking shell-first on a Viking hull: garboard, strakes, then ribs.
+        const int vMaxGarb = extremum(viking, BuildTradition::Viking, "garboard", true);
+        const int vMinPlank = extremum(viking, BuildTradition::Viking, "plank", false);
+        const int vMaxPlank = extremum(viking, BuildTradition::Viking, "plank", true);
+        const int vMinRib = extremum(viking, BuildTradition::Viking, "rib", false);
+        const int vMaxRib = extremum(viking, BuildTradition::Viking, "rib", true);
+        const int vMinBeam = extremum(viking, BuildTradition::Viking, "deckbeam", false);
+        const int vDeck = extremum(viking, BuildTradition::Viking, "deck", false);
+        push("Viking rivets the garboard and strakes before lashing in the ribs",
+             vMaxGarb < vMinPlank && vMaxPlank < vMinRib);
+        push("Viking crossbeams and knees go in after the ribs, before the deck",
+             vMaxRib < vMinBeam && extremum(viking, BuildTradition::Viking, "knee", true) < vDeck);
+
+        // Token volumes: internal joinery must not dominate the float sum.
+        bool token = true;
+        for (const Ship* s : { &roman, &viking, &english }) {
+            if (!validateShip(*s).valid) token = false;
+            for (const auto& p : s->pieces) {
+                if (p.type == "keelson" || p.type == "deckbeam" || p.type == "knee") {
+                    if (!(p.volume > 0.0 && p.volume <= 0.05)) token = false;
+                }
+            }
+        }
+        push("All three traditions float, and joinery pieces stay token-volume", token);
+
+        ShipConfig big = baseCfg;
+        big.length = 26;
+        big.tradition = BuildTradition::English;
+        const Ship bigHull = makeShipFromConfig(big);
+        const ValidationResult bigReport = validateShip(bigHull);
+        push("A max-length English hull stays under the piece cap and floats",
+             bigReport.valid && bigHull.pieces.size() <= 220,
+             num(static_cast<double>(bigHull.pieces.size())) + " pieces");
     }
 
     // --- Island collision ---
