@@ -22,7 +22,7 @@ struct Vec3 { double x = 0, y = 0, z = 0; };
 
 struct Piece {
     std::string id;
-    std::string type;      // keel | rib | plank | deck
+    std::string type;      // keel | stem | sternpost | rib | floor | plank | garboard | wale | knee | deck | ...
     std::string material;  // pine | oak | teak
     double volume = 0;
     double mass = 0;
@@ -30,6 +30,9 @@ struct Piece {
     Vec3 position;
     Vec3 rotation;
     Vec3 bounds;
+    int course = 0;        // strake course; 0 is the garboard (lowest) course
+    int side = 0;          // -1 port, +1 starboard, 0 centerline / unspecified
+    std::string style;     // "" | "clinker" | "carvel" — plank joinery, for the mesh
 };
 
 struct Bounds { double length = 0, width = 0, depth = 0, height = 0; };
@@ -51,6 +54,9 @@ struct Ship {
     Bounds bounds;
     Systems systems;
     std::vector<Piece> pieces;
+    // Set once the player places, strikes, or strips a timber. The launch bake
+    // then reads the placed hull instead of the slider/config bounds.
+    bool freeform = false;
 };
 
 struct ShipConfig {
@@ -188,6 +194,11 @@ bool keepOutsideCircle(double& px, double& pz, double cx, double cz, double radi
 // Hull hydrostatics + handling factors derived from the built shape. Different
 // shapes produce different profiles, so no two boats sail the same. Handling
 // factors are relative to the reference sloop (L=12, B=4), which bakes to ~1.0.
+//
+// Slider-seeded ships (`freeform == false`) bake from `bounds` — the length /
+// beam / depth the template was generated with. Once the player shapes the hull
+// by hand, `freeform` is set and the bake reads `measureHull` (the placed
+// timbers' length, beam, depth, and rib fullness) instead.
 // See build-mode.md.
 struct HullProfile {
     double length = 0, beam = 0, draft = 0;   // hull envelope (m)
@@ -205,19 +216,79 @@ struct HullProfile {
 };
 HullProfile bakeHullProfile(const Ship& ship);
 
+// Envelope of the placed hull form (backbone, frames, shell, deck, knees).
+// Spars and rigging are ignored so a mast or bowsprit can't stretch the hull.
+// `blockCoeff` comes from how full the frames/strakes are versus their max beam.
+struct HullMeasure {
+    double length = 0, beam = 0, depth = 0;
+    double blockCoeff = 0.50;
+    bool ok = false;
+};
+HullMeasure measureHull(const Ship& ship);
+
 // --- Build mode: how a hull goes together, per historical tradition --------
 // See references/shipbuilding-history.md. Roman & Viking build SHELL-FIRST
 // (planking shell before internal frames); English Age-of-Sail builds
-// FRAME-FIRST (raise the skeleton, then plank it).
+// FRAME-FIRST (raise the skeleton, then plank it). Viking is also CLINKER
+// (overlapping strakes); Roman and English are CARVEL (flush strakes).
 enum class BuildTradition { Roman, Viking, English };
 const char* traditionName(BuildTradition t);
 bool isFrameFirst(BuildTradition t);
+bool isClinker(BuildTradition t);
+bool isFramePiece(const std::string& type);    // rib, floor, futtock
+bool isShellPiece(const std::string& type);    // plank, garboard, wale
+bool isBackbonePiece(const std::string& type); // keel, stem, sternpost
 // The ship's piece indices in the order they'd be placed on the stocks for `t`:
 // keel first; shell-first => planks before ribs; frame-first => ribs before
 // planks; deck last. Reveal them in order to watch the hull assemble.
 std::vector<int> buildOrder(const Ship& ship, BuildTradition t);
 // Ordered, human-readable build steps for `t` (with per-tradition joinery flavor).
 std::vector<std::string> buildSequence(BuildTradition t);
+
+// --- Freeform placement ----------------------------------------------------
+// The player shapes the hull by placing timbers on stations along the keel.
+// Sliders still seed a starting ship; these calls add, undo, or strip timbers
+// and (on success) mark the ship freeform so the bake reads the placed pieces.
+//
+// UX (Build mode panel): pick a timber, set half-beam / side / course, then
+// click a station from stern to bow — or the Place button. Illegal order is
+// refused. "Strike last" removes the last hand-placed timber. "Strip frames"
+// / "Strip planking" clear that family off the seed. Changing the L/B/depth
+// sliders rebuilds the template and discards hand edits.
+enum class PlaceTool { Rib, Plank, Garboard, Wale, Floor, Knee };
+
+struct PlaceSpec {
+    PlaceTool tool = PlaceTool::Rib;
+    int station = 0;       // 0 = stern .. stations-1 = bow
+    int stations = 0;      // 0 = use hullStationCount(ship)
+    int side = 1;          // -1 port, +1 starboard (planks, wales, knees)
+    int course = 0;        // 0 = garboard course, higher = up the topsides
+    double halfBeam = 1.6; // metres, outer half-breadth (clamped to 0.35..4.2)
+    double height = 1.6;   // frame height, metres
+};
+
+struct PlaceReport {
+    bool ok = false;
+    bool warning = false;  // placed, but the tradition would rather you hadn't
+    std::string code;      // OK, NO_BACKBONE, SHELL_FIRST, FRAME_FIRST, CLINKER_LAP, WALE_FIRST, ...
+    std::string message;
+};
+
+// How many fore-and-aft stations the keel is divided into (stern .. bow).
+int hullStationCount(const Ship& ship);
+// Refuse a placement that breaks the tradition. Does not modify the ship.
+PlaceReport validatePlace(const Ship& ship, BuildTradition t, const PlaceSpec& spec);
+// Validate, then append the timber, refit bounds from the placed geometry, and
+// mark the ship freeform. A refusal leaves the ship unchanged.
+PlaceReport placePiece(Ship& ship, BuildTradition t, const PlaceSpec& spec);
+// Remove the most recently hand-placed timber (`hand_` id). False if there isn't one.
+bool strikeLastHand(Ship& ship);
+// Remove every frame (ribs/floors/futtocks) or every shell strake. Returns how
+// many pieces were removed. Marks the ship freeform when anything was removed.
+int stripTimbers(Ship& ship, bool frames);
+// Tag shell strakes with this tradition's joinery so the mesh can draw clinker
+// laps or flush carvel. Does not move pieces and does not set `freeform`.
+void stampJoinery(Ship& ship, BuildTradition t);
 
 // --- Difficulty zones: a shifting-level sea map -----------------------------
 // The open sea is banded into difficulty LEVELS by distance from the home

@@ -79,9 +79,19 @@ void pieceColor(const sea::Piece& p, float out[4]) {
     else if (p.type == "line") set(0.16f, 0.12f, 0.09f);    // rope / rigging
     else if (p.type == "block") set(0.24f, 0.18f, 0.12f);  // blocks / pulleys
     else if (p.type == "helm" || p.type == "capstan") set(0.44f, 0.32f, 0.20f);   // fittings
-    else if (p.type == "keel" || p.type == "rib") set(0.50f, 0.34f, 0.20f); // structural
+    else if (p.type == "keel" || p.type == "rib" || p.type == "floor" || p.type == "futtock"
+             || p.type == "keelson") set(0.50f, 0.34f, 0.20f); // structural
+    else if (p.type == "knee" || p.type == "deckbeam") set(0.56f, 0.38f, 0.22f); // brackets
+    else if (p.type == "wale") set(0.40f, 0.24f, 0.13f);    // thick dark wale
+    else if (p.type == "garboard") set(0.52f, 0.34f, 0.20f); // lowest strake
     else if (p.type == "deck") set(0.66f, 0.48f, 0.29f);    // deck
-    else set(0.66f, 0.47f, 0.28f);                          // plank (warm oak, lifted off near-black)
+    else if (p.style == "clinker") set(0.62f, 0.40f, 0.22f); // lapstrake, a touch ruddier
+    else set(0.66f, 0.47f, 0.28f);                          // carvel plank (warm oak)
+}
+
+bool clinkerStrake(const sea::Piece& p) {
+    return p.style == "clinker"
+        && (p.type == "plank" || p.type == "garboard" || p.type == "wale");
 }
 
 } // namespace
@@ -139,27 +149,45 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
 
     const float lightV[4] = { 0.42f, 0.68f, -0.55f, 0.0f }; // lower warm sun: lights vertical faces
     bgfx::setUniform(u_lightDir, lightV);
+    const uint64_t litState = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z
+                            | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA;
 
-    for (const auto& p : ship.pieces) {
+    auto submitPiece = [&](const sea::Piece& p, float sx, float sy, float sz,
+                           float rx, float ry, float rz, float x, float y, float z,
+                           const float col[4]) {
         float local[16];
-        bx::mtxSRT(local,
-            float(p.bounds.x), float(p.bounds.y), float(p.bounds.z),
-            float(p.rotation.x), float(p.rotation.y), float(p.rotation.z),
-            float(p.position.x), float(p.position.y), float(p.position.z));
+        bx::mtxSRT(local, sx, sy, sz, rx, ry, rz, x, y, z);
         float model[16];
         bx::mtxMul(model, local, shipRoot); // world = local composed under ship root
-
-        float col[4];
-        pieceColor(p, col);
         bgfx::setUniform(u_color, col);
         setMat(pieceMat(p));
         shadow::bindRead(4);
         bgfx::setTransform(model);
         bgfx::setVertexBuffer(0, s_vbh);
         bgfx::setIndexBuffer(s_ibh);
-        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z
-                       | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA);
+        bgfx::setState(litState);
         bgfx::submit(viewId, s_prog);
+    };
+
+    for (const auto& p : ship.pieces) {
+        float col[4];
+        pieceColor(p, col);
+        submitPiece(p,
+            float(p.bounds.x), float(p.bounds.y), float(p.bounds.z),
+            float(p.rotation.x), float(p.rotation.y), float(p.rotation.z),
+            float(p.position.x), float(p.position.y), float(p.position.z), col);
+        // Clinker (lapstrake): a second board stepped out and down so the strake
+        // overlaps the one below. Carvel stays a single flush board.
+        if (clinkerStrake(p)) {
+            const float side = p.position.x >= 0.0f ? 1.0f : -1.0f;
+            const float lap[4] = { col[0] * 0.82f, col[1] * 0.82f, col[2] * 0.82f, 1.0f };
+            submitPiece(p,
+                float(p.bounds.x) * 0.90f, float(p.bounds.y) * 0.55f, float(p.bounds.z) * 0.96f,
+                float(p.rotation.x), float(p.rotation.y), float(p.rotation.z),
+                float(p.position.x) + side * float(p.bounds.x) * 0.85f,
+                float(p.position.y) - float(p.bounds.y) * 0.42f,
+                float(p.position.z), lap);
+        }
     }
 
     // The sail, composed under the same ship root. (The mast, bowsprit, fittings
@@ -225,19 +253,31 @@ void renderDepth(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& p
     float shipRoot[16];
     bx::mtxSRT(shipRoot, 1.0f, 1.0f, 1.0f,
         float(pose.pitch), heading, float(pose.heel) + windHeel, posX, float(pose.heaveY), posZ);
-    for (const auto& p : ship.pieces) {
+    const uint64_t depthState = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW;
+    auto submitDepth = [&](float sx, float sy, float sz, float rx, float ry, float rz,
+                           float x, float y, float z) {
         float local[16];
-        bx::mtxSRT(local,
-            float(p.bounds.x), float(p.bounds.y), float(p.bounds.z),
-            float(p.rotation.x), float(p.rotation.y), float(p.rotation.z),
-            float(p.position.x), float(p.position.y), float(p.position.z));
+        bx::mtxSRT(local, sx, sy, sz, rx, ry, rz, x, y, z);
         float model[16];
         bx::mtxMul(model, local, shipRoot);
         bgfx::setTransform(model);
         bgfx::setVertexBuffer(0, s_vbh);
         bgfx::setIndexBuffer(s_ibh);
-        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW);
+        bgfx::setState(depthState);
         bgfx::submit(viewId, shadow::program());
+    };
+    for (const auto& p : ship.pieces) {
+        submitDepth(float(p.bounds.x), float(p.bounds.y), float(p.bounds.z),
+                    float(p.rotation.x), float(p.rotation.y), float(p.rotation.z),
+                    float(p.position.x), float(p.position.y), float(p.position.z));
+        if (clinkerStrake(p)) {
+            const float side = p.position.x >= 0.0f ? 1.0f : -1.0f;
+            submitDepth(float(p.bounds.x) * 0.90f, float(p.bounds.y) * 0.55f, float(p.bounds.z) * 0.96f,
+                        float(p.rotation.x), float(p.rotation.y), float(p.rotation.z),
+                        float(p.position.x) + side * float(p.bounds.x) * 0.85f,
+                        float(p.position.y) - float(p.bounds.y) * 0.42f,
+                        float(p.position.z));
+        }
     }
 
     // The sail is the biggest occluder — cast it too (matches render()'s billow).

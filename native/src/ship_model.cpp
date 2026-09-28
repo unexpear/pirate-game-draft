@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <initializer_list>
 #include <sstream>
 
 namespace sea {
@@ -439,7 +440,7 @@ void damageHull(Ship& ship, double amount) {
     Piece* best = nullptr;
     for (auto& p : ship.pieces) {
         if (p.damage >= 1.0) continue;
-        if (p.type != "plank" && p.type != "rib") continue;
+        if (!isShellPiece(p.type) && !isFramePiece(p.type)) continue;
         if (!best || p.damage < best->damage) best = &p;
     }
     if (best) best->damage = clampd(best->damage + amount, 0.0, 1.0);
@@ -541,16 +542,117 @@ const char* traditionName(BuildTradition t) {
 
 bool isFrameFirst(BuildTradition t) { return t == BuildTradition::English; }
 
+bool isClinker(BuildTradition t) { return t == BuildTradition::Viking; }
+
+bool isFramePiece(const std::string& type) {
+    return type == "rib" || type == "floor" || type == "futtock";
+}
+
+bool isShellPiece(const std::string& type) {
+    return type == "plank" || type == "garboard" || type == "wale";
+}
+
+bool isBackbonePiece(const std::string& type) {
+    return type == "keel" || type == "stem" || type == "sternpost";
+}
+
+namespace {
+
+bool isFormPiece(const std::string& type) {
+    return isBackbonePiece(type) || isFramePiece(type) || isShellPiece(type)
+        || type == "deck" || type == "knee" || type == "keelson" || type == "deckbeam";
+}
+
+// Side a strake actually sits on. Hand-placed pieces store `side`; the seeded
+// template leaves it 0 and encodes port/starboard in the position.
+int pieceSide(const Piece& p) {
+    if (p.side > 0) return 1;
+    if (p.side < 0) return -1;
+    if (p.position.x > 0.05) return 1;
+    if (p.position.x < -0.05) return -1;
+    return 0;
+}
+
+bool shipHas(const Ship& ship, bool (*pred)(const std::string&)) {
+    for (const auto& p : ship.pieces)
+        if (pred(p.type)) return true;
+    return false;
+}
+
+// The whole backbone — keel, stem, and sternpost — has to be on the stocks
+// before frames, planks, or knees. One timber of the three is not enough.
+bool backboneReady(const Ship& ship) {
+    bool keel = false, stem = false, stern = false;
+    for (const auto& p : ship.pieces) {
+        if (p.type == "keel") keel = true;
+        else if (p.type == "stem") stem = true;
+        else if (p.type == "sternpost") stern = true;
+    }
+    return keel && stem && stern;
+}
+
+double keelLengthOf(const Ship& ship) {
+    for (const auto& p : ship.pieces)
+        if (p.type == "keel") return std::max(1.0, p.bounds.z);
+    return std::max(1.0, ship.bounds.length);
+}
+
+// Stem was generated at bounds.y = depth * 1.4. Keep using that so later
+// placements don't drift when refit overwrites ship.bounds.depth.
+double hullDepthOf(const Ship& ship) {
+    for (const auto& p : ship.pieces)
+        if (p.type == "stem") return std::max(1.0, p.bounds.y / 1.4);
+    return std::max(0.8, ship.bounds.depth);
+}
+
+PlaceSpec normalizedSpec(const Ship& ship, const PlaceSpec& in) {
+    PlaceSpec s = in;
+    const int n = s.stations >= 2 ? std::min(24, s.stations) : hullStationCount(ship);
+    s.stations = n;
+    if (s.station < 0) s.station = 0;
+    if (s.station >= n) s.station = n - 1;
+    s.halfBeam = clampd(s.halfBeam, 0.35, 4.2);
+    s.height = clampd(s.height <= 0.0 ? 1.6 : s.height, 0.4, 3.2);
+    s.side = s.side >= 0 ? 1 : -1;
+    s.course = std::max(0, std::min(7, s.course));
+    if (s.tool == PlaceTool::Garboard) s.course = 0;
+    if (s.tool == PlaceTool::Rib || s.tool == PlaceTool::Floor) s.side = 0;
+    return s;
+}
+
+const char* toolType(PlaceTool tool) {
+    switch (tool) {
+        case PlaceTool::Rib: return "rib";
+        case PlaceTool::Plank: return "plank";
+        case PlaceTool::Garboard: return "garboard";
+        case PlaceTool::Wale: return "wale";
+        case PlaceTool::Floor: return "floor";
+        case PlaceTool::Knee: return "knee";
+    }
+    return "rib";
+}
+
+PlaceReport refusePlace(const char* code, const char* message) {
+    PlaceReport r;
+    r.ok = false;
+    r.code = code;
+    r.message = message;
+    return r;
+}
+
+} // namespace
+
 std::vector<int> buildOrder(const Ship& ship, BuildTradition t) {
     const bool frameFirst = isFrameFirst(t);
     auto stage = [&](const std::string& type) -> int {
         if (type == "keel") return 0;                          // laid first
         if (type == "stem" || type == "sternpost") return 1;   // rest of the backbone
+        if (type == "knee" || type == "keelson" || type == "deckbeam") return 4;
         if (type == "deck") return 4;                          // deck after the hull is planked
         if (type == "mast" || type == "bowsprit") return 5;    // step the spars
         if (type == "helm" || type == "capstan") return 6;     // fit out
         if (type == "line" || type == "block") return 7;       // reeve the rigging (stays, halyards, blocks)
-        const bool frame = (type == "rib");
+        const bool frame = isFramePiece(type);
         // shell-first: planks(2) then frames(3). frame-first: frames(2) then planks(3).
         if (frameFirst) return frame ? 2 : 3;
         return frame ? 3 : 2;
@@ -597,6 +699,225 @@ std::vector<std::string> buildSequence(BuildTradition t) {
         };
     }
     return {};
+}
+
+int hullStationCount(const Ship& ship) {
+    const double L = keelLengthOf(ship);
+    const int n = std::max(5, static_cast<int>(std::lround(L / 1.4)));
+    return std::min(16, n);
+}
+
+HullMeasure measureHull(const Ship& ship) {
+    HullMeasure m;
+    double minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9, minZ = 1e9, maxZ = -1e9;
+    double postMinY = 1e9, postMaxY = -1e9;
+    int n = 0;
+    double sumHalf = 0.0, maxHalf = 0.0;
+    int nSec = 0;
+    for (const auto& piece : ship.pieces) {
+        if (!isFormPiece(piece.type)) continue;
+        const double hx = std::fabs(piece.bounds.x) * 0.5;
+        const double hy = std::fabs(piece.bounds.y) * 0.5;
+        const double hz = std::fabs(piece.bounds.z) * 0.5;
+        minX = std::min(minX, piece.position.x - hx);
+        maxX = std::max(maxX, piece.position.x + hx);
+        minZ = std::min(minZ, piece.position.z - hz);
+        maxZ = std::max(maxZ, piece.position.z + hz);
+        // Stem and sternpost are raked taller than the hull body. They set the
+        // length, but the draft comes from the keel, frames, and strakes.
+        const bool post = piece.type == "stem" || piece.type == "sternpost";
+        if (post) {
+            postMinY = std::min(postMinY, piece.position.y - hy);
+            postMaxY = std::max(postMaxY, piece.position.y + hy);
+        } else {
+            minY = std::min(minY, piece.position.y - hy);
+            maxY = std::max(maxY, piece.position.y + hy);
+        }
+        ++n;
+        if (isFramePiece(piece.type) || isShellPiece(piece.type)) {
+            const double outer = std::fabs(piece.position.x) + hx;
+            sumHalf += outer;
+            maxHalf = std::max(maxHalf, outer);
+            ++nSec;
+        }
+    }
+    if (n == 0) return m;
+    if (minY > maxY) { minY = postMinY; maxY = postMaxY; }
+    m.length = std::max(1.0, maxZ - minZ);
+    m.beam = std::max(0.5, maxX - minX);
+    m.depth = std::max(0.3, maxY - minY);
+    if (nSec >= 2 && maxHalf > 1e-6) {
+        const double fullness = clampd((sumHalf / nSec) / maxHalf, 0.0, 1.0);
+        m.blockCoeff = clampd(0.36 + 0.34 * fullness, 0.36, 0.72);
+    }
+    m.ok = true;
+    return m;
+}
+
+namespace {
+
+void refitHullBounds(Ship& ship) {
+    const HullMeasure m = measureHull(ship);
+    if (!m.ok) return;
+    ship.bounds.length = m.length;
+    ship.bounds.width = m.beam;
+    ship.bounds.depth = m.depth;
+    ship.bounds.height = m.depth + 5.4;
+}
+
+bool hasWale(const Ship& ship) {
+    for (const auto& p : ship.pieces)
+        if (p.type == "wale") return true;
+    return false;
+}
+
+} // namespace
+
+PlaceReport validatePlace(const Ship& ship, BuildTradition t, const PlaceSpec& in) {
+    const PlaceSpec spec = normalizedSpec(ship, in);
+    const bool frameTool = spec.tool == PlaceTool::Rib || spec.tool == PlaceTool::Floor;
+    const bool shellTool = spec.tool == PlaceTool::Plank || spec.tool == PlaceTool::Garboard
+                        || spec.tool == PlaceTool::Wale;
+    const bool kneeTool = spec.tool == PlaceTool::Knee;
+    if ((frameTool || shellTool || kneeTool) && !backboneReady(ship))
+        return refusePlace("NO_BACKBONE", "Lay the keel, stem, and sternpost before framing or planking.");
+
+    const bool hasShell = shipHas(ship, isShellPiece);
+    const bool hasFrame = shipHas(ship, isFramePiece);
+    if (frameTool && !isFrameFirst(t) && !hasShell)
+        return refusePlace("SHELL_FIRST", "Shell-first (Roman/Viking): plank the hull before raising frames.");
+    if (shellTool && isFrameFirst(t) && !hasFrame)
+        return refusePlace("FRAME_FIRST", "Frame-first (English): raise floors or ribs before planking.");
+    if (kneeTool && !(isFrameFirst(t) ? hasFrame : hasShell))
+        return refusePlace(isFrameFirst(t) ? "FRAME_FIRST" : "SHELL_FIRST",
+                           "Knees brace the finished hull - raise the frames (or the shell) first.");
+
+    if (shellTool && isClinker(t) && spec.course > 0) {
+        bool lap = false;
+        for (const auto& piece : ship.pieces) {
+            if (!isShellPiece(piece.type) || pieceSide(piece) != spec.side) continue;
+            if (piece.course == spec.course - 1) { lap = true; break; }
+        }
+        if (!lap)
+            return refusePlace("CLINKER_LAP",
+                               "Clinker: each strake has to lap the course below it on the same side.");
+    }
+    if (ship.pieces.size() >= 220)
+        return refusePlace("PIECE_CAP", "This yard holds 220 pieces.");
+
+    PlaceReport r;
+    r.ok = true;
+    r.code = "OK";
+    r.message = "Ready to place.";
+    if (shellTool && isFrameFirst(t) && spec.tool != PlaceTool::Wale && !hasWale(ship)) {
+        r.warning = true;
+        r.code = "WALE_FIRST";
+        r.message = "Frame-first carvel usually starts with the wales. It will still be placed.";
+    }
+    return r;
+}
+
+PlaceReport placePiece(Ship& ship, BuildTradition t, const PlaceSpec& in) {
+    const PlaceReport gate = validatePlace(ship, t, in);
+    if (!gate.ok) return gate;
+    const PlaceSpec spec = normalizedSpec(ship, in);
+    const double depth = hullDepthOf(ship);
+    const double L = keelLengthOf(ship);
+    const double u = spec.stations <= 1 ? 0.5 : double(spec.station) / double(spec.stations - 1);
+    const double z = lerp(-L * 0.5, L * 0.5, u);
+
+    std::string material = "oak";
+    for (const auto& piece : ship.pieces)
+        if (!piece.material.empty() && piece.material != "hemp") { material = piece.material; break; }
+    const double density = materialDensity(material);
+    const std::string type = toolType(spec.tool);
+
+    int handN = 0;
+    for (const auto& piece : ship.pieces)
+        if (piece.id.compare(0, 5, "hand_") == 0) ++handN;
+
+    Piece p;
+    p.id = std::string("hand_") + type + "_" + pad3(handN + 1);
+    p.type = type;
+    p.material = material;
+    p.course = spec.course;
+    p.side = spec.side;
+
+    if (spec.tool == PlaceTool::Rib || spec.tool == PlaceTool::Floor) {
+        const bool floor = spec.tool == PlaceTool::Floor;
+        const double h = floor ? std::max(0.35, spec.height * 0.42) : spec.height;
+        p.bounds = { spec.halfBeam * 2.0, h, floor ? 0.12 : 0.08 };
+        p.position = { 0.0, floor ? -depth * 0.42 : -depth * 0.16, z };
+        p.volume = std::max(0.01, spec.halfBeam * 2.0 * h * 0.02);
+    } else if (spec.tool == PlaceTool::Knee) {
+        p.bounds = { 0.16, 0.55, 0.42 };
+        p.position = { double(spec.side) * spec.halfBeam * 0.45, -depth * 0.02, z };
+        p.rotation = { 0.0, 0.0, spec.side * 0.9 };
+        p.volume = 0.02;
+        p.course = 0;
+    } else {
+        const double bay = L / std::max(1, spec.stations - 1);
+        const double thick = spec.tool == PlaceTool::Wale ? 0.20 : 0.11;
+        const double ph = spec.tool == PlaceTool::Garboard ? depth * 0.22 : std::max(0.18, spec.height * 0.22);
+        const double y = lerp(-depth * 0.28, depth * 0.22, spec.course / 7.0);
+        p.bounds = { thick, ph, bay * 1.05 };
+        p.position = { double(spec.side) * spec.halfBeam, y, z };
+        p.volume = std::max(0.01, bay * ph * (spec.tool == PlaceTool::Wale ? 0.06 : 0.035));
+        if (isClinker(t)) {
+            p.position.x += spec.side * (0.035 + 0.012 * spec.course);
+            p.rotation = { 0.0, spec.side * 0.20, spec.side * 0.32 };
+            p.style = "clinker";
+        } else {
+            p.rotation = { 0.0, spec.side * 0.05, spec.side * 0.05 };
+            p.style = "carvel";
+        }
+    }
+    p.mass = p.volume * density;
+    ship.pieces.push_back(p);
+    ship.freeform = true;
+    refitHullBounds(ship);
+
+    PlaceReport r = gate;
+    r.ok = true;
+    if (!r.warning) {
+        r.code = "OK";
+        r.message = std::string("Placed a ") + type + ".";
+    } else if (r.code == "WALE_FIRST") {
+        r.message = std::string("Placed a ") + type + ". Frame-first carvel usually starts with the wales.";
+    }
+    return r;
+}
+
+bool strikeLastHand(Ship& ship) {
+    for (int i = static_cast<int>(ship.pieces.size()) - 1; i >= 0; --i) {
+        if (ship.pieces[i].id.compare(0, 5, "hand_") == 0) {
+            ship.pieces.erase(ship.pieces.begin() + i);
+            ship.freeform = true;
+            refitHullBounds(ship);
+            return true;
+        }
+    }
+    return false;
+}
+
+int stripTimbers(Ship& ship, bool frames) {
+    const auto dead = [frames](const Piece& p) {
+        return frames ? isFramePiece(p.type) : isShellPiece(p.type);
+    };
+    const auto it = std::remove_if(ship.pieces.begin(), ship.pieces.end(), dead);
+    const int n = static_cast<int>(ship.pieces.end() - it);
+    ship.pieces.erase(it, ship.pieces.end());
+    if (n > 0) {
+        ship.freeform = true;
+        refitHullBounds(ship);
+    }
+    return n;
+}
+
+void stampJoinery(Ship& ship, BuildTradition t) {
+    const char* st = isClinker(t) ? "clinker" : "carvel";
+    for (auto& p : ship.pieces)
+        if (isShellPiece(p.type)) p.style = st;
 }
 
 bool keepOutsideCircle(double& px, double& pz, double cx, double cz, double radius) {
@@ -663,13 +984,26 @@ ShipConfig enemyConfigForLevel(int level) {
 
 HullProfile bakeHullProfile(const Ship& ship) {
     HullProfile p;
-    const double L = std::max(1.0, ship.bounds.length);
-    const double B = std::max(0.5, ship.bounds.width);
-    const double T = std::max(0.3, ship.bounds.depth * 0.55); // draft ~ submerged depth
+    // Slider-seeded hulls keep the design bounds. A hand-shaped hull (freeform)
+    // is measured from the timbers actually on the stocks.
+    double L = std::max(1.0, ship.bounds.length);
+    double B = std::max(0.5, ship.bounds.width);
+    double depth = std::max(0.3, ship.bounds.depth);
+    double cb = 0.50;
+    if (ship.freeform) {
+        const HullMeasure m = measureHull(ship);
+        if (m.ok) {
+            L = m.length;
+            B = m.beam;
+            depth = m.depth;
+            cb = m.blockCoeff;
+        }
+    }
+    const double T = std::max(0.3, depth * 0.55); // draft ~ submerged depth
     p.length = L; p.beam = B; p.draft = T;
     p.lengthBeamRatio = L / B;
 
-    p.blockCoeff = 0.50;                       // fullness (later: from the actual planking)
+    p.blockCoeff = cb;
     p.displacementVol = L * B * T * p.blockCoeff;
     p.displacementMass = p.displacementVol * WATER_DENSITY;
     p.waterplaneArea = L * B * 0.85;
@@ -723,13 +1057,16 @@ std::string serialize(const Ship& s) {
     o += "bounds " + d2s(s.bounds.length) + " " + d2s(s.bounds.width) + " " + d2s(s.bounds.depth) + " " + d2s(s.bounds.height) + "\n";
     o += "systems " + std::to_string(s.systems.helm_count) + " " + std::to_string(s.systems.sail_count) + " " +
          std::to_string(s.systems.mast_count) + " " + std::to_string(s.systems.cannon_count) + " " + d2s(s.systems.cargo_mass) + "\n";
+    if (s.freeform) o += "freeform 1\n";
     o += "pieces " + std::to_string(s.pieces.size()) + "\n";
     for (const auto& p : s.pieces) {
         o += "piece " + p.id + " " + p.type + " " + p.material + " " +
              d2s(p.volume) + " " + d2s(p.mass) + " " + d2s(p.damage) + " " +
              d2s(p.position.x) + " " + d2s(p.position.y) + " " + d2s(p.position.z) + " " +
              d2s(p.rotation.x) + " " + d2s(p.rotation.y) + " " + d2s(p.rotation.z) + " " +
-             d2s(p.bounds.x) + " " + d2s(p.bounds.y) + " " + d2s(p.bounds.z) + "\n";
+             d2s(p.bounds.x) + " " + d2s(p.bounds.y) + " " + d2s(p.bounds.z) + " " +
+             std::to_string(p.course) + " " + std::to_string(p.side) + " " +
+             (p.style.empty() ? "-" : p.style) + "\n";
     }
     return o;
 }
@@ -749,6 +1086,7 @@ Ship deserialize(const std::string& text) {
         else if (key == "build_version") ls >> s.build_version;
         else if (key == "bounds") ls >> s.bounds.length >> s.bounds.width >> s.bounds.depth >> s.bounds.height;
         else if (key == "systems") ls >> s.systems.helm_count >> s.systems.sail_count >> s.systems.mast_count >> s.systems.cannon_count >> s.systems.cargo_mass;
+        else if (key == "freeform") { int f = 0; ls >> f; s.freeform = f != 0; }
         else if (key == "pieces") { /* count is implied by the piece lines */ }
         else if (key == "piece") {
             Piece p;
@@ -756,6 +1094,11 @@ Ship deserialize(const std::string& text) {
                 p.position.x >> p.position.y >> p.position.z >>
                 p.rotation.x >> p.rotation.y >> p.rotation.z >>
                 p.bounds.x >> p.bounds.y >> p.bounds.z;
+            if (ls >> p.course) {
+                ls >> p.side;
+                std::string st;
+                if (ls >> st && st != "-") p.style = st;
+            }
             s.pieces.push_back(p);
         }
     }
@@ -1100,6 +1443,189 @@ std::vector<TestResult> runSelfTest() {
              num(l1.cannonCount) + " -> " + num(l5.cannonCount));
         push("Higher-level enemies are larger", l5.length > l1.length && l5.width > l1.width);
         push("Enemy broadsides are even (guns split per side)", (l1.cannonCount % 2) == 0 && (l5.cannonCount % 2) == 0);
+    }
+
+    // --- Freeform placement: tradition gates + geometry bake -------------------
+    {
+        auto backboneOnly = [](Ship s) {
+            s.pieces.erase(std::remove_if(s.pieces.begin(), s.pieces.end(), [](const Piece& p) {
+                return !isBackbonePiece(p.type);
+            }), s.pieces.end());
+            return s;
+        };
+        PlaceSpec rib;
+        rib.tool = PlaceTool::Rib;
+        rib.halfBeam = 1.5;
+        rib.height = 1.6;
+        rib.station = 2;
+        rib.stations = 5;
+        PlaceSpec plank = rib;
+        plank.tool = PlaceTool::Plank;
+        plank.side = 1;
+        plank.course = 0;
+
+        Ship bare = backboneOnly(makeShipFromConfig(ShipConfig{}));
+        bare.pieces.erase(std::remove_if(bare.pieces.begin(), bare.pieces.end(), [](const Piece& p) {
+            return p.type == "stem";
+        }), bare.pieces.end());
+        const std::size_t bareN = bare.pieces.size();
+        const PlaceReport noBack = placePiece(bare, BuildTradition::English, rib);
+        push("Backbone must be laid before a frame",
+             !noBack.ok && noBack.code == "NO_BACKBONE" && bare.pieces.size() == bareN,
+             noBack.code);
+
+        Ship shell = backboneOnly(makeShipFromConfig(ShipConfig{}));
+        const std::size_t shellN = shell.pieces.size();
+        const PlaceReport vikRib = placePiece(shell, BuildTradition::Viking, rib);
+        const PlaceReport romRib = placePiece(shell, BuildTradition::Roman, rib);
+        push("Shell-first refuses frames before any strake",
+             !vikRib.ok && vikRib.code == "SHELL_FIRST"
+             && !romRib.ok && romRib.code == "SHELL_FIRST"
+             && shell.pieces.size() == shellN);
+
+        PlaceSpec garboard = plank;
+        garboard.tool = PlaceTool::Garboard;
+        const PlaceReport g = placePiece(shell, BuildTradition::Viking, garboard);
+        const PlaceReport afterShell = placePiece(shell, BuildTradition::Viking, rib);
+        push("A garboard strake unlocks shell-first framing",
+             g.ok && afterShell.ok && shell.pieces.back().type == "rib");
+
+        Ship framed = backboneOnly(makeShipFromConfig(ShipConfig{}));
+        const PlaceReport earlyPlank = placePiece(framed, BuildTradition::English, plank);
+        const std::size_t framedN = framed.pieces.size();
+        PlaceSpec floor = rib;
+        floor.tool = PlaceTool::Floor;
+        const PlaceReport fl = placePiece(framed, BuildTradition::English, floor);
+        const PlaceReport afterFrame = placePiece(framed, BuildTradition::English, plank);
+        push("Frame-first refuses planks before frames; a floor unlocks them",
+             !earlyPlank.ok && earlyPlank.code == "FRAME_FIRST" && framedN == backboneOnly(makeShipFromConfig(ShipConfig{})).pieces.size()
+             && fl.ok && afterFrame.ok && afterFrame.warning && afterFrame.code == "WALE_FIRST",
+             earlyPlank.code + "/" + afterFrame.code);
+
+        Ship waled = backboneOnly(makeShipFromConfig(ShipConfig{}));
+        const PlaceReport fl2 = placePiece(waled, BuildTradition::English, floor);
+        PlaceSpec wale = plank;
+        wale.tool = PlaceTool::Wale;
+        wale.course = 4;
+        const PlaceReport w = placePiece(waled, BuildTradition::English, wale);
+        const PlaceReport afterWale = placePiece(waled, BuildTradition::English, plank);
+        push("Wales-first planking does not warn",
+             fl2.ok && w.ok && !w.warning && afterWale.ok && !afterWale.warning && afterWale.code == "OK");
+
+        Ship lap = backboneOnly(makeShipFromConfig(ShipConfig{}));
+        PlaceSpec high = plank;
+        high.course = 1;
+        high.side = -1;
+        const std::size_t lapN = lap.pieces.size();
+        const PlaceReport skip = placePiece(lap, BuildTradition::Viking, high);
+        const PlaceReport carvelSkip = placePiece(lap, BuildTradition::Roman, high);
+        push("Clinker refuses a strake with nothing to lap; carvel allows it",
+             !skip.ok && skip.code == "CLINKER_LAP" && lap.pieces.size() == lapN + 1
+             && carvelSkip.ok && lap.pieces.back().style == "carvel",
+             skip.code);
+        PlaceSpec low = high;
+        low.course = 0;
+        const PlaceReport first = placePiece(lap, BuildTradition::Viking, low);
+        const PlaceReport second = placePiece(lap, BuildTradition::Viking, high);
+        push("Clinker strakes lap the course below and record clinker joinery",
+             first.ok && first.code == "OK" && second.ok
+             && lap.pieces.back().style == "clinker" && lap.pieces.back().course == 1);
+
+        // Floors sort with frames, garboards with planks, in both traditions.
+        Ship order;
+        order.pieces.push_back(Piece{});
+        order.pieces.back().type = "keel";
+        order.pieces.push_back(Piece{});
+        order.pieces.back().type = "floor";
+        order.pieces.push_back(Piece{});
+        order.pieces.back().type = "garboard";
+        auto rankOf = [](const Ship& s, BuildTradition t, const std::string& type) {
+            const std::vector<int> ord = buildOrder(s, t);
+            for (int i = 0; i < static_cast<int>(ord.size()); ++i)
+                if (s.pieces[ord[i]].type == type) return i;
+            return -1;
+        };
+        push("Floors and garboards follow frame-first vs shell-first order",
+             rankOf(order, BuildTradition::English, "floor") < rankOf(order, BuildTradition::English, "garboard")
+             && rankOf(order, BuildTradition::Viking, "garboard") < rankOf(order, BuildTradition::Viking, "floor"));
+
+        Ship knees = backboneOnly(makeShipFromConfig(ShipConfig{}));
+        PlaceSpec knee;
+        knee.tool = PlaceTool::Knee;
+        knee.side = 1;
+        knee.halfBeam = 1.5;
+        knee.station = 2;
+        knee.stations = 5;
+        const PlaceReport kneeEarly = placePiece(knees, BuildTradition::English, knee);
+        placePiece(knees, BuildTradition::English, rib);
+        const PlaceReport kneeLate = placePiece(knees, BuildTradition::English, knee);
+        const bool kneePlaced = kneeLate.ok && !knees.pieces.empty() && knees.pieces.back().type == "knee";
+        const bool struck = strikeLastHand(knees);
+        const bool ribLeft = !knees.pieces.empty() && knees.pieces.back().type == "rib";
+        push("Knees wait for the frames, and strike removes the last hand timber",
+             !kneeEarly.ok && kneePlaced && struck && ribLeft);
+
+        // Same keel, same max beam: a boxy rib plan is fuller than one with fine ends.
+        auto ribsOf = [](std::initializer_list<double> beams) {
+            Ship s = makeShipFromConfig(ShipConfig{});
+            stripTimbers(s, true);
+            stripTimbers(s, false);
+            PlaceSpec spec;
+            spec.tool = PlaceTool::Rib;
+            spec.stations = static_cast<int>(beams.size());
+            spec.height = 1.8;
+            int i = 0;
+            for (double b : beams) {
+                spec.station = i++;
+                spec.halfBeam = b;
+                placePiece(s, BuildTradition::English, spec);
+            }
+            return s;
+        };
+        const Ship boxy = ribsOf({ 2.0, 2.0, 2.0, 2.0, 2.0 });
+        const Ship fineRibs = ribsOf({ 0.6, 1.2, 2.0, 1.2, 0.6 });
+        const HullProfile boxyP = bakeHullProfile(boxy);
+        const HullProfile fineP = bakeHullProfile(fineRibs);
+        push("A fuller rib plan bakes a higher block coefficient",
+             boxy.freeform && boxyP.blockCoeff > fineP.blockCoeff + 0.04,
+             num(boxyP.blockCoeff * 100) + " vs " + num(fineP.blockCoeff * 100));
+        push("Fuller ribs displace more at the same length and max beam",
+             boxyP.displacementVol > fineP.displacementVol
+             && std::fabs(boxyP.beam - fineP.beam) < 0.05
+             && std::fabs(boxyP.length - fineP.length) < 0.05);
+
+        auto shaped = [](double length, double halfBeam) {
+            ShipConfig cfg;
+            cfg.length = length;
+            cfg.width = 4.0;
+            cfg.depth = 2.8;
+            Ship s = makeShipFromConfig(cfg);
+            stripTimbers(s, true);
+            stripTimbers(s, false);
+            PlaceSpec spec;
+            spec.tool = PlaceTool::Rib;
+            spec.stations = 5;
+            spec.height = 1.8;
+            spec.halfBeam = halfBeam;
+            for (int i = 0; i < 5; ++i) {
+                spec.station = i;
+                placePiece(s, BuildTradition::English, spec);
+            }
+            return s;
+        };
+        // Slider seed is 4 m of beam either way. The placed ribs override it.
+        const Ship narrow = shaped(18.0, 1.3);
+        const Ship beamy = shaped(10.0, 3.0);
+        const HullProfile nP = bakeHullProfile(narrow);
+        const HullProfile bP = bakeHullProfile(beamy);
+        push("Bake reads the placed beam, not the slider seed",
+             narrow.freeform && nP.beam > 2.2 && nP.beam < 3.2 && bP.beam > 5.5 && bP.beam < 6.8,
+             num(nP.beam * 10) + " / " + num(bP.beam * 10));
+        push("A long narrow hand-shaped hull is faster than a short beamy one",
+             nP.topSpeedFactor > bP.topSpeedFactor && nP.length > bP.length,
+             num(nP.topSpeedFactor * 100) + "% vs " + num(bP.topSpeedFactor * 100) + "%");
+        push("A short beamy hand-shaped hull is stiffer and turns tighter",
+             bP.gm > nP.gm && bP.turnFactor > nP.turnFactor);
     }
 
     return r;

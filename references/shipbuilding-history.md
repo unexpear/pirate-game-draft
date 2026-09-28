@@ -62,7 +62,7 @@ The keel's **rabbet** receiving the garboard is the carvel analogue of the Vikin
 ### Two orthogonal rulesets (the mechanic)
 Gate each tradition by two toggles: **(A) shell-first vs frame-first** placement order, and **(B) clinker-overlap-rivets vs carvel-flush-treenails/M&T** joinery. Roman = shell-first + carvel-M&T; Viking = shell-first + clinker-rivets; English = frame-first + carvel-treenails. Same taxonomy, two switches → three mechanically distinct builders.
 
-**Maps onto our model:** `Piece.type` now has the **backbone** — `keel / stem / sternpost / rib` — plus `plank / deck`. `buildOrder` lays the whole backbone first (keel → stem → sternpost) before any framing or planking, then **shell-first (planks before ribs) vs frame-first (ribs before planks)** — watch the hull assemble in the historically-correct order. Still to add: clinker-vs-carvel plank visuals (overlapping vs flush strakes) and the rest of the taxonomy (garboard/wales/floors/futtocks/keelson/deck-beams/knees).
+**Maps onto our model:** `Piece.type` has the **backbone** — `keel / stem / sternpost / rib` — plus `plank / deck`, and freeform placement also lays `garboard`, `wale`, `floor`, and `knee`. `buildOrder` lays the whole backbone first (keel → stem → sternpost) before any framing or planking, then **shell-first (planks before frames) vs frame-first (frames before planks)**. Placement refuses the illegal order, including a Viking strake that does not lap the course below. Clinker draws an overlapping board; carvel stays flush. Still to add: futtocks, keelson, deck beams.
 
 ---
 
