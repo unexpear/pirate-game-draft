@@ -1,8 +1,8 @@
 // Sea Trial — native app window (Milestone 0, complete). Public domain (Unlicense).
 //
-// SDL3 window + bgfx clear + a Dear ImGui debug panel showing the model
-// self-tests and Test Sloop stats. This is the full Milestone 0 target; ship
-// rendering, water, Jolt, and Steamworks all come later.
+// SDL3 window + bgfx + a Dear ImGui debug panel. The player hull is a Jolt
+// rigid body: buoyancy targets still come from sea::computeFloatPose, and the
+// sail model still owns heading and speed. Steamworks is not linked.
 //
 // Run with `--frames N` to auto-exit after N frames (scripted verification);
 // otherwise runs until the window is closed or Escape is pressed.
@@ -20,6 +20,7 @@
 #include "screenshot.h"
 
 #include "ship_model.hpp"
+#include "physics_jolt.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -221,6 +222,7 @@ int main(int argc, char** argv) {
     shadow::init(2048); // covers the whole town when it's in view, so needs the texels
 
     std::printf("self-tests: %d / %d passing\n", passing, total);
+    std::printf("physics: %s player hull\n", sea::physicsBackendName());
     std::printf("renderer: %s\n", bgfx::getRendererName(bgfx::getRendererType()));
     std::fflush(stdout);
 
@@ -336,9 +338,26 @@ int main(int argc, char** argv) {
         enemyStruck = false; boarding = false; captured = false; boardTimer = 0.0f;
         enemyShots.clear();
     };
+    // Player hull in Jolt, plus a static cylinder for the island shore. The
+    // sail model still chooses speed and heading; computeFloatPose still
+    // chooses heave, pitch, and heel. Enemy ships stay kinematic.
+    sea::PhysicsWorld physics;
+    const uint32_t playerBody = physics.createShip(
+        sea::hullColliderFromShip(ship), worldX, 0.0f, worldZ, heading);
+    {
+        sea::IslandCollider land;
+        land.centerX = islandX;
+        land.centerZ = islandZ;
+        land.radius = kLandRadius;
+        physics.createIsland(land);
+    }
+
     auto resetShip = [&]() {
         ship = sea::makeShipFromConfig(cfg);
         sinkDepth = 0.0f; sailTier = 1; wHoldTime = 0.0f; speed = 0.0f; heading = 0.0f; worldX = 0.0f; worldZ = 0.0f;
+        const sea::FloatPose placed = sea::computeFloatPose(ship, waves, timeSec, worldX, worldZ, heading);
+        physics.teleportShip(playerBody, worldX, float(placed.heaveY), worldZ, heading,
+                              float(placed.pitch), float(placed.heel));
         shots.clear();
         spawnEnemyForZone();
     };
@@ -353,6 +372,13 @@ int main(int argc, char** argv) {
     ship_view::setAuditOnly(auditOnly);
     ship_view::setIsolate(isoId, isoView);
     ship_view::setDebugCharacter(charOn, charDX, charDZ, charDH, charDY);
+    {
+        // Start already on the buoyancy pose so the first frame is not at y = 0
+        // while the chase catches up (shot captures included).
+        const sea::FloatPose placed = sea::computeFloatPose(ship, waves, timeSec, worldX, worldZ, heading);
+        physics.teleportShip(playerBody, worldX, float(placed.heaveY), worldZ, heading,
+                              float(placed.pitch), float(placed.heel));
+    }
     const int shotAt = shotMode ? (maxFrames > 3 ? maxFrames - 3 : 0) : -1; // request a few frames before exit
     bool shotRequested = false;
 
@@ -463,31 +489,42 @@ int main(int argc, char** argv) {
         const float turnRate = 1.35f * (1.0f - 0.62f * speedFrac) * float(activeProfile.turnFactor);
         heading += steer * turnRate * dt;
         if (buildMode) speed = 0.0f; // frozen on the stocks while building
-        worldX += std::sin(heading) * speed * dt;
-        worldZ += std::cos(heading) * speed * dt;
-        // Run aground: keep the hull out of the island's shore circle.
-        {
-            double px = worldX, pz = worldZ;
-            const bool aground = sea::keepOutsideCircle(px, pz, islandX, islandZ, kLandRadius);
-            if (aground) {
-                worldX = float(px); worldZ = float(pz);
-                if (!wasAground) speed *= 0.2f; // lose way once when you first strike, not every frame
-            }
-            wasAground = aground;
-        }
+
+        const sea::Stats stats = sea::getShipStats(ship);
+        // Founder: an over-margin ship sinks progressively; recovers if lightened in time.
+        if (stats.sinking) sinkDepth += dt * clampf(std::fabs(float(stats.floatMargin)) / 1200.0f, 0.3f, 3.0f);
+        else sinkDepth = clampf(sinkDepth - dt * 2.5f, 0.0f, 1000.0f);
+
+        // The hull's world position is the Jolt body. Sail speed/heading and the
+        // buoyancy pose are inputs; the island cylinder is what stops the box.
+        sea::BodyPose bp = physics.bodyPose(playerBody);
+        worldX = bp.x;
+        worldZ = bp.z;
+        sea::FloatPose pose = sea::computeFloatPose(ship, waves, timeSec, worldX, worldZ, heading);
+        sea::ShipDrive drive;
+        drive.buoyancy.heaveY = float(pose.heaveY - sinkDepth);
+        drive.buoyancy.pitch = float(pose.pitch);
+        drive.buoyancy.heel = float(pose.heel);
+        drive.heading = heading;
+        drive.speed = speed;
+        physics.driveShip(playerBody, drive);
+        physics.step(dt);
+        bp = physics.bodyPose(playerBody);
+        worldX = bp.x;
+        worldZ = bp.z;
+        pose.heaveY = bp.y;
+        pose.pitch = bp.pitch;
+        pose.heel = bp.heel;
+        const bool aground = physics.shipInContact(playerBody);
+        if (aground && !wasAground) speed *= 0.2f; // lose way once when you first strike
+        wasAground = aground;
+
         const float islX = islandX - worldX, islZ = islandZ - worldZ; // island vs. our ship
         const float islandDist = std::sqrt(islX * islX + islZ * islZ);
         const bool inSafeZone = islandDist < kSafeRadius; // harbour truce - no combat
 
         // Visible canvas reflects the sail state: furled -> half -> full.
         const float sailFullness = effTier == 0 ? 0.0f : (effTier == 1 ? 0.55f : 1.0f);
-
-        const sea::Stats stats = sea::getShipStats(ship);
-        sea::FloatPose pose = sea::computeFloatPose(ship, waves, timeSec, worldX, worldZ, heading);
-        // Founder: an over-margin ship sinks progressively; recovers if lightened in time.
-        if (stats.sinking) sinkDepth += dt * clampf(std::fabs(float(stats.floatMargin)) / 1200.0f, 0.3f, 3.0f);
-        else sinkDepth = clampf(sinkDepth - dt * 2.5f, 0.0f, 1000.0f);
-        pose.heaveY -= sinkDepth;
 
         // --- Enemy warship: AI maneuver, buoyancy pose, return fire, foundering ---
         const bool enemyGone = enemySink > 22.0f;
@@ -769,6 +806,7 @@ int main(int argc, char** argv) {
             ImGui::Text("Heave: %+.2f m", pose.heaveY);
             ImGui::Text("Pitch: %+.2f deg", pose.pitch * 57.2957795);
             ImGui::Text("Heel:  %+.2f deg", pose.heel * 57.2957795);
+            ImGui::Text("Body:  %s%s", sea::physicsBackendName(), wasAground ? "  aground" : "");
         }
         ImGui::Separator();
         ImGui::Text("Frame %d   %.1f FPS", frame, ImGui::GetIO().Framerate);

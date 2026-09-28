@@ -56,7 +56,8 @@ The Three.js browser spike at [spikes/threejs-sea-trial/](spikes/threejs-sea-tri
 - [ ] **Waterline foam + bow wave + wake** — hull-vs-water intersection foam ring + bow spray + a scrolling V-wake, so the ship displaces water instead of clipping/hovering. The ship "sits in the water" gauntlet blocker.
 - [ ] Brace (hold, timed) — negate/soften an incoming broadside; the BF defensive verb, pairs with enemy return fire.
 - [ ] Mouse camera control (drag-orbit / scroll-zoom) — also unlocks Black Flag's real *camera-direction* weapon selection (side/front/rear).
-- [ ] The full Build → Sail loop per [vertical-slice.md](vertical-slice.md); Jolt + Steamworks after.
+- [ ] The full Build → Sail loop per [vertical-slice.md](vertical-slice.md); Steamworks after.
+- [x] **Jolt first slice** — pinned submodule (`v5.6.0`), `sea::PhysicsWorld` in `native/src/physics_jolt.*`. The player hull is a rigid body: `computeFloatPose` stays the buoyancy authority (heave/pitch/heel targets), the sail model still sets heading and speed, and Jolt integrates that motion and blocks the hull on a static island cylinder (player `keepOutsideCircle` removed). Headless `physics_jolt` ctest next to `model_spine`. Not in this slice: character controller, soft sails/ropes, enemy rigid bodies, sail thrust as a force.
 
 ## Done
 

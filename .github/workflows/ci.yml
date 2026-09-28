@@ -9,14 +9,19 @@ jobs:
     name: Model self-tests
     runs-on: ubuntu-latest
     steps:
-      # No submodules: the self-test runner is dependency-free (pure C++).
+      # Model self-tests need no submodules. The Jolt adapter test is headless
+      # (no SDL/bgfx/D3D11); only that submodule is initialized. The windowed
+      # app is not built here.
       - uses: actions/checkout@v4
 
-      - name: Configure (self-test runner only)
-        run: cmake -S native -B native/build -DSEA_TRIAL_BUILD_APP=OFF
+      - name: Init Jolt Physics
+        run: git submodule update --init native/extern/JoltPhysics
+
+      - name: Configure (model + Jolt self-tests, no windowed app)
+        run: cmake -S native -B native/build -DSEA_TRIAL_BUILD_APP=OFF -DSEA_TRIAL_WITH_JOLT=ON
 
       - name: Build
-        run: cmake --build native/build --target sea_trial_selftest
+        run: cmake --build native/build --parallel
 
-      - name: Run the model self-tests
+      - name: Run model and physics self-tests
         run: ctest --test-dir native/build --output-on-failure

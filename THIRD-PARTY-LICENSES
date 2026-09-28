@@ -1,0 +1,20 @@
+Third-party licenses
+====================
+
+This project is public domain (The Unlicense). Vendored dependencies stay
+permissive. Full license texts live in each submodule; this file records what
+is vendored and where.
+
+Jolt Physics
+------------
+Path: native/extern/JoltPhysics
+Pin: v5.6.0 (e77f175595e64cb44218cc9d9d56fc365ad0e36a)
+License: MIT
+Copyright (c) 2021 Jorrit Rouwe
+Full text: native/extern/JoltPhysics/LICENSE
+
+SDL3, bgfx (bx, bimg), Dear ImGui
+---------------------------------
+Also pinned submodules under native/extern/. SDL3 is zlib, bgfx/bx/bimg are
+BSD-2-Clause, Dear ImGui is MIT. Full texts are in each submodule's license
+file.

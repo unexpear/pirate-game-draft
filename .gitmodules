@@ -7,3 +7,6 @@
 [submodule "native/extern/imgui"]
 	path = native/extern/imgui
 	url = https://github.com/ocornut/imgui.git
+[submodule "native/extern/JoltPhysics"]
+	path = native/extern/JoltPhysics
+	url = https://github.com/jrouwe/JoltPhysics.git

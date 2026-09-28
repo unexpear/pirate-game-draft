@@ -8,7 +8,7 @@ Master list. Per-mode subsets live inline in [sail-mode.md](sail-mode.md) (Sail)
 - bgfx CMake-ification + ImGui→bgfx renderer backend — upstream bgfx is GENie/premake so it needs a CMake face; no official ImGui→bgfx backend exists, so vendor or write one
 - Rendering backend details under bgfx — DirectX 11/12 vs Vulkan backend priority, shader pipeline, material format
 - SDL3 platform layer boundaries — windowing, input, controller support, file paths
-- Jolt integration boundaries — rigid bodies vs score-based buoyancy, where ship physics hands off to Jolt
+- Jolt, past the first slice — the player hull is a rigid body driven by `computeFloatPose` targets plus sail speed (`native/src/physics_jolt.*`); still open: buoyancy as real forces, enemy hulls, character controller, ropes/sails
 - Dear ImGui debug/tooling scope — runtime panels, validators, self-tests, ship inspection
 - Asset pipeline — source formats, cooked formats, hot reload, mesh/material import
 - Single executable with internal mode switching, or two executables under one Steam app ID — affects mode-switching feel and patching workflow
