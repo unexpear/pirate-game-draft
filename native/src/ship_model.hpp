@@ -124,6 +124,10 @@ FloatPose computeFloatPose(const Ship& ship, const std::vector<Wave>& waves, dou
 std::string serialize(const Ship& ship);
 Ship deserialize(const std::string& text);
 
+// Schema v1 `.ship.json` (vertical-slice.md). This is the Workshop file.
+// `serialize` stays the line-oriented model dump; Workshop does not read it.
+std::string toShipJson(const Ship& ship);
+
 // --- Gunnery ---------------------------------------------------------------
 // Fire a broadside from `ship` (centred at world sx,sy,sz, yawed `heading`) out
 // the given `side` (+1 = starboard, -1 = port): one cannonball per cannon,

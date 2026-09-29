@@ -69,5 +69,5 @@ The Three.js browser spike at [spikes/threejs-sea-trial/](spikes/threejs-sea-tri
 ## Later
 
 - Open-world content (islands, quests, etc. — explicitly held back per slice §25)
-- Real Steam Workshop integration (web spike used local `/user_ships/` as stand-in)
+- Workshop browser, subscriptions, and updating an existing item (the native façade already validates `.ship.json` locally and can submit one new private item when Steam is on — see [native/steam.md](native/steam.md))
 - Multiplayer beyond the slice's optional Phase 8 mini-test

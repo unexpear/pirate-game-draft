@@ -24,7 +24,9 @@ Run on upload AND on download. Failing ships don't publish; failing downloads do
 - Max file size
 - Structural validity — must actually float, must have helm + sails, etc.
 
-Specific thresholds TBD — see [holes.md](holes.md).
+Specific shipping thresholds are still TBD — see [holes.md](holes.md).
+
+The native façade's first cut runs that check locally on a `.ship.json`. A passing check does not publish. `workshopPublish` submits a new private Workshop item only when a Steam session is up; with Steam off it stops after the local check. Prototype caps and the publish/validate split are in [native/steam.md](native/steam.md).
 
 ## Notes
 

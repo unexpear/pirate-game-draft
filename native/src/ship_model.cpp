@@ -47,6 +47,32 @@ bool hasCode(const std::vector<Issue>& issues, const std::string& code) {
     return false;
 }
 
+std::string jsonEscape(const std::string& text) {
+    std::string out;
+    out.reserve(text.size());
+    for (unsigned char c : text) {
+        switch (c) {
+        case '"': out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\b': out += "\\b"; break;
+        case '\f': out += "\\f"; break;
+        case '\n': out += "\\n"; break;
+        case '\r': out += "\\r"; break;
+        case '\t': out += "\\t"; break;
+        default:
+            if (c < 0x20) {
+                char buf[8];
+                std::snprintf(buf, sizeof(buf), "\\u%04x", c);
+                out += buf;
+            } else {
+                out.push_back(static_cast<char>(c));
+            }
+            break;
+        }
+    }
+    return out;
+}
+
 } // namespace
 
 double materialDensity(const std::string& key) {
@@ -760,6 +786,51 @@ Ship deserialize(const std::string& text) {
         }
     }
     return s;
+}
+
+std::string toShipJson(const Ship& s) {
+    const auto num = [](double v) { return d2s(v); };
+    const auto str = [](const std::string& v) { return std::string("\"") + jsonEscape(v) + "\""; };
+    std::string o;
+    o += "{\n";
+    o += "  \"schema_version\": " + std::to_string(s.schema_version) + ",\n";
+    o += "  \"ship_id\": " + str(s.ship_id) + ",\n";
+    o += "  \"display_name\": " + str(s.display_name) + ",\n";
+    o += "  \"created_by\": " + str(s.created_by) + ",\n";
+    o += "  \"build_version\": " + str(s.build_version) + ",\n";
+    o += "  \"bounds\": { \"length\": " + num(s.bounds.length) +
+         ", \"width\": " + num(s.bounds.width) +
+         ", \"depth\": " + num(s.bounds.depth) +
+         ", \"height\": " + num(s.bounds.height) + " },\n";
+    o += "  \"runtime\": {\n";
+    o += "    \"buoyancy_tier\": 2,\n";
+    o += "    \"sample_grid\": { \"type\": \"rectangular\", \"rows\": 3, \"columns\": 3 },\n";
+    o += "    \"collision_asset\": \"generated\",\n";
+    o += "    \"visual_asset\": \"generated\"\n";
+    o += "  },\n";
+    o += "  \"systems\": { \"helm_count\": " + std::to_string(s.systems.helm_count) +
+         ", \"sail_count\": " + std::to_string(s.systems.sail_count) +
+         ", \"mast_count\": " + std::to_string(s.systems.mast_count) +
+         ", \"cannon_count\": " + std::to_string(s.systems.cannon_count) +
+         ", \"cargo_mass\": " + num(s.systems.cargo_mass) + " },\n";
+    o += "  \"pieces\": [\n";
+    for (std::size_t i = 0; i < s.pieces.size(); ++i) {
+        const Piece& p = s.pieces[i];
+        o += "    { \"id\": " + str(p.id);
+        o += ", \"type\": " + str(p.type);
+        o += ", \"material\": " + str(p.material);
+        o += ", \"volume\": " + num(p.volume);
+        o += ", \"mass\": " + num(p.mass);
+        o += ", \"damage\": " + num(p.damage);
+        o += ", \"position\": [" + num(p.position.x) + ", " + num(p.position.y) + ", " + num(p.position.z) + "]";
+        o += ", \"rotation\": [" + num(p.rotation.x) + ", " + num(p.rotation.y) + ", " + num(p.rotation.z) + "]";
+        o += ", \"bounds\": [" + num(p.bounds.x) + ", " + num(p.bounds.y) + ", " + num(p.bounds.z) + "] }";
+        if (i + 1 != s.pieces.size()) o += ",";
+        o += "\n";
+    }
+    o += "  ]\n";
+    o += "}\n";
+    return o;
 }
 
 std::vector<TestResult> runSelfTest() {
