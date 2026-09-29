@@ -3,6 +3,7 @@
 // SDL3 window + bgfx clear + a Dear ImGui debug panel showing the model
 // self-tests and Test Sloop stats. steam_platform init / pump / shutdown
 // run every session; without the optional Steamworks SDK they are local stubs.
+// Ship cloud sync runs once after init and again from the "Sync ships" button.
 //
 // Run with `--frames N` to auto-exit after N frames (scripted verification);
 // otherwise runs until the window is closed or Escape is pressed.
@@ -231,6 +232,10 @@ int main(int argc, char** argv) {
         std::printf("steam: offline (local)\n");
     }
     std::printf("user_ships: %s\n", steam_platform::userShipsRoot().c_str());
+    const steam_platform::HookResult cloud = steam_platform::cloudSyncUserShips();
+    std::printf("ship cloud: %s (%s)\n",
+                cloud == steam_platform::HookResult::Ok ? "ok" : "failed",
+                steam_platform::cloudSyncMessage().c_str());
     std::fflush(stdout);
 
     const ImVec4 kGreen(0.55f, 0.95f, 0.60f, 1.0f);
@@ -642,6 +647,9 @@ int main(int argc, char** argv) {
         } else {
             ImGui::TextUnformatted("Steam: offline (local)");
         }
+        ImGui::TextWrapped("Ships folder: %s", steam_platform::userShipsRoot().c_str());
+        if (ImGui::Button("Sync ships")) steam_platform::cloudSyncUserShips();
+        ImGui::TextDisabled("%s", steam_platform::cloudSyncMessage().c_str());
         ImGui::TextColored(stats.sinking ? kRed : kGreen, stats.sinking ? "Status: SINKING" : "Status: afloat");
         if (captured)      ImGui::TextColored(kGreen, ">>> PRIZE TAKEN - enemy boarded & captured <<<");
         else if (enemyGone) ImGui::TextColored(kGreen, ">>> ENEMY SUNK <<<");

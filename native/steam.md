@@ -8,8 +8,8 @@ compiles either way:
 
 | Build | What you get |
 |---|---|
-| OFF (default, CI) | Local stubs. `init` succeeds, `isSteam()` is false, `userShipsRoot()` is `<cwd>/user_ships`. No SDK on the machine. |
-| ON | CMake links a Steamworks SDK you supply. If that SDK is missing, configure fails and names the path it searched. If the SDK links but the Steam client is not running, the process stays offline and keeps the local `user_ships` folder. |
+| OFF (default, CI) | Local stubs. `init` succeeds, `isSteam()` is false, `userShipsRoot()` is `<cwd>/user_ships`. `cloudSyncUserShips` succeeds and does not touch that folder. No SDK on the machine. |
+| ON | CMake links a Steamworks SDK you supply. If that SDK is missing, configure fails and names the path it searched. If the SDK links but the Steam client is not running, the process stays offline and keeps the local `user_ships` folder. If a session is up, `cloudSyncUserShips` mirrors that folder's `.ship.json` files through Steam Cloud. |
 
 The SDK's own license stays with the SDK on your machine. Do not commit the
 SDK tree, `steam_api.dll` / `steam_api64.dll`, `libsteam_api.so`,
@@ -58,7 +58,57 @@ own. The file is gitignored. This slice does not call
 `SteamAPI_RestartAppIfNecessary`, so a missing client does not relaunch
 the process; the game continues offline.
 
-The debug panel shows `Steam: offline (local)` or `Steam: <persona>`.
+The debug panel shows `Steam: offline (local)` or `Steam: <persona>`, the
+ships folder, and a **Sync ships** button.
+
+The AppID also needs Steam Cloud turned on in the Steamworks partner site
+before `FileWrite` will reach the backend. AppID `480` (Spacewar) is the
+usual stand-in and already has Cloud. This slice does not call
+`SetCloudEnabledForApp`; if the player has disabled Cloud for the account
+or the app, sync reports that and leaves ships local.
+
+## Local folder and Steam Cloud
+
+`userShipsRoot()` is always `<cwd>/user_ships`. That is the working copy
+Build and Sail read and write (see [vertical-slice.md](../vertical-slice.md)).
+Steam Cloud is not a second directory. `ISteamRemoteStorage` stores objects
+by name, so the file `<cwd>/user_ships/test_sloop.ship.json` is the cloud
+object `user_ships/test_sloop.ship.json`.
+
+`cloudSyncUserShips` is the only transfer:
+
+| Situation | What sync does |
+|---|---|
+| Steam off, or the client is not running | Success. Message says the ships are local. The folder is not read or written. |
+| Session up, Cloud disabled for the account or the app | Success. Ships stay local. Cloud is not written. |
+| Session up, Cloud enabled | List cloud files, read and write `.ship.json` only. |
+
+Conflict rules (`planCloudFile`), per file:
+
+- Only on disk → upload.
+- Only in Cloud → download into `userShipsRoot()`.
+- Both, same bytes → leave them.
+- Both, different bytes → the newer Unix mtime wins. Equal timestamps keep
+  the local file and upload it.
+- Names are matched with ASCII case-folding because Steam stores cloud names
+  in lowercase. Two local files that differ only by case are skipped, not
+  uploaded.
+- A cloud file whose name is not `user_ships/<one segment>.ship.json` is
+  ignored. Separators and `..` are rejected so a listing cannot write
+  outside the ships folder.
+- Deletes are not synced. A ship removed on only one side is copied back
+  on the next sync.
+- Files over 1 MiB are skipped. That cap is a guard on the cloud read, not
+  the Workshop size limit (still TBD in [interop.md](../interop.md)).
+
+Sync is synchronous on the main thread (`FileRead` / `FileWrite`). Ship
+files are small. The app calls it once after `init`, and the debug panel
+button calls it again. `init` itself does not talk to Cloud, so the
+headless self-test can stand the façade up without a round-trip. Call
+`cloudSyncUserShips` again after a future save lands in the folder; nothing
+in this slice writes a ship yet.
+
+`workshopValidate` still returns `Unimplemented`.
 
 ## Façade
 
@@ -67,11 +117,13 @@ The debug panel shows `Steam: offline (local)` or `Steam: <persona>`.
 - `init` / `shutdown` / `pumpCallbacks` — called from `main` every run,
   including the stub build.
 - `isSteam` / `personaName`
-- `userShipsRoot` — always `<cwd>/user_ships` in this slice. That is the
-  local stand-in for the slice's `/user_ships/` folder (see
-  [vertical-slice.md](../vertical-slice.md)). It is not a Steam Cloud path yet.
-- `cloudSyncUserShips` / `workshopValidate` — return `Unimplemented`. No
-  sockets, no upload.
+- `userShipsRoot` — always `<cwd>/user_ships`, offline and online.
+- `cloudSyncUserShips` / `cloudSyncMessage` — local no-op when offline;
+  `ISteamRemoteStorage` list + read/write when a session is up.
+- `planCloudFile`, `isUserShipFileName`, `cloudObjectName`,
+  `cloudObjectBasename` — the sync rules, with no I/O, so the default build
+  can test them.
+- `workshopValidate` — returns `Unimplemented`. No Workshop upload.
 
 ## Default build (what CI runs)
 
@@ -81,14 +133,17 @@ cmake --build native/build --target sea_trial_selftest
 ctest --test-dir native/build --output-on-failure
 ```
 
-Steam stays off. The self-test checks that stub `init` succeeds and that
-`userShipsRoot` is the local `user_ships` directory.
+Steam stays off. The self-test checks that stub `init` succeeds, that
+`userShipsRoot` is the local `user_ships` directory, that offline
+`cloudSyncUserShips` succeeds without changing a `.ship.json` (or a
+non-ship file) in that folder, and that the name and conflict rules above
+choose upload, download, or leave-alone.
+
+The `ISteamRemoteStorage` calls are compiled only when
+`SEA_TRIAL_WITH_STEAM` is on. CI never links the SDK.
 
 ## What comes next
 
-- **Steam Cloud.** Sync the `user_ships/` folder (`ISteamRemoteStorage`, or
-  Steam auto-cloud) and teach `userShipsRoot` to return that cloud-backed
-  directory when a session is up.
 - **Workshop.** Upload and download, with the validation rules in
   [interop.md](../interop.md) (piece cap, bounds, file size, must float,
   helm + sails) on both upload and download. `workshopValidate` is the hook.

@@ -45,10 +45,11 @@ Next: ship + water rendering, then the full Build → Sail loop (see
 
 Steamworks is **not** vendored. `SEA_TRIAL_WITH_STEAM` defaults to **OFF**:
 `steam_platform` compiles as local stubs (`init` succeeds, ships live in
-`<cwd>/user_ships`), and the self-test covers that path. Turn it on only
-with a Steamworks SDK you supply (`STEAMWORKS_SDK` or a gitignored drop-in
-at `extern/steamworks/`). Download steps, the façade, and what is still
-unimplemented (Cloud sync, Workshop) are in [steam.md](steam.md).
+`<cwd>/user_ships`, cloud sync is a local no-op), and the self-test covers
+that path. Turn it on only with a Steamworks SDK you supply
+(`STEAMWORKS_SDK` or a gitignored drop-in at `extern/steamworks/`). Download
+steps, the façade, and Steam Cloud versus the local folder are in
+[steam.md](steam.md). Workshop validation is still unimplemented.
 
 ## Build & run
 
@@ -60,7 +61,7 @@ CMake (any generator). Steam stays off unless you pass `-DSEA_TRIAL_WITH_STEAM=O
 
 Or a one-shot compile:
 
-    g++ -std=c++17 -Wall -Wextra src/ship_model.cpp src/self_test.cpp -o selftest
+    g++ -std=c++20 -Wall -Wextra src/ship_model.cpp src/steam_platform.cpp src/self_test.cpp -o selftest
     ./selftest
 
 Verified 11/11 on **g++ (MSYS2 UCRT64)** and **MSVC 2022** (via CMake).
