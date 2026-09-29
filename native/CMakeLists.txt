@@ -26,6 +26,42 @@ endif()
 enable_testing()
 add_test(NAME model_spine COMMAND sea_trial_selftest)
 
+# miniaudio 0.11.25 is an in-tree pinned header (public domain / MIT-0), not a
+# submodule — see extern/miniaudio/PIN and /THIRD-PARTY-LICENSES. The model
+# self-test stays dependency-free; this lib is the app plus the headless smoke
+# test, which CI runs with no sound card.
+add_library(sea_audio STATIC
+    src/audio.cpp
+    src/miniaudio_impl.cpp
+)
+target_include_directories(sea_audio PUBLIC src)
+target_include_directories(sea_audio PRIVATE extern/miniaudio)
+target_compile_options(sea_audio PRIVATE
+    $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:-Wall;-Wextra>
+    $<$<CXX_COMPILER_ID:MSVC>:/W4>
+)
+# Upstream implementation is warning-noisy; don't fail the build on it.
+set_source_files_properties(src/miniaudio_impl.cpp PROPERTIES
+    COMPILE_OPTIONS "$<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:-w>;$<$<CXX_COMPILER_ID:MSVC>:/w>"
+)
+find_package(Threads REQUIRED)
+target_link_libraries(sea_audio PUBLIC Threads::Threads)
+if(UNIX)
+    target_link_libraries(sea_audio PUBLIC m)
+    if(NOT APPLE)
+        target_link_libraries(sea_audio PUBLIC ${CMAKE_DL_LIBS})
+    endif()
+endif()
+
+add_executable(sea_trial_audio_test src/audio_test.cpp)
+target_link_libraries(sea_trial_audio_test PRIVATE sea_audio)
+if(MSVC)
+    target_compile_options(sea_trial_audio_test PRIVATE /W4 /permissive-)
+else()
+    target_compile_options(sea_trial_audio_test PRIVATE -Wall -Wextra)
+endif()
+add_test(NAME audio_headless COMMAND sea_trial_audio_test)
+
 # --- Milestone 0, part 2: the app window ---
 if(NOT SEA_TRIAL_BUILD_APP)
     return() # self-test runner only; skip the submodule/graphics subtree
@@ -74,7 +110,7 @@ target_include_directories(sea_trial PRIVATE
     extern/imgui
     extern/bgfx.cmake/bimg/include
 )
-target_link_libraries(sea_trial PRIVATE SDL3::SDL3-static bgfx bx bimg)
+target_link_libraries(sea_trial PRIVATE SDL3::SDL3-static bgfx bx bimg sea_audio)
 
 # Compile shaders (D3D11 / dxbc profile) into headers via shaderc. The app
 # forces the D3D11 renderer so this single profile is enough.

@@ -1,0 +1,10 @@
+name: miniaudio
+version: 0.11.25
+date: 2026-03-04
+url: https://github.com/mackron/miniaudio
+tag: 0.11.25
+commit: 9634bedb5b5a2ca38c1ee7108a9358a4e233f14d
+file: miniaudio.h
+sha256: ac7af4de748b7e26b777f37e01cee313a308a7296a3eb080e2906b320cc55c89
+license: public domain (Unlicense) OR MIT-0 — see the end of miniaudio.h and /THIRD-PARTY-LICENSES
+notes: Unmodified upstream header. The implementation translation unit is native/src/miniaudio_impl.cpp.
