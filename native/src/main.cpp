@@ -728,7 +728,8 @@ int main(int argc, char** argv) {
             // until the step (or the previous one) has you in scene space.
             {
                 double sx = 0.0, sz = 0.0;
-                if (foot.surface == sea::FootSurface::Water || foot.surface == sea::FootSurface::Ground)
+                if (foot.surface == sea::FootSurface::Water || foot.surface == sea::FootSurface::Ground
+                    || foot.surface == sea::FootSurface::Rail)
                     { sx = foot.x; sz = foot.z; }
                 bodyWorld.waterY = sea::sampleWater(waves, double(worldX) + sx, double(worldZ) + sz, timeSec).height;
             }
@@ -743,7 +744,8 @@ int main(int argc, char** argv) {
             // hop to another rail. Replan from the deck.
             const bool offDeck = foot.surface == sea::FootSurface::Plank
                               || foot.surface == sea::FootSurface::Ground
-                              || foot.surface == sea::FootSurface::Water;
+                              || foot.surface == sea::FootSurface::Water
+                              || foot.surface == sea::FootSurface::Rail;
             if (offDeck && heldPlankOn && !foot.prizeRamp) {
                 bodyWorld.plank = heldPlank;
                 bodyWorld.plank.dockX -= double(worldX);
@@ -885,6 +887,8 @@ int main(int argc, char** argv) {
                 ImGui::TextColored(kRed, "REPULSED - back on your own deck. She is still struck.");
             if (!buildMode && foot.surface == sea::FootSurface::Water)
                 ImGui::TextDisabled("Swim into the hull, a pier, a slipway, or the beach to climb out.");
+            if (!buildMode && foot.surface == sea::FootSurface::Rail)
+                ImGui::TextDisabled("Hauling over the rail. Hold forward to climb; back drops you in the water.");
             if (!buildMode && foot.surface == sea::FootSurface::Ground)
                 ImGui::TextDisabled("Harbour streets run past the quay. Buildings stop you; the hill above the plaza is closed.");
         }

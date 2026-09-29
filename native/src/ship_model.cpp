@@ -782,6 +782,37 @@ DeckFrame deckFrameFor(const Ship& ship) {
     return d;
 }
 
+void deckSolids(const DeckFrame& deck, DeckSolid out[kDeckSolidCount]) {
+    // Coat half-width. The body centre stops this far outside the timber.
+    constexpr double kFootClear = 0.28;
+    const double L = std::max(1.0, deck.length);
+    // Leave a passage along either side, and fore and aft, on a small hull.
+    const double roomX = std::max(0.15, deck.halfBeam - 0.55);
+    const double roomZ = std::max(0.15, deck.halfLength - 0.55);
+    auto half = [](double timberHalf, double room) {
+        return std::min(timberHalf + kFootClear, room);
+    };
+    // Centres and timber sizes match makeShipFromConfig.
+    out[0] = { 0.0, -L * 0.05, half(0.16, roomX), half(0.16, roomZ) }; // mast, 0.32 m square
+    out[1] = { 0.0, -L * 0.12, half(0.45, roomX), half(0.45, roomZ) }; // capstan, 0.9 m
+    const double wheelZ = -L * 0.34;
+    double hz = half(0.65, roomZ); // wheel disc is 1.3 m fore-and-aft
+    // deckFrameFor plants the helm 0.85 m forward of this centre. Keep that
+    // patch clear, or taking the wheel would mean standing inside the timber.
+    const double toStand = std::fabs(deck.helmZ - wheelZ);
+    hz = std::min(hz, std::max(0.12, toStand - 0.10));
+    out[2] = { 0.0, wheelZ, half(0.07, roomX), hz };
+}
+
+bool deckBlocked(const DeckFrame& deck, double x, double z) {
+    DeckSolid box[kDeckSolidCount];
+    deckSolids(deck, box);
+    for (const DeckSolid& b : box) {
+        if (std::fabs(x - b.cx) < b.hx && std::fabs(z - b.cz) < b.hz) return true;
+    }
+    return false;
+}
+
 void shipLocalToScene(double lx, double ly, double lz, const PoseTR& pose,
                       double& ox, double& oy, double& oz) {
     // bx::mtxSRT / mtxRotateZYX, column-major, M * v. Columns below.
@@ -1231,6 +1262,7 @@ const char* shipFootLabel(const ShipFoot& foot) {
     if (foot.surface == FootSurface::EnemyDeck) return "on the enemy deck";
     if (foot.surface == FootSurface::Plank)
         return foot.prizeRamp ? "on the boarding plank" : "on the gangplank";
+    if (foot.surface == FootSurface::Rail) return "climbing the rail";
     if (foot.surface == FootSurface::Water) return "swimming";
     if (foot.surface == FootSurface::Ground) return "ashore";
     return "on deck";
@@ -1319,9 +1351,11 @@ static void dropOffDeck(ShipFoot& foot, const FootWorld& world, double ox, doubl
     enterWater(foot, sx, sz, sceneMoveYawFromLocal(foot.face, world.pose.heading));
 }
 
-// Haul up onto the deck when the stroke carries you into the hull and the
-// freeboard is one a person can reach. Swimming away leaves you in the water.
-static bool climbHull(ShipFoot& foot, const FootWorld& world, double moveSign) {
+// True when a stroke into the hull can start a rail climb: close to the skin,
+// freeboard a person can reach, and the stroke is toward the ship. The landing
+// is ship-local, just inboard, and clear of the mast and fittings. Swimming
+// away does not start the haul — x/z stay the scene point you leave the water.
+static bool beginRailClimb(ShipFoot& foot, const FootWorld& world, double moveSign) {
     const DeckFrame& deck = world.deck;
     const double hx = std::max(0.4, deck.beam * 0.5);
     const double hz = std::max(0.4, deck.length * 0.5);
@@ -1352,19 +1386,23 @@ static bool climbHull(ShipFoot& foot, const FootWorld& world, double moveSign) {
 
     double fx = clampd(lx, -deck.halfBeam, deck.halfBeam);
     double fz = clampd(lz, -deck.halfLength, deck.halfLength);
-    if (std::fabs(lx) > deck.halfBeam || std::fabs(lz) > deck.halfLength) {
-        const double ix = -fx, iz = -fz;
-        const double il = std::sqrt(ix * ix + iz * iz);
-        if (il > 1e-4) {
-            fx = clampd(fx + ix / il * 0.45, -deck.halfBeam, deck.halfBeam);
-            fz = clampd(fz + iz / il * 0.45, -deck.halfLength, deck.halfLength);
-        }
+    double ix = -fx, iz = -fz;
+    double il = std::sqrt(ix * ix + iz * iz);
+    if (il < 1.0e-4) { ix = 0.0; iz = 1.0; il = 1.0; }
+    // Step inboard until the landing is off the rail and off the timbers.
+    for (int i = 0; i < 14; ++i) {
+        const double n = 0.28 + 0.22 * i;
+        const double tx = clampd(fx + ix / il * n, -deck.halfBeam, deck.halfBeam);
+        const double tz = clampd(fz + iz / il * n, -deck.halfLength, deck.halfLength);
+        if (!deckBlocked(deck, tx, tz)) { fx = tx; fz = tz; break; }
+        fx = tx;
+        fz = tz;
     }
-    foot.surface = FootSurface::Deck;
-    foot.x = fx;
-    foot.z = fz;
-    foot.face += world.pose.heading; // scene move-yaw -> ship-local
-    foot.plankT = 1.0;
+    foot.surface = FootSurface::Rail;
+    foot.prizeRamp = false;
+    foot.railT = 0.0;
+    foot.railX = fx;
+    foot.railZ = fz;
     return true;
 }
 
@@ -1376,6 +1414,43 @@ static void standInboard(double railX, double railZ, double halfBeam, double hal
     x = clampd(railX + ix / il * nudge, -halfBeam, halfBeam);
     z = clampd(railZ + iz / il * nudge, -halfLength, halfLength);
     face = std::atan2(ix, iz);
+}
+
+// Same plant, pushed further inboard if the first step lands in a timber.
+static void plantClear(double railX, double railZ, const DeckFrame& deck, double nudge,
+                       double& x, double& z, double& face) {
+    double n = std::max(0.16, nudge);
+    for (int i = 0; i < 14; ++i) {
+        standInboard(railX, railZ, deck.halfBeam, deck.halfLength, n, x, z, face);
+        if (!deckBlocked(deck, x, z)) return;
+        n += 0.22;
+    }
+}
+
+// The segment crosses a solid. Samples are close enough that a long frame
+// cannot step clean over the mast.
+static bool segmentHits(const DeckFrame& deck, double x0, double z0, double x1, double z1) {
+    const double dx = x1 - x0, dz = z1 - z0;
+    const double len = std::sqrt(dx * dx + dz * dz);
+    int n = 1;
+    if (len > 0.18) n = static_cast<int>(len / 0.18) + 1;
+    for (int i = 1; i <= n; ++i) {
+        const double t = double(i) / double(n);
+        if (deckBlocked(deck, x0 + dx * t, z0 + dz * t)) return true;
+    }
+    return false;
+}
+
+// Clamp to the walkable deck, then slide along a timber instead of entering it.
+static void slideOnDeck(double& x, double& z, double ox, double oz, const DeckFrame& deck) {
+    const double cx = clampd(ox, -deck.halfBeam, deck.halfBeam);
+    const double cz = clampd(oz, -deck.halfLength, deck.halfLength);
+    auto free = [&](double nx, double nz) { return !segmentHits(deck, x, z, nx, nz); };
+    if (free(cx, cz)) { x = cx; z = cz; return; }
+    const double xx = clampd(ox, -deck.halfBeam, deck.halfBeam);
+    if (std::fabs(xx - x) > 1e-9 && free(xx, z)) { x = xx; return; }
+    const double zz = clampd(oz, -deck.halfLength, deck.halfLength);
+    if (std::fabs(zz - z) > 1e-9 && free(x, zz)) { z = zz; return; }
 }
 
 void boardPrize(ShipFoot& foot, const DeckFrame& prize, const PlankSpec& board) {
@@ -1454,12 +1529,21 @@ void stepShipFoot(ShipFoot& foot, const FootInput& in, const FootWorld& world) {
                 const double dpx = ox - world.board.deckLocalX, dpz = oz - world.board.deckLocalZ;
                 usePrize = dpx * dpx + dpz * dpz < dhx * dhx + dhz * dhz;
             }
-            mountPlank(1.0, usePrize);
+            // Start just down the ramp, by however far this step crossed the rail,
+            // instead of popping back to the endpoint.
+            const PlankSpec& use = usePrize ? world.board : world.plank;
+            double ex, ey, ez;
+            shipLocalToScene(use.deckLocalX, deck.deckY, use.deckLocalZ, world.pose, ex, ey, ez);
+            (void)ey;
+            const double span = std::max(0.2, std::hypot(ex - use.dockX, ez - use.dockZ));
+            double past = 0.0;
+            if (std::fabs(ox) > deck.halfBeam) past = std::max(past, std::fabs(ox) - deck.halfBeam);
+            if (std::fabs(oz) > deck.halfLength) past = std::max(past, std::fabs(oz) - deck.halfLength);
+            mountPlank(clampd(1.0 - past / span, 0.82, 1.0), usePrize);
         } else if (world.swim && outside && std::fabs(in.move) > 0.2) {
             dropOffDeck(foot, world, ox, oz);
         } else {
-            foot.x = clampd(ox, -deck.halfBeam, deck.halfBeam);
-            foot.z = clampd(oz, -deck.halfLength, deck.halfLength);
+            slideOnDeck(foot.x, foot.z, ox, oz, deck);
         }
         return;
     }
@@ -1473,19 +1557,22 @@ void stepShipFoot(ShipFoot& foot, const FootInput& in, const FootWorld& world) {
         if (world.board.deployed && world.board.prize && outside
             && nearRail(ox, oz, world.board.prizeLocalX, world.board.prizeLocalZ)
             && std::fabs(in.move) > 0.2) {
-            foot.surface = FootSurface::Plank;
-            foot.prizeRamp = true;
-            foot.plankT = 0.0;
             double deckX, deckY, deckZ;
             plankEnds(world.board, world, deckX, deckY, deckZ);
             const double dirX = deckX - world.board.dockX, dirZ = deckZ - world.board.dockZ;
+            const double span = std::max(0.2, std::hypot(dirX, dirZ));
+            double past = 0.0;
+            if (std::fabs(ox) > pd.halfBeam) past = std::max(past, std::fabs(ox) - pd.halfBeam);
+            if (std::fabs(oz) > pd.halfLength) past = std::max(past, std::fabs(oz) - pd.halfLength);
+            foot.surface = FootSurface::Plank;
+            foot.prizeRamp = true;
+            foot.plankT = clampd(past / span, 0.0, 0.18); // just onto the ramp, toward your own rail
             foot.face = std::atan2(dirX, dirZ); // scene yaw, back toward your own rail
             return;
         }
         // The far rails are the fight. Stepping off them does not drop you in
-        // the sea — swim-to-board is a later slice.
-        foot.x = clampd(ox, -pd.halfBeam, pd.halfBeam);
-        foot.z = clampd(oz, -pd.halfLength, pd.halfLength);
+        // the sea — swim-to-board is a later slice. Her mast and fittings stop you.
+        slideOnDeck(foot.x, foot.z, ox, oz, pd);
         return;
     }
 
@@ -1510,26 +1597,34 @@ void stepShipFoot(ShipFoot& foot, const FootInput& in, const FootWorld& world) {
         const double along = std::sin(foot.face) * dirX + std::cos(foot.face) * dirZ;
         foot.plankT += in.move * along * climbSpeed * dt / rampLen;
         if (foot.plankT >= 1.0) {
+            // Plant a short step inboard — the extra distance this frame already
+            // carried you — rather than a fixed shove off the rail.
+            const double over = (foot.plankT - 1.0) * rampLen;
+            const double nudge = std::min(0.40, std::max(0.18, over));
+            const double sceneFace = foot.face;
+            double px, pz, pface;
+            plantClear(ramp.deckLocalX, ramp.deckLocalZ, deck, nudge, px, pz, pface);
             foot.surface = FootSurface::Deck;
             foot.prizeRamp = false;
             foot.plankT = 1.0;
-            const double ix = -ramp.deckLocalX, iz = -ramp.deckLocalZ;
-            const double il = std::sqrt(ix * ix + iz * iz);
-            foot.x = ramp.deckLocalX;
-            foot.z = ramp.deckLocalZ;
-            if (il > 1e-4) {
-                foot.x += ix / il * 0.45;
-                foot.z += iz / il * 0.45;
-            }
-            foot.x = clampd(foot.x, -deck.halfBeam, deck.halfBeam);
-            foot.z = clampd(foot.z, -deck.halfLength, deck.halfLength);
-            foot.face = foot.face + world.pose.heading; // scene move-yaw -> ship-local
+            foot.x = px;
+            foot.z = pz;
+            foot.face = sceneFace + world.pose.heading; // scene move-yaw -> ship-local
             return;
         }
         if (foot.plankT <= 0.0) {
+            const double over = -foot.plankT * rampLen;
             foot.plankT = 0.0;
             if (ramp.prize && world.prizeLive) {
-                boardPrize(foot, world.prizeDeck, ramp);
+                const double nudge = std::min(0.40, std::max(0.18, over));
+                double px, pz, pface;
+                plantClear(ramp.prizeLocalX, ramp.prizeLocalZ, world.prizeDeck, nudge, px, pz, pface);
+                foot.mode = ControlMode::Foot;
+                foot.surface = FootSurface::EnemyDeck;
+                foot.prizeRamp = false;
+                foot.x = px;
+                foot.z = pz;
+                foot.face = pface;
                 return;
             }
             foot.prizeRamp = false;
@@ -1570,9 +1665,43 @@ void stepShipFoot(ShipFoot& foot, const FootInput& in, const FootWorld& world) {
             else if (standAt(world, foot.x, sz) != Stand::Land) foot.z = sz;
             return;
         }
-        if (std::fabs(in.move) > 0.2 && climbHull(foot, world, moveSign)) return;
-        foot.x = sx;
-        foot.z = sz;
+        if (std::fabs(in.move) > 0.2 && beginRailClimb(foot, world, moveSign)) {
+            // Surface is Rail now. Take the first step of the haul below.
+        } else {
+            foot.x = sx;
+            foot.z = sz;
+            return;
+        }
+    }
+
+    // Haul from the water onto the deck. railT advances along the path; the
+    // feet are sampled between the water point (x, z) and the ship-local landing.
+    // Holding still pauses. Backing down returns you to the water at the start.
+    if (foot.surface == FootSurface::Rail) {
+        double landX, landY, landZ;
+        shipLocalToScene(foot.railX, deck.deckY, foot.railZ, world.pose, landX, landY, landZ);
+        const double waterFeet = world.waterY - kSwimDraft;
+        const double dx = landX - foot.x, dy = landY - waterFeet, dz = landZ - foot.z;
+        const double path = std::max(0.45, std::sqrt(dx * dx + dy * dy + dz * dz));
+        const double horiz = std::sqrt(dx * dx + dz * dz);
+        double along = 1.0;
+        if (horiz > 0.08)
+            along = (std::sin(foot.face) * dx + std::cos(foot.face) * dz) / horiz;
+        foot.railT += in.move * along * climbSpeed * dt / path;
+        if (foot.railT >= 1.0) {
+            foot.surface = FootSurface::Deck;
+            foot.x = foot.railX;
+            foot.z = foot.railZ;
+            foot.face += world.pose.heading; // scene move-yaw -> ship-local
+            foot.plankT = 1.0;
+            foot.railT = 1.0;
+            return;
+        }
+        if (foot.railT <= 0.0) {
+            foot.railT = 0.0;
+            foot.surface = FootSurface::Water;
+            return;
+        }
         return;
     }
 
@@ -1608,12 +1737,23 @@ void stepShipFoot(ShipFoot& foot, const FootInput& in, const FootWorld& world) {
         intoSea = true;
     }
 
-    if (world.plank.deployed && in.move > 0.2) {
+    // Join the gangplank only at its foot, and only where the ramp is still at
+    // the height you are standing. plankT is your projection onto the ramp, so
+    // the feet do not jump to the dock point from a metre away.
+    if (world.plank.deployed && !foot.prizeRamp && in.move > 0.2) {
         const double dx = foot.x - world.plank.dockX, dz = foot.z - world.plank.dockZ;
+        const double along = dx * dirX + dz * dirZ;
+        const double latSq = dx * dx + dz * dz - along * along;
+        const double lat = std::sqrt(latSq > 0.0 ? latSq : 0.0);
         const double toDeck = std::sin(foot.face) * (deckX - foot.x) + std::cos(foot.face) * (deckZ - foot.z);
-        if (dx * dx + dz * dz < 1.25 * 1.25 && toDeck > 0.0) {
+        const double t = clampd(along / rampLen, 0.0, 1.0);
+        const double rampY = world.plank.dockY + (deckY - world.plank.dockY) * t;
+        double gy = 0.0;
+        if (groundFeet(world, foot.x, foot.z, gy) && along >= -0.25 && along <= 0.85
+            && lat <= 0.50 && toDeck > 0.0 && std::fabs(rampY - gy) <= 0.40) {
             foot.surface = FootSurface::Plank;
-            foot.plankT = 0.0;
+            foot.prizeRamp = false;
+            foot.plankT = t;
             return;
         }
     }
@@ -1634,6 +1774,23 @@ FootSample sampleShipFoot(const ShipFoot& foot, const FootWorld& world) {
         const double y = world.prizeDeck.deckY;
         shipLocalToScene(foot.x, y, foot.z, world.prizePose, s.x, s.y, s.z);
         s.moveYaw = sceneMoveYawFromLocal(foot.face, world.prizePose.heading);
+        s.renderYaw = renderYawFromMove(s.moveYaw);
+        return s;
+    }
+    if (foot.surface == FootSurface::Rail) {
+        // Rise to the rail before the feet come inboard, so the haul clears the
+        // hull instead of cutting a straight line through it. t = 0 is the water
+        // point; t = 1 is the deck landing.
+        double landX, landY, landZ;
+        shipLocalToScene(foot.railX, world.deck.deckY, foot.railZ, world.pose, landX, landY, landZ);
+        const double t = clampd(foot.railT, 0.0, 1.0);
+        const double heightT = std::min(1.0, t * 1.35);
+        const double horizT = t <= 0.22 ? 0.0 : (t - 0.22) / 0.78;
+        const double waterFeet = world.waterY - kSwimDraft;
+        s.x = foot.x + (landX - foot.x) * horizT;
+        s.z = foot.z + (landZ - foot.z) * horizT;
+        s.y = waterFeet + (landY - waterFeet) * heightT;
+        s.moveYaw = foot.face;
         s.renderYaw = renderYawFromMove(s.moveYaw);
         return s;
     }
@@ -2286,13 +2443,24 @@ std::vector<TestResult> runSelfTest() {
                  body.surface == FootSurface::Water && awayR > outR + 0.4);
             body.face = leftFace + PI;
             bool boarded = false;
-            for (int i = 0; i < 80 && body.surface != FootSurface::Deck; ++i) stepShipFoot(body, stroke, sea);
+            bool sawRail = false;
+            double maxRise = 0.0;
+            double prevY = wet.y;
+            for (int i = 0; i < 160 && body.surface != FootSurface::Deck; ++i) {
+                stepShipFoot(body, stroke, sea);
+                if (body.surface == FootSurface::Rail || body.surface == FootSurface::Deck) {
+                    if (body.surface == FootSurface::Rail) sawRail = true;
+                    const FootSample step = sampleShipFoot(body, sea);
+                    maxRise = std::max(maxRise, step.y - prevY);
+                    prevY = step.y;
+                }
+            }
             boarded = body.surface == FootSurface::Deck
                    && std::fabs(body.x) <= deck.halfBeam + 1e-6
                    && std::fabs(body.z) <= deck.halfLength + 1e-6;
             const FootSample back = sampleShipFoot(body, sea);
             push("Swimming back into the hull climbs onto the deck",
-                 boarded && back.y > wet.y + 0.8);
+                 boarded && back.y > wet.y + 0.8 && sawRail && maxRise < 0.55);
             FootInput grab;
             grab.dt = 0.016;
             grab.takeHelm = true;
@@ -2770,6 +2938,190 @@ std::vector<TestResult> runSelfTest() {
             stepDeckFight(hold, 0.0, 0.0, 0.0, false, false, false, 0.05);
         push("Her crew cannot strike you once you have stepped back to your own deck",
              near(hold.playerHp, hpHold) && hold.phase == DeckFightPhase::Fighting && !prizeTaken(hold));
+    }
+
+    // --- Deck timbers, and climbs that move instead of snapping -------------
+    {
+        auto near = [](double a, double b, double eps = 0.08) { return std::fabs(a - b) < eps; };
+        auto dist = [](const FootSample& a, const FootSample& b) {
+            const double dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+            return std::sqrt(dx * dx + dy * dy + dz * dz);
+        };
+        const DeckFrame deck = deckFrameFor(makeShipFromConfig(ShipConfig{}));
+        DeckSolid solid[kDeckSolidCount];
+        deckSolids(deck, solid);
+        const DeckSolid& mast = solid[0];
+        const DeckSolid& capstan = solid[1];
+        const DeckSolid& wheel = solid[2];
+        push("The mast, capstan, and wheel block the body centre",
+             deckBlocked(deck, mast.cx, mast.cz)
+             && deckBlocked(deck, capstan.cx, capstan.cz)
+             && deckBlocked(deck, wheel.cx, wheel.cz));
+        push("The helm stand is clear of the wheel",
+             !deckBlocked(deck, deck.helmX, deck.helmZ)
+             && deck.helmZ > wheel.cz + wheel.hz);
+
+        FootWorld world;
+        world.deck = deck;
+        world.pose.heaveY = 1.1;
+        FootInput stroke;
+        stroke.move = 1.0;
+        stroke.dt = 0.05;
+
+        ShipFoot body;
+        body.mode = ControlMode::Foot;
+        body.surface = FootSurface::Deck;
+        body.x = mast.cx - mast.hx - 0.15;
+        body.z = mast.cz;
+        body.face = PI * 0.5; // starboard, into the mast
+        for (int i = 0; i < 30; ++i) stepShipFoot(body, stroke, world);
+        push("The mast stops a walk across the centreline",
+             body.surface == FootSurface::Deck && body.x < mast.cx - 0.05);
+
+        body.x = mast.cx - mast.hx - 0.08;
+        body.z = mast.cz;
+        body.face = PI * 0.5;
+        stroke.dt = 0.5; // long enough to step clean over a thin spar
+        stepShipFoot(body, stroke, world);
+        push("A long frame cannot tunnel through the mast",
+             body.surface == FootSurface::Deck && body.x < mast.cx);
+        stroke.dt = 0.05;
+
+        body.x = 0.0;
+        body.z = capstan.cz + capstan.hz + 0.2;
+        body.face = PI; // aft, into the capstan
+        for (int i = 0; i < 20; ++i) stepShipFoot(body, stroke, world);
+        push("The capstan stops a walk down the centreline",
+             body.surface == FootSurface::Deck && body.z > capstan.cz);
+
+        body.x = deck.helmX;
+        body.z = wheel.cz + wheel.hz + 0.15;
+        body.face = PI;
+        for (int i = 0; i < 20; ++i) stepShipFoot(body, stroke, world);
+        const bool wheelHeld = body.surface == FootSurface::Deck && body.z > wheel.cz;
+        body.x = deck.helmX;
+        body.z = deck.helmZ;
+        body.face = 0.0;
+        FootInput grab;
+        grab.dt = 0.05;
+        grab.takeHelm = true;
+        stepShipFoot(body, grab, world);
+        push("The wheel blocks the timber and the stand still takes the helm",
+             wheelHeld && body.mode == ControlMode::Helm);
+
+        body.mode = ControlMode::Foot;
+        body.surface = FootSurface::Deck;
+        body.x = std::min(deck.halfBeam - 0.25, capstan.hx + 0.35);
+        body.z = 2.2;
+        body.face = PI;
+        for (int i = 0; i < 80; ++i) stepShipFoot(body, stroke, world);
+        push("You can walk aft past the mast and the capstan",
+             body.surface == FootSurface::Deck && body.z < capstan.cz - capstan.hz
+             && body.x > capstan.hx);
+
+        world.yard = true;
+        world.pose = {};
+        world.pose.heaveY = stocksHeaveY(deck.depth);
+        world.plank = yardGangplank(deck);
+        body.mode = ControlMode::Foot;
+        body.surface = FootSurface::Ground;
+        body.prizeRamp = false;
+        body.x = world.plank.dockX + 1.15;
+        body.z = world.plank.dockZ;
+        body.face = 0.0;
+        for (int i = 0; i < 6; ++i) stepShipFoot(body, stroke, world);
+        push("Standing beside the gangplank does not snap you onto it",
+             body.surface == FootSurface::Ground);
+
+        body.surface = FootSurface::Ground;
+        body.x = world.plank.dockX;
+        body.z = world.plank.dockZ;
+        body.face = 0.0;
+        double maxStep = 0.0;
+        double prevH = 0.0;
+        bool rose = true;
+        bool sawPlank = false;
+        FootSample prev = sampleShipFoot(body, world);
+        prevH = prev.y;
+        for (int i = 0; i < 60 && body.surface != FootSurface::Deck; ++i) {
+            stepShipFoot(body, stroke, world);
+            const FootSample now = sampleShipFoot(body, world);
+            maxStep = std::max(maxStep, dist(prev, now));
+            if (body.surface == FootSurface::Plank) {
+                sawPlank = true;
+                if (now.y + 0.02 < prevH) rose = false;
+                prevH = now.y;
+            }
+            prev = now;
+        }
+        const double deckSceneY = world.pose.heaveY + deck.deckY;
+        push("The gangplank climb is continuous and reaches the deck",
+             sawPlank && body.surface == FootSurface::Deck && rose
+             && maxStep < 0.45 && near(sampleShipFoot(body, world).y, deckSceneY, 0.15));
+
+        const DeckFrame prize = deckFrameFor(makeShipFromConfig(enemyConfigForLevel(1)));
+        PoseTR ownPose;
+        ownPose.heaveY = 1.1;
+        PoseTR prizePose = ownPose;
+        prizePose.originX = deck.halfBeam + prize.halfBeam + 2.0;
+        const PlankSpec board = planBoardingPlank(deck, ownPose, prize, prizePose, 0.0);
+        FootWorld sea;
+        sea.deck = deck;
+        sea.pose = ownPose;
+        sea.prizeLive = true;
+        sea.prizeDeck = prize;
+        sea.prizePose = prizePose;
+        sea.board = board;
+        sea.swim = true;
+        body.mode = ControlMode::Foot;
+        body.surface = FootSurface::Deck;
+        body.prizeRamp = false;
+        body.x = board.deckLocalX > 0.0 ? deck.halfBeam - 0.05 : -deck.halfBeam + 0.05;
+        body.z = board.deckLocalZ;
+        body.face = std::atan2(board.deckLocalX - body.x, board.deckLocalZ - body.z);
+        maxStep = 0.0;
+        sawPlank = false;
+        bool heightOk = true;
+        prev = sampleShipFoot(body, sea);
+        for (int i = 0; i < 100 && body.surface != FootSurface::EnemyDeck; ++i) {
+            stepShipFoot(body, stroke, sea);
+            const FootSample now = sampleShipFoot(body, sea);
+            maxStep = std::max(maxStep, dist(prev, now));
+            if (body.surface == FootSurface::Plank && body.prizeRamp) {
+                sawPlank = true;
+                double ox, oy, oz, px, py, pz;
+                shipLocalToScene(board.deckLocalX, deck.deckY, board.deckLocalZ, ownPose, ox, oy, oz);
+                shipLocalToScene(board.prizeLocalX, prize.deckY, board.prizeLocalZ, prizePose, px, py, pz);
+                const double lo = std::min(oy, py) - 0.05;
+                const double hi = std::max(oy, py) + 0.05;
+                if (now.y < lo || now.y > hi) heightOk = false;
+            }
+            prev = now;
+        }
+        push("The boarding plank is a continuous walk between the rails",
+             board.deployed && sawPlank && body.surface == FootSurface::EnemyDeck
+             && heightOk && maxStep < 0.55);
+
+        FootWorld wet;
+        wet.deck = deck;
+        wet.swim = true;
+        wet.waterY = 0.0;
+        wet.pose.heaveY = 0.4;
+        ShipFoot swimmer;
+        swimmer.mode = ControlMode::Foot;
+        swimmer.surface = FootSurface::Water;
+        swimmer.x = std::max(0.4, deck.beam * 0.5) + 0.7; // just off the starboard skin
+        swimmer.z = 0.3;
+        swimmer.face = -PI * 0.5; // toward the hull
+        for (int i = 0; i < 8 && swimmer.surface != FootSurface::Rail; ++i)
+            stepShipFoot(swimmer, stroke, wet);
+        const bool hauling = swimmer.surface == FootSurface::Rail
+                          && std::string(shipFootLabel(swimmer)) == "climbing the rail";
+        swimmer.face += PI; // face away and back down
+        for (int i = 0; i < 40 && swimmer.surface == FootSurface::Rail; ++i)
+            stepShipFoot(swimmer, stroke, wet);
+        push("Backing down the rail returns you to the water",
+             hauling && swimmer.surface == FootSurface::Water);
     }
 
     return r;
