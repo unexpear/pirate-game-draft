@@ -1,8 +1,8 @@
 // Sea Trial — native app window (Milestone 0, complete). Public domain (Unlicense).
 //
 // SDL3 window + bgfx clear + a Dear ImGui debug panel showing the model
-// self-tests and Test Sloop stats. This is the full Milestone 0 target; ship
-// rendering, water, Jolt, and Steamworks all come later.
+// self-tests and Test Sloop stats. steam_platform init / pump / shutdown
+// run every session; without the optional Steamworks SDK they are local stubs.
 //
 // Run with `--frames N` to auto-exit after N frames (scripted verification);
 // otherwise runs until the window is closed or Escape is pressed.
@@ -20,6 +20,7 @@
 #include "screenshot.h"
 
 #include "ship_model.hpp"
+#include "steam_platform.h"
 
 #include <algorithm>
 #include <cmath>
@@ -222,6 +223,14 @@ int main(int argc, char** argv) {
 
     std::printf("self-tests: %d / %d passing\n", passing, total);
     std::printf("renderer: %s\n", bgfx::getRendererName(bgfx::getRendererType()));
+    steam_platform::init();
+    if (steam_platform::isSteam()) {
+        const std::string persona = steam_platform::personaName();
+        std::printf("steam: %s\n", persona.empty() ? "(connected)" : persona.c_str());
+    } else {
+        std::printf("steam: offline (local)\n");
+    }
+    std::printf("user_ships: %s\n", steam_platform::userShipsRoot().c_str());
     std::fflush(stdout);
 
     const ImVec4 kGreen(0.55f, 0.95f, 0.60f, 1.0f);
@@ -359,6 +368,7 @@ int main(int argc, char** argv) {
     bool running = true;
     int frame = 0;
     while (running) {
+        steam_platform::pumpCallbacks();
         wheel = 0.0f;
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
@@ -626,6 +636,12 @@ int main(int argc, char** argv) {
         ImGui::Begin("Sea Trial - Milestone 0"); // ASCII: default ImGui font has no em-dash glyph
         ImGui::TextUnformatted("Engineless native C++ build");
         ImGui::Text("Renderer: %s", bgfx::getRendererName(bgfx::getRendererType()));
+        if (steam_platform::isSteam()) {
+            const std::string persona = steam_platform::personaName();
+            ImGui::Text("Steam: %s", persona.empty() ? "(connected)" : persona.c_str());
+        } else {
+            ImGui::TextUnformatted("Steam: offline (local)");
+        }
         ImGui::TextColored(stats.sinking ? kRed : kGreen, stats.sinking ? "Status: SINKING" : "Status: afloat");
         if (captured)      ImGui::TextColored(kGreen, ">>> PRIZE TAKEN - enemy boarded & captured <<<");
         else if (enemyGone) ImGui::TextColored(kGreen, ">>> ENEMY SUNK <<<");
@@ -871,6 +887,7 @@ int main(int argc, char** argv) {
     bgfx::shutdown();
     SDL_DestroyWindow(window);
     SDL_Quit();
+    steam_platform::shutdown();
     std::printf("clean exit after %d frames\n", frame);
     return 0;
 }

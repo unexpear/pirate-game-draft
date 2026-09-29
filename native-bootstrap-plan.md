@@ -82,7 +82,7 @@ Native equivalents of the 11 model-spine tests from the [Three.js browser spike]
 - Depend only on **permissive, no-strings libraries** (zlib / BSD / MIT / public-domain). The locked stack already qualifies: SDL3 (zlib), bgfx / bx / bimg (BSD-2), Jolt (MIT), Dear ImGui (MIT), miniaudio (public domain).
 - **Vendor** those libraries' source directly, pinned, with their license notices preserved in a `THIRD-PARTY-LICENSES` file. Nothing is pulled at configure time.
 - **Build from scratch** anything that would attach license strings or cost (e.g. FMOD / Wwise → use miniaudio or roll your own).
-- **Steamworks** is the one unavoidable proprietary piece. Isolate it as an optional module so the engine/framework builds and runs without it.
+- **Steamworks** is the one unavoidable proprietary piece. Isolate it as an optional module so the engine/framework builds and runs without it. The native bolt-on is `steam_platform` with `SEA_TRIAL_WITH_STEAM` defaulting OFF; the SDK stays out of git (see [native/steam.md](native/steam.md)).
 
 ### bgfx note
 
