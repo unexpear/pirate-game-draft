@@ -9,14 +9,15 @@ jobs:
     name: Model self-tests
     runs-on: ubuntu-latest
     steps:
-      # No submodules: the self-test runner is dependency-free (pure C++).
+      # No submodules: model_spine is dependency-free. miniaudio is an in-tree
+      # header, so the headless audio smoke test builds here too (no sound card).
       - uses: actions/checkout@v4
 
       - name: Configure (self-test runner only)
         run: cmake -S native -B native/build -DSEA_TRIAL_BUILD_APP=OFF
 
       - name: Build
-        run: cmake --build native/build --target sea_trial_selftest
+        run: cmake --build native/build --target sea_trial_selftest sea_trial_audio_test
 
       - name: Run the model self-tests
         run: ctest --test-dir native/build --output-on-failure

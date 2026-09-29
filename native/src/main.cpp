@@ -18,6 +18,7 @@
 #include "ship_mesh.h"
 #include "shadow_gpu.h"
 #include "screenshot.h"
+#include "audio.h"
 
 #include "ship_model.hpp"
 
@@ -206,6 +207,8 @@ int main(int argc, char** argv) {
     bgfx::setViewClear(kClearView, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x1e2a3aff, 1.0f, 0);
 
     imgui_bgfx::init();
+    // Missing audio device is not fatal: init falls back to a silent no-device engine.
+    if (!audio::init()) std::fprintf(stderr, "audio: engine failed to start; continuing silent\n");
 
     // Model data for the panel (computed once).
     const auto results = sea::runSelfTest();
@@ -521,6 +524,7 @@ int main(int argc, char** argv) {
             if (ord.fireSide != 0 && eReady && !inSafeZone) {
                 auto ev = sea::fireBroadside(enemy, ord.fireSide, enemyWorldX, enemyPose.heaveY, enemyWorldZ, enemyHeading);
                 enemyShots.insert(enemyShots.end(), ev.begin(), ev.end());
+                if (!ev.empty()) audio::playOneShot(audio::OneShot::Cannon);
                 enemyReload = 1.6f;
             }
         } else {
@@ -541,6 +545,7 @@ int main(int argc, char** argv) {
             const int side = starboardComp >= 0.0f ? 1 : -1;
             auto volley = sea::fireBroadside(ship, side, worldX, pose.heaveY, worldZ, heading);
             shots.insert(shots.end(), volley.begin(), volley.end());
+            if (!volley.empty()) audio::playOneShot(audio::OneShot::Cannon);
             reload = 1.2f;
         }
         wantFire = false;
@@ -578,6 +583,11 @@ int main(int argc, char** argv) {
         wantBoard = false;
         if (boarding) { boardTimer -= dt; if (boardTimer <= 0.0f) { boarding = false; captured = true; } }
         const bool weSank = sinkDepth > 22.0f;
+
+        // Wind/ocean bed follows way and the point of sail; quieter on the stocks.
+        const float bedGain = (buildMode ? 0.22f : (0.40f + 0.35f * speedFrac + 0.12f * windFactor))
+                            * (inSafeZone ? 0.80f : 1.0f);
+        audio::update(dt, bedGain);
 
         // Build mode: the ship's pieces in this tradition's construction order.
         std::vector<int> border;
@@ -750,6 +760,24 @@ int main(int argc, char** argv) {
             else if (boardable) ImGui::TextColored(kGreen, "Alongside - press B to board!");
             else                ImGui::TextDisabled(reload > 0.0f ? "Reloading..." : "Space: fire broadside");
         }
+        if (ImGui::CollapsingHeader("Audio", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const audio::Status heard = audio::status();
+            if (!heard.ready)
+                ImGui::TextColored(kRed, "Engine failed - silent");
+            else if (!heard.device)
+                ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f), "No playback device - silent fallback");
+            else
+                ImGui::TextColored(kGreen, "Playback device open");
+            bool mute = heard.muted;
+            if (ImGui::Checkbox("Mute", &mute)) audio::setMuted(mute);
+            ImGui::SameLine();
+            if (ImGui::Button("Beep")) audio::playOneShot(audio::OneShot::Cannon);
+            bool bed = heard.bed;
+            if (ImGui::Checkbox("Wind / ocean bed", &bed)) audio::setBedEnabled(bed);
+            ImGui::TextDisabled("Space and enemy broadsides play a cannon crack.");
+            ImGui::TextDisabled("Beep plays it in the safe zone and in Build mode.");
+            ImGui::TextDisabled("Mute silences the bed and one-shots. No sample files.");
+        }
         ImGui::Separator();
         ImGui::TextColored(passing == total ? kGreen : kRed, "Model self-tests: %d / %d passing", passing, total);
         if (ImGui::CollapsingHeader("Self-tests")) {
@@ -865,6 +893,7 @@ int main(int argc, char** argv) {
         if (maxFrames >= 0 && ++frame >= maxFrames) running = false;
     }
 
+    audio::shutdown();
     shadow::shutdown();
     ship_view::shutdown();
     imgui_bgfx::shutdown();
