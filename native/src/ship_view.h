@@ -7,10 +7,10 @@
 // GPU). Orbit camera.
 #pragma once
 
+#include "wake.h"
+
 #include <cstdint>
 #include <vector>
-
-namespace sea { struct Ship; struct Wave; struct FloatPose; }
 
 namespace ship_view {
 
@@ -28,12 +28,16 @@ void setFreeCamera(bool enabled, float ex, float ey, float ez, float ax, float a
 // (0 = furled .. 1 = full canvas). `timeSec` drives the wave animation.
 // `cut*` (world XZ centre + radius) carves the sea out under the island so land
 // reads as land, not a box floating on the water; pass radius <= 0 for none.
+// `speed` (m/s) feeds the player's bow wave, V-wake, and bow spray.
+// `extraWakes` are other hulls in scene space (the enemy, the slipway hull).
+// Harbour moorings are added here when the land cut is a real island.
 void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>& waves,
             const sea::FloatPose& pose, float timeSec, float heading,
             float worldX, float worldZ, float windDir, float sailFullness,
             int width, int height, float heelScale = 1.0f,
             float cutWorldX = 0.0f, float cutWorldZ = 0.0f, float cutR = 0.0f,
-            float speed = 0.0f);
+            float speed = 0.0f,
+            const sea::WakeHull* extraWakes = nullptr, int extraWakeCount = 0);
 
 // Draw another ship into the same view (camera already set by render()), placed
 // at scene position (posX,posZ) relative to our ship at the origin.

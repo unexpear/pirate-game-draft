@@ -34,6 +34,8 @@ bgfx::UniformHandle u_fog = BGFX_INVALID_HANDLE;
 bgfx::UniformHandle u_ship = BGFX_INVALID_HANDLE;
 bgfx::UniformHandle u_shipDyn = BGFX_INVALID_HANDLE;
 
+static_assert(sea::kMaxWakeHulls == 8, "fs_water.sc loops 8 u_ship / u_shipDyn slots");
+
 void destroyIfValid(bgfx::UniformHandle& h) { if (bgfx::isValid(h)) { bgfx::destroy(h); h = BGFX_INVALID_HANDLE; } }
 
 } // namespace
@@ -81,8 +83,8 @@ void init() {
     u_camPos = bgfx::createUniform("u_camPos", bgfx::UniformType::Vec4);
     u_landCut = bgfx::createUniform("u_landCut", bgfx::UniformType::Vec4);
     u_fog = bgfx::createUniform("u_fog", bgfx::UniformType::Vec4);
-    u_ship = bgfx::createUniform("u_ship", bgfx::UniformType::Vec4);
-    u_shipDyn = bgfx::createUniform("u_shipDyn", bgfx::UniformType::Vec4);
+    u_ship = bgfx::createUniform("u_ship", bgfx::UniformType::Vec4, sea::kMaxWakeHulls);
+    u_shipDyn = bgfx::createUniform("u_shipDyn", bgfx::UniformType::Vec4, sea::kMaxWakeHulls);
 }
 
 void shutdown() {
@@ -104,7 +106,7 @@ void shutdown() {
 void render(uint16_t viewId, const std::vector<sea::Wave>& waves, float t,
             float eyeX, float eyeY, float eyeZ, float offsetX, float offsetZ,
             float cutX, float cutZ, float cutR,
-            float shipSin, float shipCos, float shipHalfLen, float shipHalfBeam, float shipSpeed) {
+            const sea::WakeHull* wakes, int wakeCount) {
     float waveA[6][4] = {};
     float waveB[6][4] = {};
     const int n = int(waves.size() < 6 ? waves.size() : 6);
@@ -135,10 +137,10 @@ void render(uint16_t viewId, const std::vector<sea::Wave>& waves, float t,
     // Horizon fog: colour matches the sky horizon (sky_gpu), far ~ grid reach.
     const float fogV[4] = { 0.88f, 0.84f, 0.75f, 300.0f };
     bgfx::setUniform(u_fog, fogV);
-    const float shipV[4] = { shipSin, shipCos, shipHalfLen, shipHalfBeam };
-    bgfx::setUniform(u_ship, shipV);
-    const float shipDynV[4] = { shipSpeed, 0.0f, 0.0f, 0.0f };
-    bgfx::setUniform(u_shipDyn, shipDynV);
+    sea::WakePack wakesPacked;
+    sea::packWakes(wakes, wakeCount, wakesPacked);
+    bgfx::setUniform(u_ship, wakesPacked.ship, sea::kMaxWakeHulls);
+    bgfx::setUniform(u_shipDyn, wakesPacked.dyn, sea::kMaxWakeHulls);
 
     shadow::bindRead(4);
     bgfx::setVertexBuffer(0, s_vbh);

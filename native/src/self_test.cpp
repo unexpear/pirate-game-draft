@@ -3,11 +3,14 @@
 // Runs the 11 model-spine checks ported from the Three.js spike and prints a
 // PASS/FAIL report. Exit code 0 iff all pass — so it doubles as a CI gate.
 #include "ship_model.hpp"
+#include "wake.h"
 
 #include <cstdio>
 
 int main() {
-    const auto results = sea::runSelfTest();
+    auto results = sea::runSelfTest();
+    const auto wake = sea::runWakeSelfTest();
+    results.insert(results.end(), wake.begin(), wake.end());
 
     int passing = 0;
     for (const auto& r : results) {

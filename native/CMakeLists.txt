@@ -13,6 +13,7 @@ option(SEA_TRIAL_BUILD_APP "Build the windowed app (SDL3 + bgfx + Dear ImGui). O
 # --- Milestone 0, part 1: self-test runner (pure logic, no dependencies) ---
 add_executable(sea_trial_selftest
     src/ship_model.cpp
+    src/wake.cpp
     src/self_test.cpp
 )
 target_include_directories(sea_trial_selftest PRIVATE src)
@@ -55,6 +56,7 @@ set(BGFX_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/extern/bgfx.cmake)
 add_executable(sea_trial
     src/main.cpp
     src/ship_model.cpp
+    src/wake.cpp
     src/ship_view.cpp
     src/water_gpu.cpp
     src/island_gpu.cpp

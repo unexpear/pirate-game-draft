@@ -6,10 +6,10 @@
 // in the build dir (bgfx_compile_shaders, D3D11 profile).
 #pragma once
 
+#include "wake.h"
+
 #include <cstdint>
 #include <vector>
-
-namespace sea { struct Wave; }
 
 namespace water_gpu {
 
@@ -21,10 +21,12 @@ void shutdown();
 // position so the ocean scrolls as it sails. `cut*` carves a circular hole in
 // the sea (world XZ centre + radius) so land isn't drawn over water — pass a
 // radius <= 0 for open ocean with no cutout.
+// `wakes` are the hulls that get a waterline ring / bow wave / V-wake (player
+// at scene 0,0, plus anyone else in scene space). Null or an empty list leaves
+// the sea unmarked.
 void render(uint16_t viewId, const std::vector<sea::Wave>& waves, float timeSec,
             float eyeX, float eyeY, float eyeZ, float offsetX, float offsetZ,
             float cutX = 0.0f, float cutZ = 0.0f, float cutR = 0.0f,
-            float shipSin = 0.0f, float shipCos = 0.0f, float shipHalfLen = 0.0f,
-            float shipHalfBeam = 0.0f, float shipSpeed = 0.0f);
+            const sea::WakeHull* wakes = nullptr, int wakeCount = 0);
 
 } // namespace water_gpu
