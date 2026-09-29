@@ -10,24 +10,12 @@ uniform vec4 u_landCut;  // xy = land centre (world), z = radius, w unused
 uniform vec4 u_fog;      // xyz = horizon fog colour, w = fog far distance
 uniform vec4 u_ship;     // xy = heading (sin,cos), z = hull half-length, w = hull half-beam
 uniform vec4 u_shipDyn;  // x = speed factor (0..1) for bow wave + wake strength
-uniform mat4 u_lightMtx; // light view-proj, for shadow lookup
-SAMPLER2D(s_shadowMap, 4);
+#include "shadow_sample.sh"
 
+// The sea only takes part of the shadow (the sky still fills it), same 0.40
+// weight as before. shadowVisibility is 1 in sun, 0 fully shadowed.
 float shadowFactor(vec3 wpos) {
-	vec4 lc = mul(u_lightMtx, vec4(wpos, 1.0));
-	vec3 ndc = lc.xyz / lc.w;
-	vec2 uv = ndc.xy * 0.5 + 0.5;
-#if BGFX_SHADER_LANGUAGE_HLSL || BGFX_SHADER_LANGUAGE_PSSL || BGFX_SHADER_LANGUAGE_METAL || BGFX_SHADER_LANGUAGE_SPIRV
-	uv.y = 1.0 - uv.y;
-#endif
-	if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 1.0;
-	float cur = ndc.z - 0.0006;
-	float texel = 1.0 / 2048.0;
-	float sh = 0.0;
-	for (int y = -1; y <= 1; ++y)
-	for (int x = -1; x <= 1; ++x)
-		sh += (cur > texture2DLod(s_shadowMap, uv + vec2(float(x), float(y)) * texel, 0.0).x) ? 1.0 : 0.0;
-	return 1.0 - (sh / 9.0) * 0.40;
+	return 1.0 - (1.0 - shadowVisibility(wpos)) * 0.40;
 }
 
 void main()

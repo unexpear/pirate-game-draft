@@ -343,21 +343,9 @@ static void isoCamera(int v, bx::Vec3& eye, bx::Vec3& at) {
     }
 }
 
-void shadowFrame(float relX, float relZ, float& cx, float& cz, float& radius, bool& withIsland) {
-    if (s_isoId > 0) {                      // the isolated building, plus room for its shadow
-        cx = 0.0f; cz = 0.0f;
-        radius = 0.5f * std::max(s_isoW, s_isoD) + s_isoH + 6.0f;
-        withIsland = true;
-        return;
-    }
-    const float dist = std::sqrt(relX * relX + relZ * relZ);
-    if (dist > 230.0f) {                    // open sea: tight map on the ship alone
-        cx = 0.0f; cz = 0.0f; radius = 30.0f; withIsland = false;
-        return;
-    }
-    withIsland = true;                      // near land: cover the town (and the ship)
-    if (dist <= 60.0f) { cx = relX; cz = relZ; radius = 82.0f; }
-    else { cx = relX * 0.5f; cz = relZ * 0.5f; radius = dist * 0.5f + 72.0f; }
+float shadowIsoRadius() {
+    if (s_isoId <= 0) return 0.0f;
+    return 0.5f * std::max(s_isoW, s_isoD) + s_isoH + 6.0f;
 }
 
 void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>& waves,

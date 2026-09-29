@@ -14,6 +14,7 @@ option(SEA_TRIAL_BUILD_APP "Build the windowed app (SDL3 + bgfx + Dear ImGui). O
 add_executable(sea_trial_selftest
     src/ship_model.cpp
     src/self_test.cpp
+    src/shadow_focus.cpp
 )
 target_include_directories(sea_trial_selftest PRIVATE src)
 
@@ -60,6 +61,7 @@ add_executable(sea_trial
     src/island_gpu.cpp
     src/sky_gpu.cpp
     src/shadow_gpu.cpp
+    src/shadow_focus.cpp
     src/ship_mesh.cpp
     src/screenshot.cpp
     src/imgui/imgui_bgfx.cpp
@@ -90,7 +92,7 @@ function(sea_trial_shader type file outvar)
         VARYING_DEF ${VARYING}
         OUTPUT_DIR ${SHADER_OUT}
         OUT_FILES_VAR ${outvar}
-        INCLUDE_DIRS ${BGFX_SRC}/src
+        INCLUDE_DIRS ${BGFX_SRC}/src ${SHADER_SRC}
         PROFILES s_5_0
         AS_HEADERS
     )

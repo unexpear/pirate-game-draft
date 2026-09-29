@@ -73,10 +73,9 @@ const char* isolateName(int id);
 // count, so 0 = a clean town.
 int printBuildings();
 
-// Where the sun's shadow map should look this frame (scene space): around the
-// ship, and — when the island is near or in view — over the town too.
-// `withIsland` says whether the island's scenery belongs in the shadow pass.
-void shadowFrame(float relX, float relZ, float& cx, float& cz, float& radius, bool& withIsland);
+// Isolation-shot shadow radius (0 when the whole town is on screen). The sail
+// scene's cascade split lives in shadow_focus.h; this only frames one building.
+float shadowIsoRadius();
 void setDebugCharacter(bool on, float x, float z, float heading, float yOffset = 0.0f);
 
 // Draw the island (land + port + large shipyard) with its centre at scene

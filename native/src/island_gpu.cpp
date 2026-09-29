@@ -201,6 +201,17 @@ void shutdown() {
     if (bgfx::isValid(s_vbh)) { bgfx::destroy(s_vbh); s_vbh = BGFX_INVALID_HANDLE; }
 }
 
+void renderDepth(uint16_t viewId, float relX, float relZ) {
+    if (!shadow::ready() || !bgfx::isValid(s_vbh)) return;
+    float m[16];
+    bx::mtxTranslate(m, relX, 0.0f, relZ);
+    bgfx::setTransform(m);
+    bgfx::setVertexBuffer(0, s_vbh);
+    bgfx::setIndexBuffer(s_ibh);
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
+    bgfx::submit(viewId, shadow::program());
+}
+
 void render(uint16_t viewId, float relX, float relZ) {
     const float lightV[4] = { 0.42f, 0.68f, -0.55f, 0.0f };
     bgfx::setUniform(u_lightDir, lightV);
