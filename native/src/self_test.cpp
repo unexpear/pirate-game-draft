@@ -14,6 +14,36 @@
 
 namespace {
 
+bool hasWorkshopCode(const std::vector<steam_platform::WorkshopIssue>& issues, const char* code) {
+    for (const auto& issue : issues) {
+        if (issue.code == code) return true;
+    }
+    return false;
+}
+
+std::string shipPiecesJson(int count) {
+    std::string json = R"({
+  "schema_version": 1,
+  "display_name": "Cap Test",
+  "bounds": { "length": 12, "width": 4, "height": 5 },
+  "systems": { "helm_count": 1, "sail_count": 1, "mast_count": 1, "cannon_count": 0, "cargo_mass": 0 },
+  "pieces": [)";
+    for (int i = 0; i < count; ++i) {
+        if (i) json += ',';
+        json += "{\"id\":\"p" + std::to_string(i) +
+                "\",\"type\":\"plank\",\"material\":\"oak\",\"volume\":1,\"mass\":1}";
+    }
+    json += "]}";
+    return json;
+}
+
+bool writeTextFile(const std::filesystem::path& path, const std::string& body) {
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) return false;
+    out << body;
+    return static_cast<bool>(out);
+}
+
 bool runSteamPlatformChecks() {
     int passing = 0;
     int total = 0;
@@ -29,6 +59,9 @@ bool runSteamPlatformChecks() {
     };
 
     check("cloud sync message starts empty", steam_platform::cloudSyncMessage().empty());
+    check("workshop message starts empty", steam_platform::workshopMessage().empty());
+    check("workshop status starts unimplemented",
+          steam_platform::lastWorkshopResult() == steam_platform::HookResult::Unimplemented);
 
     check("test_sloop.ship.json is a ship file",
           steam_platform::isUserShipFileName("test_sloop.ship.json"));
@@ -161,9 +194,249 @@ bool runSteamPlatformChecks() {
         // the game reads is still the local one; sync runs from the app.
         check("connected session keeps the local user_ships folder", root == expected, root.string());
     }
-    check("workshop validate is unimplemented",
-          steam_platform::workshopValidate("user_ships/test_sloop.ship.json")
-              == steam_platform::HookResult::Unimplemented);
+    const fs::path workshopDir = fs::temp_directory_path() / "sea_trial_workshop_selftest";
+    std::error_code workshopEc;
+    fs::remove_all(workshopDir, workshopEc);
+    fs::create_directories(workshopDir / "nested", workshopEc);
+
+    const char* kValid = R"({
+  "schema_version": 1,
+  "ship_id": "workshop_min",
+  "display_name": "Workshop Min",
+  "created_by": "selftest",
+  "build_version": "prototype",
+  "bounds": { "length": 12.0, "width": 4.0, "depth": 2.8, "height": 5.0 },
+  "runtime": {
+    "buoyancy_tier": 2,
+    "sample_grid": { "type": "rectangular", "rows": 3, "columns": 3 },
+    "collision_asset": "generated",
+    "visual_asset": "generated"
+  },
+  "systems": {
+    "helm_count": 1,
+    "sail_count": 1,
+    "mast_count": 1,
+    "cannon_count": 0,
+    "cargo_mass": 0e0
+  },
+  "pieces": [
+    {
+      "id": "hull_001",
+      "type": "plank",
+      "material": "oak",
+      "volume": 4e0,
+      "mass": 800.0,
+      "damage": 0,
+      "position": [0, 0, 0],
+      "rotation": [0, 0, 0],
+      "bounds": [4, 2, 12]
+    }
+  ]
+})";
+
+    const fs::path validPath = workshopDir / "nested" / "workshop_min.ship.json";
+    const fs::path noHelmPath = workshopDir / "no_helm.ship.json";
+    const fs::path noSailPath = workshopDir / "no_sail.ship.json";
+    const fs::path emptyPiecesPath = workshopDir / "empty_pieces.ship.json";
+    const fs::path sinkPath = workshopDir / "sink.ship.json";
+    const fs::path damagedPath = workshopDir / "damaged.ship.json";
+    const fs::path capPath = workshopDir / "over_cap.ship.json";
+    const fs::path underCapPath = workshopDir / "at_cap.ship.json";
+    const fs::path bigBoundsPath = workshopDir / "big_bounds.ship.json";
+    const fs::path edgeBoundsPath = workshopDir / "edge_bounds.ship.json";
+    const fs::path schemaPath = workshopDir / "bad_schema.ship.json";
+    const fs::path schemaTypePath = workshopDir / "schema_type.ship.json";
+    const fs::path badIdPath = workshopDir / "bad_id.ship.json";
+    const fs::path badVolumePath = workshopDir / "bad_volume.ship.json";
+    const fs::path narrowPath = workshopDir / "narrow.ship.json";
+    const fs::path junkPath = workshopDir / "junk.ship.json";
+    const fs::path emptyFilePath = workshopDir / "empty.ship.json";
+    const fs::path bigFilePath = workshopDir / "big.ship.json";
+    const fs::path notesPath = workshopDir / "notes.json";
+    const fs::path dirPath = workshopDir / "folder.ship.json";
+    const fs::path samplePath = workshopDir / "sample_sloop.ship.json";
+
+    auto withHelm = [&](const char* systems, const char* pieces, const char* bounds =
+                            R"("bounds": { "length": 12, "width": 4, "height": 5 })") {
+        return std::string("{\n  \"schema_version\": 1,\n  ") + bounds + ",\n  \"systems\": " + systems +
+               ",\n  \"pieces\": " + pieces + "\n}\n";
+    };
+    const char* kHull =
+        R"([{"id":"hull_001","type":"plank","material":"oak","volume":4,"mass":800,"damage":0}])";
+    const char* kRigged =
+        R"({ "helm_count": 1, "sail_count": 1, "mast_count": 1, "cannon_count": 0, "cargo_mass": 0 })";
+
+    check("workshop fixture files were written",
+          writeTextFile(validPath, kValid)
+              && writeTextFile(noHelmPath, withHelm(
+                     R"({ "helm_count": 0, "sail_count": 1, "mast_count": 1, "cannon_count": 0, "cargo_mass": 0 })",
+                     kHull))
+              && writeTextFile(noSailPath, withHelm(
+                     R"({ "helm_count": 1, "sail_count": 0, "mast_count": 0, "cannon_count": 0, "cargo_mass": 0 })",
+                     kHull))
+              && writeTextFile(emptyPiecesPath, withHelm(kRigged, "[]"))
+              && writeTextFile(sinkPath, withHelm(
+                     R"({ "helm_count": 1, "sail_count": 1, "mast_count": 1, "cannon_count": 0, "cargo_mass": 100000 })",
+                     kHull))
+              && writeTextFile(damagedPath, withHelm(
+                     kRigged,
+                     R"([{"id":"hull_001","type":"plank","material":"oak","volume":1,"mass":1,"damage":1}])"))
+              && writeTextFile(capPath, shipPiecesJson(221))
+              && writeTextFile(underCapPath, shipPiecesJson(220))
+              && writeTextFile(bigBoundsPath, withHelm(
+                     kRigged, kHull, R"("bounds": { "length": 27, "width": 4, "height": 5 })"))
+              && writeTextFile(edgeBoundsPath, withHelm(
+                     kRigged, kHull, R"("bounds": { "length": 26, "width": 9, "height": 10 })"))
+              && writeTextFile(schemaPath, std::string("{\n  \"schema_version\": 2,\n  ") +
+                     R"("bounds": { "length": 12, "width": 4, "height": 5 },)" + "\n  \"systems\": " + kRigged +
+                     ",\n  \"pieces\": " + kHull + "\n}\n")
+              && writeTextFile(schemaTypePath, "{\n  \"schema_version\": \"1\"\n}\n")
+              && writeTextFile(badIdPath, withHelm(
+                     kRigged,
+                     R"([{"id":"","type":"plank","material":"oak","volume":4,"mass":800}])"))
+              && writeTextFile(badVolumePath, withHelm(
+                     kRigged,
+                     R"([{"id":"hull_001","type":"plank","material":"oak","volume":0,"mass":10}])"))
+              && writeTextFile(narrowPath, withHelm(
+                     kRigged, kHull, R"("bounds": { "length": 12, "width": 2, "height": 5 })"))
+              && writeTextFile(junkPath, "{")
+              && writeTextFile(emptyFilePath, "")
+              && writeTextFile(notesPath, "{}\n"));
+
+    {
+        std::ofstream big(bigFilePath, std::ios::binary | std::ios::trunc);
+        const std::string chunk(1024, 'x');
+        for (int i = 0; i < 1024; ++i) big << chunk;
+        big << 'x';
+    }
+    fs::create_directory(dirPath, workshopEc);
+
+    sea::ShipConfig sampleCfg;
+    sampleCfg.name = "Say \"ahoy\"";
+    check("sample ship json was written",
+          writeTextFile(samplePath, sea::toShipJson(sea::makeShipFromConfig(sampleCfg))));
+
+    using steam_platform::HookResult;
+    const auto missing = steam_platform::workshopValidate((workshopDir / "missing.ship.json").string());
+    check("missing ship file cannot be read",
+          missing.result == HookResult::Failed && missing.code == "CANNOT_READ");
+    const auto emptyPath = steam_platform::workshopValidate("");
+    check("empty workshop path is rejected",
+          emptyPath.result == HookResult::Failed && emptyPath.code == "BAD_PATH");
+    const auto notes = steam_platform::workshopValidate(notesPath.string());
+    check("non-ship file is rejected",
+          notes.result == HookResult::Failed && notes.code == "NOT_A_SHIP");
+    const auto dotDot = steam_platform::workshopValidate((workshopDir / "..ship.json").string());
+    check("parent-segment ship name is rejected",
+          dotDot.result == HookResult::Failed && dotDot.code == "NOT_A_SHIP");
+    const auto asDir = steam_platform::workshopValidate(dirPath.string());
+    check("directory named like a ship is rejected",
+          asDir.result == HookResult::Failed && asDir.code == "BAD_PATH");
+    const auto emptyFile = steam_platform::workshopValidate(emptyFilePath.string());
+    check("empty ship file is rejected",
+          emptyFile.result == HookResult::Failed && emptyFile.code == "EMPTY_FILE");
+    const auto junk = steam_platform::workshopValidate(junkPath.string());
+    check("truncated JSON fails with BAD_JSON",
+          junk.result == HookResult::Failed && junk.code == "BAD_JSON");
+    const auto tooBig = steam_platform::workshopValidate(bigFilePath.string());
+    check("ship over 1 MiB fails with FILE_TOO_LARGE",
+          tooBig.result == HookResult::Failed && tooBig.code == "FILE_TOO_LARGE");
+    const auto schemaType = steam_platform::workshopValidate(schemaTypePath.string());
+    check("string schema_version is BAD_JSON",
+          schemaType.result == HookResult::Failed && schemaType.code == "BAD_JSON");
+
+    const auto valid = steam_platform::workshopValidate(validPath.string());
+    check("synthetic ship passes Workshop checks",
+          valid.result == HookResult::Ok && valid.code == "OK" && valid.errors.empty() && valid.warnings.empty(),
+          valid.message);
+    check("passing check records Ok",
+          steam_platform::lastWorkshopResult() == HookResult::Ok);
+    const auto validAgain = steam_platform::workshopValidate(validPath.string());
+    check("workshop validate is idempotent",
+          validAgain.result == HookResult::Ok && validAgain.code == "OK");
+
+    const auto sample = steam_platform::workshopValidate(samplePath.string());
+    check("generated sample ship passes Workshop checks",
+          sample.result == HookResult::Ok && sample.code == "OK" && sample.errors.empty(),
+          sample.message);
+
+    const auto noHelm = steam_platform::workshopValidate(noHelmPath.string());
+    check("ship without a helm fails MISSING_HELM",
+          noHelm.result == HookResult::Failed && noHelm.code == "MISSING_HELM"
+              && hasWorkshopCode(noHelm.errors, "MISSING_HELM"),
+          noHelm.message);
+    const auto noSail = steam_platform::workshopValidate(noSailPath.string());
+    check("ship without a sail fails MISSING_SAIL",
+          noSail.result == HookResult::Failed && noSail.code == "MISSING_SAIL"
+              && hasWorkshopCode(noSail.errors, "MISSING_SAIL"),
+          noSail.message);
+    const auto noPieces = steam_platform::workshopValidate(emptyPiecesPath.string());
+    check("ship with no pieces fails NO_PIECES",
+          noPieces.result == HookResult::Failed && noPieces.code == "NO_PIECES"
+              && hasWorkshopCode(noPieces.errors, "NO_PIECES")
+              && hasWorkshopCode(noPieces.errors, "DOES_NOT_FLOAT")
+              && noPieces.errors.size() > 1,
+          noPieces.message);
+    const auto sink = steam_platform::workshopValidate(sinkPath.string());
+    check("overloaded ship fails DOES_NOT_FLOAT",
+          sink.result == HookResult::Failed && sink.code == "DOES_NOT_FLOAT",
+          sink.message);
+    const auto damaged = steam_platform::workshopValidate(damagedPath.string());
+    check("fully damaged hull fails DOES_NOT_FLOAT",
+          damaged.result == HookResult::Failed && damaged.code == "DOES_NOT_FLOAT",
+          damaged.message);
+    const auto overCap = steam_platform::workshopValidate(capPath.string());
+    check("221 pieces fail PIECE_CAP",
+          overCap.result == HookResult::Failed && overCap.code == "PIECE_CAP",
+          overCap.message);
+    const auto atCap = steam_platform::workshopValidate(underCapPath.string());
+    check("220 pieces pass the piece cap",
+          atCap.result == HookResult::Ok && atCap.code == "OK",
+          atCap.message);
+    const auto bigBounds = steam_platform::workshopValidate(bigBoundsPath.string());
+    check("oversized hull fails BOUNDS_CAP",
+          bigBounds.result == HookResult::Failed && bigBounds.code == "BOUNDS_CAP",
+          bigBounds.message);
+    const auto edgeBounds = steam_platform::workshopValidate(edgeBoundsPath.string());
+    check("bounds on the prototype cap still pass",
+          edgeBounds.result == HookResult::Ok && edgeBounds.code == "OK",
+          edgeBounds.message);
+    const auto badSchema = steam_platform::workshopValidate(schemaPath.string());
+    check("schema_version 2 fails BAD_SCHEMA",
+          badSchema.result == HookResult::Failed && badSchema.code == "BAD_SCHEMA",
+          badSchema.message);
+    const auto badId = steam_platform::workshopValidate(badIdPath.string());
+    check("piece without an id fails BAD_ID",
+          badId.result == HookResult::Failed && badId.code == "BAD_ID",
+          badId.message);
+    const auto badVolume = steam_platform::workshopValidate(badVolumePath.string());
+    check("piece with no volume fails BAD_VOLUME",
+          badVolume.result == HookResult::Failed && badVolume.code == "BAD_VOLUME",
+          badVolume.message);
+    const auto narrow = steam_platform::workshopValidate(narrowPath.string());
+    check("narrow hull passes with a warning",
+          narrow.result == HookResult::Ok && narrow.code == "OK" && narrow.errors.empty()
+              && hasWorkshopCode(narrow.warnings, "NARROW_HULL"),
+          narrow.message);
+
+    if (!online) {
+        const auto published = steam_platform::workshopPublish(validPath.string());
+        check("offline publish validates and does not submit",
+              published.result == HookResult::Unimplemented && published.code == "NOT_SUBMITTED"
+                  && published.errors.empty()
+                  && published.message.find("Validated") != std::string::npos
+                  && published.message.find("published") != std::string::npos,
+              published.message);
+        check("offline publish status is unimplemented",
+              steam_platform::lastWorkshopResult() == HookResult::Unimplemented);
+        const auto rejected = steam_platform::workshopPublish(noHelmPath.string());
+        check("offline publish of an invalid ship fails the local check",
+              rejected.result == HookResult::Failed && rejected.code == "MISSING_HELM"
+                  && rejected.code != "NOT_SUBMITTED",
+              rejected.message);
+    }
+
+    fs::remove_all(workshopDir, workshopEc);
 
     steam_platform::shutdown();
     check("steam is offline after shutdown", !steam_platform::isSteam());

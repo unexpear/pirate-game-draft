@@ -48,8 +48,10 @@ Steamworks is **not** vendored. `SEA_TRIAL_WITH_STEAM` defaults to **OFF**:
 `<cwd>/user_ships`, cloud sync is a local no-op), and the self-test covers
 that path. Turn it on only with a Steamworks SDK you supply
 (`STEAMWORKS_SDK` or a gitignored drop-in at `extern/steamworks/`). Download
-steps, the façade, and Steam Cloud versus the local folder are in
-[steam.md](steam.md). Workshop validation is still unimplemented.
+steps, the façade, Steam Cloud versus the local folder, and Workshop
+validate versus publish are in [steam.md](steam.md). `workshopValidate`
+checks a `.ship.json` on every build. `workshopPublish` submits a new
+private item only while a Steam session is up.
 
 ## Build & run
 

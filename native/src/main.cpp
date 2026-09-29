@@ -4,6 +4,8 @@
 // self-tests and Test Sloop stats. steam_platform init / pump / shutdown
 // run every session; without the optional Steamworks SDK they are local stubs.
 // Ship cloud sync runs once after init and again from the "Sync ships" button.
+// "Validate ship for Workshop" writes the current ship as .ship.json and
+// checks it. "Publish" submits only while a Steam session is up.
 //
 // Run with `--frames N` to auto-exit after N frames (scripted verification);
 // otherwise runs until the window is closed or Escape is pressed.
@@ -28,7 +30,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace {
@@ -39,6 +44,53 @@ constexpr uint16_t kImGuiView = 200;
 
 // Sun direction (must match the lighting in the shaders).
 constexpr float kSunX = 0.42f, kSunY = 0.68f, kSunZ = -0.55f;
+
+std::string workshopShipFileName(const std::string& displayName) {
+    std::string base;
+    base.reserve(displayName.size());
+    for (unsigned char c : displayName) {
+        if (c < 0x20 || c == 0x7f) continue;
+        switch (c) {
+        case '/':
+        case '\\':
+        case ':':
+        case '*':
+        case '?':
+        case '"':
+        case '<':
+        case '>':
+        case '|':
+            base.push_back('_');
+            break;
+        default:
+            base.push_back(static_cast<char>(c));
+            break;
+        }
+    }
+    if (base.find("..") != std::string::npos) {
+        for (char& ch : base) {
+            if (ch == '.') ch = '_';
+        }
+    }
+    while (!base.empty() && (base.back() == ' ' || base.back() == '.')) base.pop_back();
+    if (base.empty()) base = "ship";
+    constexpr std::size_t kSuffix = sizeof(".ship.json") - 1;
+    if (base.size() + kSuffix > 128) base.resize(128 - kSuffix);
+    return base + ".ship.json";
+}
+
+// Write the live ship into user_ships and return that path. Workshop checks
+// read the file; they do not publish it.
+std::string saveCurrentShipForWorkshop(const sea::Ship& ship) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path dir(steam_platform::userShipsRoot());
+    fs::create_directories(dir, ec);
+    const fs::path path = dir / workshopShipFileName(ship.display_name);
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (out) out << sea::toShipJson(ship);
+    return path.string();
+}
 
 void* nativeWindowHandle(SDL_Window* w) {
 #if defined(_WIN32)
@@ -637,7 +689,7 @@ int main(int argc, char** argv) {
 
         if (!hideUI) {
         ImGui::SetNextWindowPos(ImVec2(24, 24), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2(440, 460), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(440, 520), ImGuiCond_FirstUseEver);
         ImGui::Begin("Sea Trial - Milestone 0"); // ASCII: default ImGui font has no em-dash glyph
         ImGui::TextUnformatted("Engineless native C++ build");
         ImGui::Text("Renderer: %s", bgfx::getRendererName(bgfx::getRendererType()));
@@ -650,6 +702,32 @@ int main(int argc, char** argv) {
         ImGui::TextWrapped("Ships folder: %s", steam_platform::userShipsRoot().c_str());
         if (ImGui::Button("Sync ships")) steam_platform::cloudSyncUserShips();
         ImGui::TextDisabled("%s", steam_platform::cloudSyncMessage().c_str());
+        if (ImGui::Button("Validate ship for Workshop")) {
+            steam_platform::workshopValidate(saveCurrentShipForWorkshop(ship));
+        }
+        if (steam_platform::isSteam()) {
+            ImGui::SameLine();
+            if (ImGui::Button("Publish")) {
+                steam_platform::workshopPublish(saveCurrentShipForWorkshop(ship));
+            }
+        } else {
+            ImGui::SameLine();
+            ImGui::BeginDisabled();
+            ImGui::Button("Publish (Steam off)");
+            ImGui::EndDisabled();
+        }
+        if (!steam_platform::workshopMessage().empty()) {
+            const steam_platform::HookResult workshopResult = steam_platform::lastWorkshopResult();
+            const ImVec4 workshopCol = workshopResult == steam_platform::HookResult::Ok
+                ? kGreen
+                : workshopResult == steam_platform::HookResult::Failed
+                    ? kRed
+                    : ImVec4(0.75f, 0.75f, 0.75f, 1.0f);
+            ImGui::PushStyleColor(ImGuiCol_Text, workshopCol);
+            ImGui::TextWrapped("%s", steam_platform::workshopMessage().c_str());
+            ImGui::PopStyleColor();
+        }
+        ImGui::TextDisabled("Validate checks this ship. Publish sends it only while Steam is on.");
         ImGui::TextColored(stats.sinking ? kRed : kGreen, stats.sinking ? "Status: SINKING" : "Status: afloat");
         if (captured)      ImGui::TextColored(kGreen, ">>> PRIZE TAKEN - enemy boarded & captured <<<");
         else if (enemyGone) ImGui::TextColored(kGreen, ">>> ENEMY SUNK <<<");

@@ -31,7 +31,7 @@ Master list. Per-mode subsets live inline in [sail-mode.md](sail-mode.md) (Sail)
 
 ## Ship transfer & Workshop
 - Versioned ship file format with forward/backward compatibility across game updates — see [interop.md](interop.md)
-- Workshop validation thresholds (max piece count, max bounding box, max file size) — exact numbers TBD
+- Workshop validation thresholds (max piece count, max bounding box, max file size) — shipping numbers TBD. The native prototype caps, and what publish does versus a local check, are in [native/steam.md](native/steam.md).
 - Crossplay if non-Steam platforms come later
 
 ## Water / buoyancy / physics

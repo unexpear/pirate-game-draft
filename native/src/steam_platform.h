@@ -10,12 +10,13 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace steam_platform {
 
 // Result of a façade call.
 enum class HookResult {
-    Unimplemented, // named, not built yet (Workshop)
+    Unimplemented, // ran as far as this build can (Workshop submit with no session)
     Ok,
     Failed,
 };
@@ -103,10 +104,47 @@ std::string cloudObjectName(const std::string& basename);
 // and return true. Other cloud files are ignored.
 bool cloudObjectBasename(const std::string& cloudName, std::string& basename);
 
-// TODO: Workshop upload/download gate (interop.md: piece cap, bounds, file
-// size, must float, helm + sails), run on upload and on download.
-// No network in this slice — always Unimplemented. `shipPath` is the local
-// ship file the future check will read.
-HookResult workshopValidate(const std::string& shipPath);
+// One file-level or structural problem from a Workshop check.
+// `code` is stable (MISSING_HELM, FILE_TOO_LARGE, NOT_SUBMITTED, …).
+// `message` is safe to show in the debug panel.
+struct WorkshopIssue {
+    std::string code;
+    std::string message;
+};
+
+// Local half of "validated on upload and on download" (interop.md).
+// Reads a `.ship.json`, then runs the ship validator: schema, pieces, helm,
+// sails, mass, volume, float, piece cap, bounds, plus a 1 MiB file-size gate.
+//
+// Ok — the file passed. `code` is "OK". Warnings may still be set.
+// Failed — `code` is the first error. `errors` lists every code.
+// Does not publish, and does not return Unimplemented.
+struct WorkshopValidateResult {
+    HookResult result = HookResult::Failed;
+    std::string code;
+    std::string message;
+    std::vector<WorkshopIssue> errors;
+    std::vector<WorkshopIssue> warnings;
+};
+
+WorkshopValidateResult workshopValidate(const std::string& shipPath);
+
+// Validate, then submit only when a Steam session is up.
+//
+// Failed — the local check failed, or a live submit failed. Nothing new is
+// published when the check fails.
+// Unimplemented — the check passed and this process has no Steam session.
+// `code` is "NOT_SUBMITTED". Nothing was published.
+// Ok — a live session created one new private Workshop item. `code` is
+// "PUBLISHED". This slice does not remember the item id, so the next call
+// creates another item.
+WorkshopValidateResult workshopPublish(const std::string& shipPath);
+
+// One line from the last workshopValidate or workshopPublish. Empty until
+// the first call.
+std::string workshopMessage();
+
+// Result of that same call. Unimplemented until the first call.
+HookResult lastWorkshopResult();
 
 } // namespace steam_platform
