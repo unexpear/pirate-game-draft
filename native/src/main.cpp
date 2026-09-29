@@ -132,15 +132,16 @@ int main(int argc, char** argv) {
     //   --pos <x> <z>        initial ship world position (framing)
     //   --head <rad>         initial ship heading
     //   --shot-frames <n>    frames to render before capture (default 90, lets waves settle)
-    //   --foot helm|deck|plank|dock|swim
+    //   --foot helm|deck|plank|dock|swim|town
     //                    pose the body (follow cam). plank: --scene build --walk --foot plank
     //                    dock:  --foot dock --pos -2 70   (pier 2, just south of the quay)
     //                    swim:  --foot swim            (in the water off the starboard rail)
+    //                    town:  --foot town --pos 0 55 (harbour street, stair lane, ship in the harbour)
     std::string shotPath;
     std::string shotScene = "sail";
     float shotPosX = 0.0f, shotPosZ = 0.0f, shotHead = 0.0f;
     bool shotWalk = false;
-    const char* shotFoot = "";          // --foot helm|deck|plank|dock|swim
+    const char* shotFoot = "";          // --foot helm|deck|plank|dock|swim|town
     int shotFrames = 90;
     float shotCam[6] = { 0, 0, 0, 0, 0, 0 }; // --cam ex ey ez  ax ay az (scene space free camera)
     bool useCam = false;
@@ -393,6 +394,14 @@ int main(int argc, char** argv) {
         foot.mode = sea::ControlMode::Foot;
         foot.surface = sea::FootSurface::Water;
         foot.x = 3.5; foot.z = 0.6; foot.face = -1.5707963; foot.camBlend = 1.0;
+        footInited = true;
+    } else if (shotMode && std::strcmp(shotFoot, "town") == 0) {
+        // Island-local (-4, -32): the stair lane on the harbour street, facing the plaza.
+        foot.mode = sea::ControlMode::Foot;
+        foot.surface = sea::FootSurface::Ground;
+        foot.face = 0.0; foot.camBlend = 1.0;
+        foot.x = double(islandX - 4.0f - worldX);
+        foot.z = double(islandZ - 32.0f - worldZ);
         footInited = true;
     }
     const int shotAt = shotMode ? (maxFrames > 3 ? maxFrames - 3 : 0) : -1; // request a few frames before exit
@@ -647,9 +656,10 @@ int main(int argc, char** argv) {
         }
         wasBuildMode = buildMode;
 
-        // On foot: deck (ship-local, rides the hull), gangplank, dock, beach, or
-        // the water. The same step runs in the yard and at sea; the yard has no
-        // swim, and at sea the beach is the sand at the waterline.
+        // On foot: deck (ship-local, rides the hull), gangplank, dock, beach,
+        // harbour streets, or the water. The same step runs in the yard and at
+        // sea; the yard has no swim. At sea the beach is the sand at the
+        // waterline, and the port streets run inland of the quay.
         const sea::DeckFrame deck = sea::deckFrameFor(ship);
         sea::BerthRect berths[sea::kHarbourBerthCount];
         sea::harbourBerths(berths);
@@ -681,6 +691,7 @@ int main(int argc, char** argv) {
             bodyWorld.berthCount = sea::kHarbourBerthCount;
             bodyWorld.swim = true;
             bodyWorld.shore = true;
+            bodyWorld.town = true;
             // Wave under the body. Deck x/z are ship-local, so sample at the hull
             // until the step (or the previous one) has you in scene space.
             {
@@ -772,7 +783,9 @@ int main(int argc, char** argv) {
                 && !bodyWorld.plank.deployed)
                 ImGui::TextDisabled("Step off the rail to swim, or come alongside a pier.");
             if (!buildMode && foot.surface == sea::FootSurface::Water)
-                ImGui::TextDisabled("Swim into the hull, a pier, or the beach to climb out.");
+                ImGui::TextDisabled("Swim into the hull, a pier, a slipway, or the beach to climb out.");
+            if (!buildMode && foot.surface == sea::FootSurface::Ground)
+                ImGui::TextDisabled("Harbour streets run past the quay. Buildings stop you; the hill above the plaza is closed.");
         }
         if (ImGui::CollapsingHeader("Build mode", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Checkbox("Guided assembly (freeze & build)", &buildMode);

@@ -252,11 +252,12 @@ ShipConfig enemyConfigForLevel(int level);
 // --- Seamless ship <-> foot -------------------------------------------------
 // One body, two ways to drive it. At the helm the chase camera and the sail
 // gearbox are in charge. On foot the same body walks the deck, a gangplank, the
-// dock, or the beach, and can step off any of those into the water and climb
-// back out. Deck coordinates are ship-local, so a fixed footing rides the hull
-// through heave, pitch, heel, and yaw instead of sliding off as she rolls.
-// Swimming is scene-space, like the dock: the hull is moored so the sea doesn't
-// scroll out from under you.
+// dock, the beach, or the harbour streets, and can step off the deck, a pier,
+// the beach, or a slipway into the water and climb back out. Deck coordinates
+// are ship-local, so a fixed footing rides the hull through heave, pitch, heel,
+// and yaw instead of sliding off as she rolls. Swimming and the port are
+// scene-space, like the dock: the hull is moored so the sea doesn't scroll out
+// from under you.
 //
 // The ship-local -> scene transform matches bx::mtxSRT (rotation ZYX, column
 // vectors): local +Z is the bow, local +X is starboard. Positive pitch lifts
@@ -343,14 +344,19 @@ struct FootWorld {
     double berthToSceneX = 0, berthToSceneZ = 0;
     const BerthRect* berths = nullptr;
     int berthCount = 0;
-    // When set, stepping off the deck, a berth, or the beach enters the water
-    // instead of being clamped. Off in the yard: the dry dock is not the sea.
+    // When set, stepping off the deck, a berth, the beach, or a slipway enters
+    // the water instead of being clamped. Off in the yard: the dry dock is not the sea.
     bool swim = false;
     // Beach ring around the island, in the same frame as the berths (island-local
     // plus berthToScene). `shoreBeach` is how many metres of sand inland of the
-    // waterline you may walk. Deeper than that is the town — blocked, not this slice.
+    // waterline you may walk. Deeper than that is closed, unless `town` is set.
     bool shore = false;
     double shoreBeach = 8.0;
+    // Harbour streets past the quay: the port row, the plaza up to its north
+    // edge, and the shipyard apron, minus building footprints. Off in the yard,
+    // and off unless the caller is at the island port. The hill above the plaza
+    // is not part of the rect — that bound is where this walk ends.
+    bool town = false;
     double waterY = 0.0; // scene-space surface under the body (calm sea, or a wave sample)
 };
 
@@ -367,6 +373,20 @@ PlankSpec yardGangplank(const DeckFrame& deck);
 // feetY is the unlifted top; scenery sitting on the beach adds its own lift.
 constexpr int kHarbourBerthCount = 4;
 void harbourBerths(BerthRect out[kHarbourBerthCount]);
+
+// Port walk, island-local, matching the town in ship_view. Streets with
+// feetY < 0 stand on the terrain (island_shape::heightAt). feetY >= 0 is a
+// flat deck top before the centre of that rect is lifted by the ground, the
+// same way a pier box is. Solids are building footprints, already padded so
+// the body stops outside the wall.
+constexpr int kTownStreetCount = 3;
+constexpr int kTownSolidCount = 16;
+void townStreets(BerthRect out[kTownStreetCount]);
+void townSolids(BerthRect out[kTownSolidCount]);
+// Rect membership only. A step also requires dry ground (or a slip deck above
+// the sand) and rejects any solid.
+bool townStreetContains(double x, double z);
+bool townSolidContains(double x, double z);
 
 // Nearest point on the berth set. Distance is in the same frame as x/z.
 // Returns a large value when there are no berths.

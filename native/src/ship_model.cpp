@@ -855,6 +855,101 @@ void harbourBerths(BerthRect out[kHarbourBerthCount]) {
     out[3] = { 22.0, -52.0, 2.25, 13.0, 1.50 };
 }
 
+static void putRect(BerthRect& b, double x0, double z0, double x1, double z1, double feetY) {
+    b.cx = (x0 + x1) * 0.5;
+    b.cz = (z0 + z1) * 0.5;
+    b.hx = std::fabs(x1 - x0) * 0.5;
+    b.hz = std::fabs(z1 - z0) * 0.5;
+    b.feetY = feetY;
+}
+
+static bool rectHas(const BerthRect& b, double x, double z) {
+    return std::fabs(x - b.cx) <= b.hx + 1e-9 && std::fabs(z - b.cz) <= b.hz + 1e-9;
+}
+
+// House footprint from ship_view::house(cx, cz, w, d), padded so the body
+// centre stops short of the wall face. The wall panels sit on the footprint
+// edge; 0.45 m clears the torso.
+static void putHouse(BerthRect& b, double cx, double cz, double w, double d) {
+    const double pad = 0.45;
+    putRect(b, cx - w * 0.5 - pad, cz - d * 0.5 - pad, cx + w * 0.5 + pad, cz + d * 0.5 + pad, 0.0);
+}
+
+void townStreets(BerthRect out[kTownStreetCount]) {
+    // One ground rect for the port, not the island. South overlaps the quay's
+    // landward lip so you step off the stone onto the street. North stops at
+    // the plaza edge (the trades terrace and the fort are above that). East
+    // takes in the graded shipyard pad; west stops at the forge.
+    // feetY < 0: sample the terrain. A point in this rect still has to clear
+    // the waterline (see townStreetFeet) and the solids.
+    putRect(out[0], -46.5, -36.6, 70.0, -2.15, -1.0);
+    // Slipways, same boxes as the yard mesh. Top is 1.4 + 0.4 before ground lift.
+    // B(52, 1.4, -32, 9, 0.8, 32) and B(63, 1.4, -30, 9, 0.8, 28).
+    putRect(out[1], 47.5, -48.0, 56.5, -16.0, 1.8);
+    putRect(out[2], 58.5, -44.0, 67.5, -16.0, 1.8);
+}
+
+void townSolids(BerthRect out[kTownSolidCount]) {
+    // Harbourfront row, west to east. Centres match house() in ship_view.
+    putHouse(out[0], -42, -25, 12, 9);   // forge
+    putHouse(out[1], -26, -24, 13, 11);  // King's bonded warehouse
+    putHouse(out[2], -12, -25, 11, 9);   // trading post
+    putHouse(out[3], 5, -25, 13, 10);    // custom house + lookout
+    putHouse(out[4], 20, -25, 10, 9);    // chandlery
+    // Tavern body plus the gallery, which stands ~2.7 m south of the front.
+    putRect(out[5], 28.05, -33.15, 43.95, -17.55, 0.0);
+    // Church plinth (nave + campanile): seat(12.55, -7.9, 15.9, 13.8).
+    putRect(out[6], 4.15, -15.25, 20.95, -0.55, 0.0);
+    putHouse(out[7], -36, -7, 12, 9);    // counting house
+    putHouse(out[8], 26, -12, 9, 8);     // the Drowned Man
+    putHouse(out[9], 37, -11, 8, 7);     // the Fence
+    putHouse(out[10], 38, -2, 9, 8);     // sail loft
+    // Great ship hall: seat(58, -2, 20, 26). Stops you at the doors.
+    putRect(out[11], 47.5, -15.5, 68.5, 11.5, 0.0);
+    // Stone well and market cross in the open square.
+    putRect(out[12], -27.4, -8.9, -23.6, -5.1, 0.0);
+    putRect(out[13], -23.15, -7.15, -18.85, -2.85, 0.0);
+    // Plaza retaining wall, either side of the Grand Stair (the gap is the way up).
+    putRect(out[14], -44.2, -16.95, -6.55, -16.15, 0.0);
+    putRect(out[15], -0.35, -16.95, 20.2, -16.15, 0.0);
+}
+
+bool townStreetContains(double x, double z) {
+    BerthRect streets[kTownStreetCount];
+    townStreets(streets);
+    for (const BerthRect& b : streets) if (rectHas(b, x, z)) return true;
+    return false;
+}
+
+bool townSolidContains(double x, double z) {
+    BerthRect solids[kTownSolidCount];
+    townSolids(solids);
+    for (const BerthRect& b : solids) if (rectHas(b, x, z)) return true;
+    return false;
+}
+
+// Terrain under a street must be dry ground. Slip decks count until the graded
+// pad has risen over the timber; then the yard surface wins so you are not
+// left inside the hill.
+static bool townStreetFeet(double x, double z, double& y) {
+    BerthRect streets[kTownStreetCount];
+    townStreets(streets);
+    for (const BerthRect& b : streets) {
+        if (b.feetY < 0.0 || !rectHas(b, x, z)) continue;
+        const double deckY = b.feetY + std::max(0.0, double(island_shape::heightAt(float(b.cx), float(b.cz))));
+        const double ground = island_shape::heightAt(float(x), float(z));
+        if (ground <= deckY + 0.35) { y = deckY; return true; }
+    }
+    for (const BerthRect& b : streets) {
+        if (b.feetY >= 0.0 || !rectHas(b, x, z)) continue;
+        const double ground = island_shape::heightAt(float(x), float(z));
+        if (ground < 0.40) continue;
+        y = std::max(0.02, ground);
+        return true;
+    }
+    return false;
+}
+
 double nearestBerth(const BerthRect* berths, int count, double x, double z,
                     double& outX, double& outZ, double& outY) {
     if (!berths || count <= 0) { outX = x; outZ = z; outY = 0.0; return 1.0e9; }
@@ -946,8 +1041,8 @@ static double sceneMoveYawFromLocal(double localFace, double heading) {
     return localFace - heading;
 }
 
-// Where a ground step is allowed to stand. Land is the town (and the dry-dock
-// apron): solid, but not this slice's walk. Sea is swimmable.
+// Where a ground step is allowed to stand. Land is closed ground: a building,
+// the hill above the plaza, the dry-dock apron outside its rect. Sea is swimmable.
 enum class Stand { Sea, Walk, Land };
 
 static bool groundFeet(const FootWorld& world, double x, double z, double& y) {
@@ -961,6 +1056,10 @@ static bool groundFeet(const FootWorld& world, double x, double z, double& y) {
     const double ilx = x - world.berthToSceneX;
     const double ilz = z - world.berthToSceneZ;
     if (berthContains(world.berths, world.berthCount, ilx, ilz, y)) return true;
+    // A wall wins over the street and the sand, so you don't wade into a house
+    // that happens to sit on the beach ring.
+    if (world.town && townSolidContains(ilx, ilz)) return false;
+    if (world.town && townStreetFeet(ilx, ilz, y)) return true;
     if (world.shore) {
         const float inland = island_shape::metresInland(float(ilx), float(ilz));
         if (inland >= 0.0f && inland <= float(world.shoreBeach)) {
@@ -976,8 +1075,9 @@ static Stand standAt(const FootWorld& world, double x, double z) {
     double y = 0.0;
     if (groundFeet(world, x, z, y)) return Stand::Walk;
     if (world.yard) return Stand::Land; // the stocks apron is not the sea
+    const double ilx = x - world.berthToSceneX, ilz = z - world.berthToSceneZ;
+    if (world.town && townSolidContains(ilx, ilz)) return Stand::Land;
     if (world.shore) {
-        const double ilx = x - world.berthToSceneX, ilz = z - world.berthToSceneZ;
         if (island_shape::metresInland(float(ilx), float(ilz)) > float(world.shoreBeach))
             return Stand::Land;
     }
@@ -2070,6 +2170,120 @@ std::vector<TestResult> runSelfTest() {
                 push("Walking off the beach enters the water", false, "no beach");
                 push("Swimming back onto the beach climbs out on the sand", false, "no beach");
                 push("The beach does not open into the town", false, "no beach");
+            }
+        }
+
+        // Port streets: quay -> harbour row -> plaza, and the lane to the yard.
+        // Buildings and the hill bound are solid. The north shore stays closed.
+        {
+            BerthRect harbour[kHarbourBerthCount];
+            harbourBerths(harbour);
+            FootWorld port;
+            port.deck = deck;
+            port.swim = true;
+            port.shore = true;
+            port.town = true;
+            port.berths = harbour;
+            port.berthCount = kHarbourBerthCount;
+            auto ended = [](const ShipFoot& b) {
+                char buf[96];
+                std::snprintf(buf, sizeof(buf), "at %.2f, %.2f", b.x, b.z);
+                return std::string(buf);
+            };
+
+            push("The warehouse and the hall are solid, the stair gap is not",
+                 townSolidContains(-26.0, -24.0) && townSolidContains(58.0, -2.0)
+                 && !townSolidContains(-4.0, -24.0) && !townSolidContains(-4.0, -17.2));
+            push("The plaza is in the port and the hill above it is not",
+                 townStreetContains(-4.0, -8.0) && !townStreetContains(-4.0, 8.0)
+                 && !townStreetContains(0.0, 40.0));
+
+            ShipFoot body;
+            body.mode = ControlMode::Foot;
+            body.surface = FootSurface::Ground;
+            body.x = -4.0;
+            body.z = -38.0; // on the quay, in the stair lane between trading post and custom house
+            body.face = 0.0;
+            for (int i = 0; i < 280; ++i) stepShipFoot(body, stroke, port);
+            const FootSample inPlaza = sampleShipFoot(body, port);
+            const bool plaza = body.surface == FootSurface::Ground && body.z > -8.0 && body.z <= -2.1
+                            && std::fabs(body.x + 4.0) < 0.6 && inPlaza.y > 8.0 && inPlaza.y < 22.0;
+            push("The quay opens up the stair lane into the plaza", plaza, plaza ? "" : ended(body));
+
+            const double plazaZ = body.z;
+            for (int i = 0; i < 80; ++i) stepShipFoot(body, stroke, port);
+            const bool hillHeld = body.surface == FootSurface::Ground && body.z <= -2.05
+                               && body.z > plazaZ - 0.2 && body.z < 2.0;
+            push("The hill above the plaza stays closed", hillHeld, hillHeld ? "" : ended(body));
+
+            body.surface = FootSurface::Ground;
+            body.x = -26.0;
+            body.z = -33.0; // street in front of the bonded warehouse
+            body.face = 0.0;
+            for (int i = 0; i < 80; ++i) stepShipFoot(body, stroke, port);
+            const bool warehouse = body.surface == FootSurface::Ground && body.z < -29.6
+                                && std::fabs(body.x + 26.0) < 0.6;
+            push("The warehouse wall stops you", warehouse, warehouse ? "" : ended(body));
+
+            body.x = -34.25; // alley between the forge and the warehouse
+            body.z = -33.0;
+            body.face = 0.0;
+            for (int i = 0; i < 120; ++i) stepShipFoot(body, stroke, port);
+            const bool alley = body.surface == FootSurface::Ground && body.z > -18.3 && body.z < -16.7
+                            && body.x < -33.1 && body.x > -35.5;
+            push("The alley past the warehouse is open and the terrace wall stops you",
+                 alley, alley ? "" : ended(body));
+
+            body.x = -4.0;
+            body.z = -17.2; // back lane, south of the plaza wall, north of the row
+            body.face = PI * 0.5; // east, toward the shipyard
+            for (int i = 0; i < 420; ++i) stepShipFoot(body, stroke, port);
+            const bool yardLane = body.surface == FootSurface::Ground && body.x > 50.0
+                               && body.z < -16.4 && body.z > -17.8;
+            push("The back lane reaches the shipyard apron", yardLane, yardLane ? "" : ended(body));
+
+            body.face = 0.0; // north, into the hall doors
+            const double doorX = body.x;
+            for (int i = 0; i < 80; ++i) stepShipFoot(body, stroke, port);
+            const bool hall = body.surface == FootSurface::Ground && body.z < -15.2 && body.z > -17.6
+                           && std::fabs(body.x - doorX) < 1.0 && !townSolidContains(body.x, body.z);
+            push("The ship hall stops you at the doors", hall, hall ? "" : ended(body));
+
+            body.x = 52.0;
+            body.z = -40.0; // slipway A, over the water
+            body.face = PI;
+            const FootSample onSlip = sampleShipFoot(body, port);
+            for (int i = 0; i < 80 && body.surface != FootSurface::Water; ++i) stepShipFoot(body, stroke, port);
+            const bool slipped = body.surface == FootSurface::Water && body.z < -48.0 && onSlip.y > 1.0 && onSlip.y < 2.5;
+            push("Walking off the seaward end of a slipway enters the water",
+                 slipped, slipped ? "" : ended(body));
+
+            double nx = 0.0, nz = 0.0;
+            bool north = false;
+            for (double ang = 1.15; ang <= 2.0 && !north; ang += 0.04) {
+                for (double rad = 40.0; rad < 110.0; rad += 0.4) {
+                    const double x = std::cos(ang) * rad, z = std::sin(ang) * rad;
+                    const float inland = island_shape::metresInland(float(x), float(z));
+                    if (z < 35.0 || inland < 7.2f || inland > 7.9f) continue;
+                    double by = 0.0;
+                    if (berthContains(harbour, kHarbourBerthCount, x, z, by)) continue;
+                    if (townStreetContains(x, z)) continue;
+                    nx = x; nz = z; north = true; break;
+                }
+            }
+            if (north) {
+                const double nr = std::sqrt(nx * nx + nz * nz);
+                body.surface = FootSurface::Ground;
+                body.x = nx;
+                body.z = nz;
+                body.face = faceToward(-nx / nr, -nz / nr);
+                for (int i = 0; i < 80; ++i) stepShipFoot(body, stroke, port);
+                const float stayed = island_shape::metresInland(float(body.x), float(body.z));
+                const bool closed = body.surface == FootSurface::Ground && stayed <= float(port.shoreBeach) + 0.05f
+                                 && stayed > 6.0f;
+                push("The north shore stays closed when the port is open", closed, closed ? "" : ended(body));
+            } else {
+                push("The north shore stays closed when the port is open", false, "no north beach");
             }
         }
 
