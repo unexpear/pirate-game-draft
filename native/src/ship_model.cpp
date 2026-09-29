@@ -1,5 +1,6 @@
 // Sea Trial — native ship model (Milestone 0). Public domain (The Unlicense).
 #include "ship_model.hpp"
+#include "island_shape.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -930,6 +931,7 @@ bool footUnderWay(const ShipFoot& foot) {
 const char* shipFootLabel(const ShipFoot& foot) {
     if (foot.mode == ControlMode::Helm) return "at the helm";
     if (foot.surface == FootSurface::Plank) return "on the gangplank";
+    if (foot.surface == FootSurface::Water) return "swimming";
     if (foot.surface == FootSurface::Ground) return "ashore";
     return "on deck";
 }
@@ -942,6 +944,123 @@ static void plankEnds(const PlankSpec& plank, const FootWorld& world,
 static double sceneMoveYawFromLocal(double localFace, double heading) {
     // Mesh yaw sends local (sin f, cos f) to scene (sin(f - h), cos(f - h)).
     return localFace - heading;
+}
+
+// Where a ground step is allowed to stand. Land is the town (and the dry-dock
+// apron): solid, but not this slice's walk. Sea is swimmable.
+enum class Stand { Sea, Walk, Land };
+
+static bool groundFeet(const FootWorld& world, double x, double z, double& y) {
+    if (world.yard) {
+        if (x >= world.yardMinX && x <= world.yardMaxX && z >= world.yardMinZ && z <= world.yardMaxZ) {
+            y = world.yardFeetY;
+            return true;
+        }
+        return false;
+    }
+    const double ilx = x - world.berthToSceneX;
+    const double ilz = z - world.berthToSceneZ;
+    if (berthContains(world.berths, world.berthCount, ilx, ilz, y)) return true;
+    if (world.shore) {
+        const float inland = island_shape::metresInland(float(ilx), float(ilz));
+        if (inland >= 0.0f && inland <= float(world.shoreBeach)) {
+            // A couple of centimetres so the soles sit on the sand, not in it.
+            y = std::max(0.02, double(island_shape::heightAt(float(ilx), float(ilz))));
+            return true;
+        }
+    }
+    return false;
+}
+
+static Stand standAt(const FootWorld& world, double x, double z) {
+    double y = 0.0;
+    if (groundFeet(world, x, z, y)) return Stand::Walk;
+    if (world.yard) return Stand::Land; // the stocks apron is not the sea
+    if (world.shore) {
+        const double ilx = x - world.berthToSceneX, ilz = z - world.berthToSceneZ;
+        if (island_shape::metresInland(float(ilx), float(ilz)) > float(world.shoreBeach))
+            return Stand::Land;
+    }
+    return Stand::Sea;
+}
+
+static void enterWater(ShipFoot& foot, double sx, double sz, double sceneFace) {
+    foot.surface = FootSurface::Water;
+    foot.x = sx;
+    foot.z = sz;
+    foot.face = sceneFace;
+}
+
+// Step off the walkable deck into the sea, just outside the hull skin so the
+// body isn't left inside the mesh. Facing stays the way you were walking.
+static void dropOffDeck(ShipFoot& foot, const FootWorld& world, double ox, double oz) {
+    const DeckFrame& deck = world.deck;
+    const double hx = std::max(0.4, deck.beam * 0.5);
+    const double hz = std::max(0.4, deck.length * 0.5);
+    double dx = ox, dz = oz;
+    double len = std::sqrt(dx * dx + dz * dz);
+    if (len < 1e-4) {
+        dx = std::sin(foot.face);
+        dz = std::cos(foot.face);
+        len = 1.0;
+    }
+    const double ux = dx / len, uz = dz / len;
+    const double tx = std::fabs(ux) > 1e-6 ? hx / std::fabs(ux) : 1.0e9;
+    const double tz = std::fabs(uz) > 1e-6 ? hz / std::fabs(uz) : 1.0e9;
+    const double clear = std::min(tx, tz) + 0.65; // past the skin, room for the body
+    double sx, sy, sz;
+    shipLocalToScene(ux * clear, 0.0, uz * clear, world.pose, sx, sy, sz);
+    (void)sy;
+    enterWater(foot, sx, sz, sceneMoveYawFromLocal(foot.face, world.pose.heading));
+}
+
+// Haul up onto the deck when the stroke carries you into the hull and the
+// freeboard is one a person can reach. Swimming away leaves you in the water.
+static bool climbHull(ShipFoot& foot, const FootWorld& world, double moveSign) {
+    const DeckFrame& deck = world.deck;
+    const double hx = std::max(0.4, deck.beam * 0.5);
+    const double hz = std::max(0.4, deck.length * 0.5);
+    double lx, ly, lz;
+    sceneToShipLocal(foot.x, world.waterY, foot.z, world.pose, lx, ly, lz);
+    (void)ly;
+    const double ax = std::fabs(lx) - hx;
+    const double az = std::fabs(lz) - hz;
+    double outside;
+    if (ax <= 0.0 && az <= 0.0) outside = -std::min(hx - std::fabs(lx), hz - std::fabs(lz));
+    else if (ax > 0.0 && az > 0.0) outside = std::sqrt(ax * ax + az * az);
+    else outside = std::max(ax, az);
+    if (outside > 1.25) return false;
+
+    const double qx = clampd(lx, -hx, hx);
+    const double qz = clampd(lz, -hz, hz);
+    double cx, cy, cz;
+    shipLocalToScene(qx, deck.deckY, qz, world.pose, cx, cy, cz);
+    if (cy - world.waterY > 8.0) return false; // stocks-high: you cannot reach the rail
+
+    const double tdx = cx - foot.x, tdz = cz - foot.z;
+    const double td = std::sqrt(tdx * tdx + tdz * tdz);
+    if (outside > 0.0 && td > 0.05) {
+        const double toward = (std::sin(foot.face) * moveSign * tdx
+                             + std::cos(foot.face) * moveSign * tdz) / td;
+        if (toward < 0.35) return false;
+    }
+
+    double fx = clampd(lx, -deck.halfBeam, deck.halfBeam);
+    double fz = clampd(lz, -deck.halfLength, deck.halfLength);
+    if (std::fabs(lx) > deck.halfBeam || std::fabs(lz) > deck.halfLength) {
+        const double ix = -fx, iz = -fz;
+        const double il = std::sqrt(ix * ix + iz * iz);
+        if (il > 1e-4) {
+            fx = clampd(fx + ix / il * 0.45, -deck.halfBeam, deck.halfBeam);
+            fz = clampd(fz + iz / il * 0.45, -deck.halfLength, deck.halfLength);
+        }
+    }
+    foot.surface = FootSurface::Deck;
+    foot.x = fx;
+    foot.z = fz;
+    foot.face += world.pose.heading; // scene move-yaw -> ship-local
+    foot.plankT = 1.0;
+    return true;
 }
 
 void stepShipFoot(ShipFoot& foot, const FootInput& in, const FootWorld& world) {
@@ -977,6 +1096,8 @@ void stepShipFoot(ShipFoot& foot, const FootInput& in, const FootWorld& world) {
         const double dx = ox - world.plank.deckLocalX, dz = oz - world.plank.deckLocalZ;
         if (world.plank.deployed && outside && dx * dx + dz * dz < 1.3 * 1.3) {
             mountPlank(1.0);
+        } else if (world.swim && outside && std::fabs(in.move) > 0.2) {
+            dropOffDeck(foot, world, ox, oz);
         } else {
             foot.x = clampd(ox, -deck.halfBeam, deck.halfBeam);
             foot.z = clampd(oz, -deck.halfLength, deck.halfLength);
@@ -1028,22 +1149,59 @@ void stepShipFoot(ShipFoot& foot, const FootInput& in, const FootWorld& world) {
         return;
     }
 
+    // Water. Scene space, slower than a walk. A stroke onto sand or a berth
+    // climbs out; a stroke into the hull hauls you onto the deck.
+    if (foot.surface == FootSurface::Water) {
+        const double moveSign = in.move >= 0.0 ? 1.0 : -1.0;
+        const double sx = foot.x + std::sin(foot.face) * in.move * kSwimSpeed * dt;
+        const double sz = foot.z + std::cos(foot.face) * in.move * kSwimSpeed * dt;
+        const Stand dest = standAt(world, sx, sz);
+        if (std::fabs(in.move) > 0.05 && dest == Stand::Walk) {
+            foot.surface = FootSurface::Ground;
+            foot.x = sx;
+            foot.z = sz;
+            return;
+        }
+        if (dest == Stand::Land) {
+            // Don't swim through the island. A short probe still finds the sand
+            // if a long frame would have jumped the beach into the town.
+            const double probe = std::min(0.45, kSwimSpeed * dt);
+            const double px = foot.x + std::sin(foot.face) * in.move * probe;
+            const double pz = foot.z + std::cos(foot.face) * in.move * probe;
+            if (std::fabs(in.move) > 0.05 && standAt(world, px, pz) == Stand::Walk) {
+                foot.surface = FootSurface::Ground;
+                foot.x = px;
+                foot.z = pz;
+                return;
+            }
+            if (standAt(world, sx, foot.z) != Stand::Land) foot.x = sx;
+            else if (standAt(world, foot.x, sz) != Stand::Land) foot.z = sz;
+            return;
+        }
+        if (std::fabs(in.move) > 0.2 && climbHull(foot, world, moveSign)) return;
+        foot.x = sx;
+        foot.z = sz;
+        return;
+    }
+
     // Ground.
     const double nx = foot.x + std::sin(foot.face) * in.move * walkSpeed * dt;
     const double nz = foot.z + std::cos(foot.face) * in.move * walkSpeed * dt;
-    auto onGround = [&](double gx, double gz) {
-        if (world.yard)
-            return gx >= world.yardMinX && gx <= world.yardMaxX && gz >= world.yardMinZ && gz <= world.yardMaxZ;
+    auto walkable = [&](double gx, double gz) {
         double y = 0.0;
-        const double ilx = gx - world.berthToSceneX, ilz = gz - world.berthToSceneZ;
-        return berthContains(world.berths, world.berthCount, ilx, ilz, y);
+        return groundFeet(world, gx, gz, y);
     };
-    if (onGround(nx, nz)) { foot.x = nx; foot.z = nz; }
-    else if (onGround(nx, foot.z)) foot.x = nx;
-    else if (onGround(foot.x, nz)) foot.z = nz;
-    else if (!onGround(foot.x, foot.z)) {
-        // Washed off a rect (or just stepped off the plank onto its outer edge
-        // that the nudge missed): snap back onto the nearest walkable point.
+    bool intoSea = false;
+    if (walkable(nx, nz)) { foot.x = nx; foot.z = nz; }
+    else if (walkable(nx, foot.z) && std::fabs(nx - foot.x) > 1e-9) foot.x = nx;
+    else if (walkable(foot.x, nz) && std::fabs(nz - foot.z) > 1e-9) foot.z = nz;
+    else if (!walkable(foot.x, foot.z)) {
+        // Already off the walk. At sea that means you're swimming; on the
+        // stocks or inland, snap back so a bad step can't soft-lock you.
+        if (world.swim && standAt(world, foot.x, foot.z) == Stand::Sea) {
+            enterWater(foot, foot.x, foot.z, foot.face);
+            return;
+        }
         if (world.yard) {
             foot.x = clampd(foot.x, world.yardMinX, world.yardMaxX);
             foot.z = clampd(foot.z, world.yardMinZ, world.yardMaxZ);
@@ -1054,6 +1212,8 @@ void stepShipFoot(ShipFoot& foot, const FootInput& in, const FootWorld& world) {
             foot.x = qx + world.berthToSceneX;
             foot.z = qz + world.berthToSceneZ;
         }
+    } else if (world.swim && std::fabs(in.move) > 0.2 && standAt(world, nx, nz) == Stand::Sea) {
+        intoSea = true;
     }
 
     if (world.plank.deployed && in.move > 0.2) {
@@ -1062,8 +1222,10 @@ void stepShipFoot(ShipFoot& foot, const FootInput& in, const FootWorld& world) {
         if (dx * dx + dz * dz < 1.25 * 1.25 && toDeck > 0.0) {
             foot.surface = FootSurface::Plank;
             foot.plankT = 0.0;
+            return;
         }
     }
+    if (intoSea) enterWater(foot, nx, nz, foot.face);
 }
 
 void stepCameraHandoff(ShipFoot& foot, double dt) {
@@ -1096,20 +1258,27 @@ FootSample sampleShipFoot(const ShipFoot& foot, const FootWorld& world) {
         s.renderYaw = renderYawFromMove(s.moveYaw);
         return s;
     }
+    if (foot.surface == FootSurface::Water) {
+        s.x = foot.x;
+        s.z = foot.z;
+        s.y = world.waterY - kSwimDraft;
+        s.moveYaw = foot.face;
+        s.renderYaw = renderYawFromMove(s.moveYaw);
+        return s;
+    }
     s.x = foot.x;
     s.z = foot.z;
     s.moveYaw = foot.face;
     s.renderYaw = renderYawFromMove(s.moveYaw);
-    if (world.yard) {
-        s.y = world.yardFeetY;
-    } else {
-        double y = world.yardFeetY;
+    double gy = 0.0;
+    if (groundFeet(world, foot.x, foot.z, gy)) s.y = gy;
+    else if (world.yard) s.y = world.yardFeetY;
+    else {
+        gy = world.yardFeetY;
         const double ilx = foot.x - world.berthToSceneX, ilz = foot.z - world.berthToSceneZ;
-        if (!berthContains(world.berths, world.berthCount, ilx, ilz, y)) {
-            double qx, qz;
-            nearestBerth(world.berths, world.berthCount, ilx, ilz, qx, qz, y);
-        }
-        s.y = y;
+        double qx, qz;
+        nearestBerth(world.berths, world.berthCount, ilx, ilz, qx, qz, gy);
+        s.y = gy;
     }
     return s;
 }
@@ -1667,8 +1836,260 @@ std::vector<TestResult> runSelfTest() {
         ShipFoot onDeck;
         onDeck.mode = ControlMode::Foot;
         onDeck.surface = FootSurface::Deck;
-        push("The ship keeps way on deck and is moored ashore",
-             footUnderWay(ShipFoot{}) && footUnderWay(onDeck) && !footUnderWay(ashore));
+        ShipFoot swimming;
+        swimming.mode = ControlMode::Foot;
+        swimming.surface = FootSurface::Water;
+        push("The ship keeps way on deck and is moored ashore or swimming",
+             footUnderWay(ShipFoot{}) && footUnderWay(onDeck)
+             && !footUnderWay(ashore) && !footUnderWay(swimming));
+        push("A swimmer is labelled swimming",
+             std::string(shipFootLabel(swimming)) == "swimming");
+
+        // --- Swimming: enter, move, climb out. No soft-lock. -----------------
+        push("The island centre is land and deep water is offshore",
+             island_shape::metresInland(0.0f, 0.0f) > 20.0f
+             && island_shape::metresInland(0.0f, -140.0f) < -10.0f);
+
+        auto faceToward = [](double dx, double dz) { return std::atan2(dx, dz); };
+        FootInput stroke;
+        stroke.move = 1.0;
+        stroke.dt = 0.05;
+
+        // Deck -> water -> deck, including heel and yaw so the body clears the skin.
+        {
+            const auto climbWaves = makeWaveField("swim-climb");
+            const FloatPose ridden = computeFloatPose(sloop, climbWaves, 2.0);
+            FootWorld sea;
+            sea.deck = deck;
+            sea.swim = true;
+            sea.waterY = 0.0;
+            sea.pose.heaveY = ridden.heaveY;
+            sea.pose.heading = 0.8;
+            sea.pose.heel = 0.12;
+            sea.pose.pitch = -0.05;
+            ShipFoot body;
+            body.mode = ControlMode::Foot;
+            body.surface = FootSurface::Deck;
+            body.x = deck.halfBeam - 0.05;
+            body.z = 0.4;
+            body.face = PI * 0.5; // starboard, off the rail
+            for (int i = 0; i < 8 && body.surface != FootSurface::Water; ++i) stepShipFoot(body, stroke, sea);
+            const FootSample wet = sampleShipFoot(body, sea);
+            const double outR = std::sqrt(wet.x * wet.x + wet.z * wet.z);
+            push("Walking off the rail enters the water beside the hull",
+                 body.surface == FootSurface::Water && near(wet.y, sea.waterY - kSwimDraft, 1e-6)
+                 && outR > deck.beam * 0.5);
+            const double leftFace = body.face;
+            for (int i = 0; i < 12; ++i) stepShipFoot(body, stroke, sea);
+            const double awayR = std::sqrt(body.x * body.x + body.z * body.z);
+            push("Swimming away from the hull does not haul you back aboard",
+                 body.surface == FootSurface::Water && awayR > outR + 0.4);
+            body.face = leftFace + PI;
+            bool boarded = false;
+            for (int i = 0; i < 80 && body.surface != FootSurface::Deck; ++i) stepShipFoot(body, stroke, sea);
+            boarded = body.surface == FootSurface::Deck
+                   && std::fabs(body.x) <= deck.halfBeam + 1e-6
+                   && std::fabs(body.z) <= deck.halfLength + 1e-6;
+            const FootSample back = sampleShipFoot(body, sea);
+            push("Swimming back into the hull climbs onto the deck",
+                 boarded && back.y > wet.y + 0.8);
+            FootInput grab;
+            grab.dt = 0.016;
+            grab.takeHelm = true;
+            body.surface = FootSurface::Water;
+            body.mode = ControlMode::Foot;
+            body.x = 1.0;
+            body.z = 0.0;
+            stepShipFoot(body, grab, sea);
+            push("The wheel is out of reach while you are swimming",
+                 body.mode == ControlMode::Foot && body.surface == FootSurface::Water);
+        }
+
+        // Gangplank still wins over a swim drop when it is the exit you are on.
+        {
+            FootWorld sea;
+            sea.deck = deck;
+            sea.swim = true;
+            sea.pose.heaveY = 1.2;
+            sea.plank = yardGangplank(deck);
+            ShipFoot body;
+            body.mode = ControlMode::Foot;
+            body.surface = FootSurface::Deck;
+            body.x = 0.0;
+            body.z = -deck.halfLength + 0.05;
+            body.face = PI;
+            for (int i = 0; i < 12 && body.surface == FootSurface::Deck; ++i) stepShipFoot(body, stroke, sea);
+            push("The gangplank is the way off, not a drop into the sea",
+                 body.surface == FootSurface::Plank);
+        }
+
+        // Open water: you travel, and nothing teleports you back to the ship.
+        {
+            FootWorld sea;
+            sea.deck = deck;
+            sea.swim = true;
+            ShipFoot body;
+            body.mode = ControlMode::Foot;
+            body.surface = FootSurface::Water;
+            body.x = 0.0;
+            body.z = -90.0;
+            body.face = PI; // further offshore
+            const double z0 = body.z;
+            for (int i = 0; i < 20; ++i) stepShipFoot(body, stroke, sea);
+            const double swam = std::fabs(body.z - z0);
+            ShipFoot walker;
+            walker.mode = ControlMode::Foot;
+            walker.surface = FootSurface::Deck;
+            walker.x = 0.0;
+            walker.z = 0.0;
+            walker.face = 0.0;
+            FootWorld dry = sea;
+            dry.swim = false;
+            for (int i = 0; i < 20; ++i) stepShipFoot(walker, stroke, dry);
+            push("Swimming moves you, slower than a walk, and does not snap you back",
+                 body.surface == FootSurface::Water && near(body.x, 0.0, 0.05)
+                 && swam > 1.5 && swam + 0.4 < std::fabs(walker.z));
+        }
+
+        // Pier: off the end into the water, out, and back onto the same pier.
+        {
+            BerthRect harbour[kHarbourBerthCount];
+            harbourBerths(harbour);
+            FootWorld sea;
+            sea.deck = deck;
+            sea.swim = true;
+            sea.shore = true;
+            sea.berths = harbour;
+            sea.berthCount = kHarbourBerthCount;
+            ShipFoot body;
+            body.mode = ControlMode::Foot;
+            body.surface = FootSurface::Ground;
+            body.x = -2.0;
+            body.z = -73.0 + 0.25; // pier 2, just inside the south lip
+            body.face = PI;
+            for (int i = 0; i < 30 && body.surface != FootSurface::Water; ++i) stepShipFoot(body, stroke, sea);
+            const double wetZ = body.z;
+            push("Walking off the end of a pier enters the water",
+                 body.surface == FootSurface::Water && wetZ < -73.0);
+            for (int i = 0; i < 40; ++i) stepShipFoot(body, stroke, sea);
+            push("You can swim clear of the pier without being put back on it",
+                 body.surface == FootSurface::Water && body.z < wetZ - 1.0);
+            body.face = 0.0; // back north, onto the pier
+            for (int i = 0; i < 200 && body.surface != FootSurface::Ground; ++i) stepShipFoot(body, stroke, sea);
+            double py = 0.0;
+            push("Swimming back onto the pier climbs out",
+                 body.surface == FootSurface::Ground
+                 && berthContains(harbour, kHarbourBerthCount, body.x, body.z, py));
+
+            // Landward side of the quay is the town, not the sea.
+            body.surface = FootSurface::Ground;
+            body.x = -6.0;
+            body.z = -35.0 - 0.2;
+            body.face = 0.0;
+            for (int i = 0; i < 40; ++i) stepShipFoot(body, stroke, sea);
+            const float inland = island_shape::metresInland(float(body.x), float(body.z));
+            double qy = 0.0;
+            const bool onQuay = berthContains(harbour, kHarbourBerthCount, body.x, body.z, qy);
+            push("The town side of the quay does not drop you in the sea",
+                 body.surface != FootSurface::Water && (onQuay || inland <= float(sea.shoreBeach) + 0.2f)
+                 && inland < 30.0f);
+        }
+
+        // Beach: into the sea and back onto the sand. Inland of the sand is closed.
+        {
+            BerthRect harbour[kHarbourBerthCount];
+            harbourBerths(harbour);
+            double bx = 0.0, bz = 0.0;
+            bool found = false;
+            for (double ang = -0.15; ang <= 0.7 && !found; ang += 0.03) {
+                for (double rad = 30.0; rad < 100.0; rad += 0.35) {
+                    const double x = std::cos(ang) * rad, z = std::sin(ang) * rad;
+                    const float inland = island_shape::metresInland(float(x), float(z));
+                    if (inland < 2.2f || inland > 4.2f) continue;
+                    double by = 0.0;
+                    if (berthContains(harbour, kHarbourBerthCount, x, z, by)) continue;
+                    bx = x; bz = z; found = true; break;
+                }
+            }
+            push("A beach footing exists off the piers", found);
+            if (found) {
+                FootWorld sea;
+                sea.deck = deck;
+                sea.swim = true;
+                sea.shore = true;
+                sea.shoreBeach = 8.0;
+                sea.berths = harbour;
+                sea.berthCount = kHarbourBerthCount;
+                const double rad = std::sqrt(bx * bx + bz * bz);
+                ShipFoot body;
+                body.mode = ControlMode::Foot;
+                body.surface = FootSurface::Ground;
+                body.x = bx;
+                body.z = bz;
+                body.face = faceToward(bx / rad, bz / rad); // seaward
+                for (int i = 0; i < 80 && body.surface != FootSurface::Water; ++i) stepShipFoot(body, stroke, sea);
+                const FootSample wet = sampleShipFoot(body, sea);
+                push("Walking off the beach enters the water",
+                     body.surface == FootSurface::Water && wet.y < -0.5);
+                const double wx = body.x, wz = body.z;
+                body.face = faceToward(-wx, -wz); // back toward the island
+                for (int i = 0; i < 120 && body.surface != FootSurface::Ground; ++i) stepShipFoot(body, stroke, sea);
+                const float backIn = island_shape::metresInland(float(body.x), float(body.z));
+                const FootSample sand = sampleShipFoot(body, sea);
+                push("Swimming back onto the beach climbs out on the sand",
+                     body.surface == FootSurface::Ground && backIn >= 0.0f
+                     && backIn <= float(sea.shoreBeach) + 0.3f && sand.y > 0.0 && sand.y < 6.0);
+
+                double ix = 0.0, iz = 0.0;
+                bool inner = false;
+                for (double rang = -0.15; rang <= 0.7 && !inner; rang += 0.03) {
+                    for (double rr = 30.0; rr < 100.0; rr += 0.3) {
+                        const double x = std::cos(rang) * rr, z = std::sin(rang) * rr;
+                        const float inland = island_shape::metresInland(float(x), float(z));
+                        if (inland < 7.3f || inland > 7.95f) continue;
+                        double by = 0.0;
+                        if (berthContains(harbour, kHarbourBerthCount, x, z, by)) continue;
+                        ix = x; iz = z; inner = true; break;
+                    }
+                }
+                if (inner) {
+                    const double ir = std::sqrt(ix * ix + iz * iz);
+                    body.surface = FootSurface::Ground;
+                    body.x = ix;
+                    body.z = iz;
+                    body.face = faceToward(-ix / ir, -iz / ir); // inland, toward the town
+                    for (int i = 0; i < 80; ++i) stepShipFoot(body, stroke, sea);
+                    const float stayed = island_shape::metresInland(float(body.x), float(body.z));
+                    push("The beach does not open into the town",
+                         body.surface == FootSurface::Ground && stayed <= float(sea.shoreBeach) + 0.05f
+                         && stayed > 6.0f);
+                } else {
+                    push("The beach does not open into the town", false, "no inner beach point");
+                }
+            } else {
+                push("Walking off the beach enters the water", false, "no beach");
+                push("Swimming back onto the beach climbs out on the sand", false, "no beach");
+                push("The beach does not open into the town", false, "no beach");
+            }
+        }
+
+        // The dry dock is not the sea, even if swimming is left on.
+        {
+            FootWorld yard;
+            yard.deck = deck;
+            yard.yard = true;
+            yard.swim = true;
+            yard.pose.heaveY = stocksHeaveY(deck.depth);
+            ShipFoot body;
+            body.mode = ControlMode::Foot;
+            body.surface = FootSurface::Ground;
+            body.x = yard.yardMaxX - 0.15;
+            body.z = 0.0;
+            body.face = PI * 0.5;
+            for (int i = 0; i < 40; ++i) stepShipFoot(body, stroke, yard);
+            push("The shipyard apron does not drop you into the sea",
+                 body.surface == FootSurface::Ground && body.x <= yard.yardMaxX + 1e-6);
+        }
     }
 
     return r;

@@ -251,16 +251,24 @@ ShipConfig enemyConfigForLevel(int level);
 
 // --- Seamless ship <-> foot -------------------------------------------------
 // One body, two ways to drive it. At the helm the chase camera and the sail
-// gearbox are in charge. On foot the same body walks the deck, a gangplank, or
-// the dock — no teleport between them. Deck coordinates are ship-local, so a
-// fixed footing rides the hull through heave, pitch, heel, and yaw instead of
-// sliding off as she rolls.
+// gearbox are in charge. On foot the same body walks the deck, a gangplank, the
+// dock, or the beach, and can step off any of those into the water and climb
+// back out. Deck coordinates are ship-local, so a fixed footing rides the hull
+// through heave, pitch, heel, and yaw instead of sliding off as she rolls.
+// Swimming is scene-space, like the dock: the hull is moored so the sea doesn't
+// scroll out from under you.
 //
 // The ship-local -> scene transform matches bx::mtxSRT (rotation ZYX, column
 // vectors): local +Z is the bow, local +X is starboard. Positive pitch lifts
 // the bow; positive heel drops the starboard rail.
 enum class ControlMode { Helm, Foot };
-enum class FootSurface { Deck, Plank, Ground };
+enum class FootSurface { Deck, Plank, Ground, Water };
+
+// Feet sit this far below the surface while swimming. The figure is ~1.7 m to
+// the crown, so the head and shoulders stay out and the chest is at the waterline.
+constexpr double kSwimDraft = 1.12;
+// Slower than the 3.4 m/s walk. Same facing (WASD, A/D turn).
+constexpr double kSwimSpeed = 2.2;
 
 struct DeckFrame {
     double length = 0, beam = 0, depth = 0;
@@ -299,7 +307,7 @@ double renderYawFromMove(double moveYaw);
 struct ShipFoot {
     ControlMode mode = ControlMode::Helm;
     FootSurface surface = FootSurface::Deck;
-    double x = 0, z = 0;   // Deck: ship-local. Ground: scene. Unused on the plank.
+    double x = 0, z = 0;   // Deck: ship-local. Ground and Water: scene. Unused on the plank.
     double face = 0;       // Deck: ship-local yaw (0 = bow). Plank/Ground: scene move-yaw.
     double plankT = 1;     // 0 = dock end, 1 = deck end
     double camBlend = 0;   // 0 = chase behind the bow, 1 = third-person follow
@@ -335,6 +343,15 @@ struct FootWorld {
     double berthToSceneX = 0, berthToSceneZ = 0;
     const BerthRect* berths = nullptr;
     int berthCount = 0;
+    // When set, stepping off the deck, a berth, or the beach enters the water
+    // instead of being clamped. Off in the yard: the dry dock is not the sea.
+    bool swim = false;
+    // Beach ring around the island, in the same frame as the berths (island-local
+    // plus berthToScene). `shoreBeach` is how many metres of sand inland of the
+    // waterline you may walk. Deeper than that is the town — blocked, not this slice.
+    bool shore = false;
+    double shoreBeach = 8.0;
+    double waterY = 0.0; // scene-space surface under the body (calm sea, or a wave sample)
 };
 
 struct FootSample {
@@ -368,7 +385,7 @@ FootSample sampleShipFoot(const ShipFoot& foot, const FootWorld& world);
 bool helmInReach(const ShipFoot& foot, const DeckFrame& deck);
 
 // True while the hull should keep her way: at the helm, or walking the deck.
-// On the plank or ashore she is moored (the caller zeros speed).
+// On the plank, ashore, or swimming she is moored (the caller zeros speed).
 bool footUnderWay(const ShipFoot& foot);
 
 const char* shipFootLabel(const ShipFoot& foot);

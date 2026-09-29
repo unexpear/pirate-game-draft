@@ -55,8 +55,10 @@ void renderBoxRot(uint16_t viewId, float x, float y, float z,
 
 // Draw a simple box-figure human standing at (x,y,z) (y = feet on the ground),
 // facing `heading` (radians); `walkPhase` animates the stride when moving.
+// `swimming` trails the legs and reaches the arms, for a body whose feet are
+// already below the waterline.
 void renderCharacter(uint16_t viewId, float x, float y, float z,
-                     float heading, float walkPhase);
+                     float heading, float walkPhase, bool swimming = false);
 
 // Scenery shadow pass. While on, renderBoxSized / renderBoxRot / renderCharacter
 // submit depth-only casters to `viewId` (the shadow view) instead of lit
