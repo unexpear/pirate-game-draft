@@ -41,9 +41,18 @@ Next: ship + water rendering, then the full Build → Sail loop (see
   pass, so it doubles as a CI gate.
 - `CMakeLists.txt` — builds `sea_trial_selftest`; `ctest` registered.
 
+## Steamworks (optional)
+
+Steamworks is **not** vendored. `SEA_TRIAL_WITH_STEAM` defaults to **OFF**:
+`steam_platform` compiles as local stubs (`init` succeeds, ships live in
+`<cwd>/user_ships`), and the self-test covers that path. Turn it on only
+with a Steamworks SDK you supply (`STEAMWORKS_SDK` or a gitignored drop-in
+at `extern/steamworks/`). Download steps, the façade, and what is still
+unimplemented (Cloud sync, Workshop) are in [steam.md](steam.md).
+
 ## Build & run
 
-CMake (any generator):
+CMake (any generator). Steam stays off unless you pass `-DSEA_TRIAL_WITH_STEAM=ON`:
 
     cmake -S . -B build
     cmake --build build

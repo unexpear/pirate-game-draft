@@ -47,7 +47,7 @@ The project ships **public domain under [The Unlicense](LICENSE)** — "do whate
 
 - **Dependencies must stay permissive, no-strings** (zlib / BSD / MIT / public-domain). No copyleft, ever. The locked stack already qualifies: SDL3 (zlib), bgfx/bx/bimg (BSD-2), Jolt (MIT), Dear ImGui (MIT), miniaudio (public domain). Their license notices go in a `THIRD-PARTY-LICENSES` file when their source is vendored.
 - **Build from scratch** anything that would attach license strings or cost.
-- **Steamworks is the one proprietary exception** and is **isolated as an optional module**, so the engine/framework builds and runs without Steam at all. The public framework stays usable by anyone; the Steam integration is a bolt-on.
+- **Steamworks is the one proprietary exception** and is **isolated as an optional module**, so the engine/framework builds and runs without Steam at all. The public framework stays usable by anyone; the Steam integration is a bolt-on. Native code talks to it through `steam_platform` (`SEA_TRIAL_WITH_STEAM`, default OFF). The SDK is never vendored — see [native/steam.md](native/steam.md).
 
 Dependency acquisition policy (no package manager, vendor pinned source) lives in [native-bootstrap-plan.md](native-bootstrap-plan.md).
 

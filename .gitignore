@@ -1,3 +1,8 @@
 
 # Gauntlet capture PNGs (regenerable via sea_trial --shot)
 gauntlet/shots/
+
+# Proprietary Steamworks SDK. Download it yourself and drop it here — never commit
+# the SDK or a local AppID file. See native/steam.md.
+/native/extern/steamworks/
+steam_appid.txt
