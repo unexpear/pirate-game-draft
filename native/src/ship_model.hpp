@@ -257,10 +257,14 @@ ShipConfig enemyConfigForLevel(int level);
 // prize, a second gangplank spans the two rails: walk it (or climb it from the
 // helm) onto her deck, and the prize is taken only by cutting down her crew.
 // Deck coordinates are ship-local — your hull, or hers while you are on it — so
-// a fixed footing rides that hull through heave, pitch, heel, and yaw. Swimming
-// and the port are scene-space, like the dock: your hull is moored so the sea
-// doesn't scroll out from under you. She also holds still while you are on the
-// boarding plank or her deck.
+// a fixed footing rides that hull through heave, pitch, heel, and yaw. The mast,
+// capstan, and wheel are solid: a step that would pass through them stops or
+// slides along the timber. The helm stand is left clear. Swimming and the port
+// are scene-space, like the dock: your hull is moored so the sea doesn't scroll
+// out from under you. She also holds still while you are on a gangplank, hauling
+// over the rail, or on a prize's deck. Hauling out of the water is a climb —
+// feet rise from the surface onto the deck — and a gangplank is walked along,
+// joined where you already stand instead of a grab from a metre away.
 //
 // The ship-local -> scene transform matches bx::mtxSRT (rotation ZYX, column
 // vectors): local +Z is the bow, local +X is starboard. Positive pitch lifts
@@ -268,7 +272,8 @@ ShipConfig enemyConfigForLevel(int level);
 enum class ControlMode { Helm, Foot };
 // EnemyDeck is the prize's weather deck, in that hull's ship-local frame.
 // The boarding plank is still Plank; ShipFoot::prizeRamp says which ramp.
-enum class FootSurface { Deck, Plank, Ground, Water, EnemyDeck };
+// Rail is the haul from the water up over your own rail onto the deck.
+enum class FootSurface { Deck, Plank, Ground, Water, EnemyDeck, Rail };
 
 // Feet sit this far below the surface while swimming. The figure is ~1.7 m to
 // the crown, so the head and shoulders stay out and the chest is at the waterline.
@@ -288,6 +293,18 @@ struct DeckFrame {
 // build-scene deck the character already stands on (ship_view::deckStandHeight).
 double stocksHeaveY(double depth);
 DeckFrame deckFrameFor(const Ship& ship);
+
+// Body-centre boxes for the mast, the capstan, and the wheel, ship-local.
+// Half-extents include a coat's clearance so you don't stand inside the timber.
+// The wheel stops short of the helm stand. Lines, blocks, and shrouds are not
+// in this set — they stay thin.
+constexpr int kDeckSolidCount = 3;
+struct DeckSolid {
+    double cx = 0, cz = 0, hx = 0, hz = 0;
+};
+void deckSolids(const DeckFrame& deck, DeckSolid out[kDeckSolidCount]);
+// True when a body centre at ship-local (x, z) is inside one of those boxes.
+bool deckBlocked(const DeckFrame& deck, double x, double z);
 
 // Scene pose of the hull the body is standing on. `heel` is the total roll the
 // mesh uses (wave heel + sail heel), not wave heel alone.
@@ -316,9 +333,14 @@ double sceneMoveYawFromLocal(double localFace, double heading);
 struct ShipFoot {
     ControlMode mode = ControlMode::Helm;
     FootSurface surface = FootSurface::Deck;
-    double x = 0, z = 0;   // Deck: ship-local. Ground and Water: scene. Unused on the plank.
-    double face = 0;       // Deck / EnemyDeck: ship-local yaw (0 = bow). Plank/Ground: scene move-yaw.
+    // Deck and EnemyDeck: ship-local. Ground, Water, and the foot of a rail
+    // climb: scene. Unused on the plank.
+    double x = 0, z = 0;
+    // Deck / EnemyDeck: ship-local yaw (0 = bow). Plank, Ground, Water, Rail: scene move-yaw.
+    double face = 0;
     double plankT = 1;     // 0 = far end (dock or prize rail), 1 = own deck end
+    double railT = 0;      // Rail: 0 still in the water, 1 over the rail on deck
+    double railX = 0, railZ = 0; // Rail: ship-local landing
     double camBlend = 0;   // 0 = chase behind the bow, 1 = third-person follow
     bool prizeRamp = false; // Plank is the boarding plank onto a prize, not the shore
 };
@@ -485,8 +507,9 @@ void boardPrize(ShipFoot& foot, const DeckFrame& prize, const PlankSpec& board);
 void repulseToOwnDeck(ShipFoot& foot, const DeckFrame& own, const PlankSpec& board);
 
 // True while the hull should keep her way: at the helm, or walking your own deck.
-// On the plank, ashore, swimming, or on a prize's deck she is moored (the caller
-// zeros speed) so the sea does not scroll out from under you.
+// On the plank, ashore, swimming, hauling over the rail, or on a prize's deck
+// she is moored (the caller zeros speed) so the sea does not scroll out from
+// under you.
 bool footUnderWay(const ShipFoot& foot);
 
 const char* shipFootLabel(const ShipFoot& foot);

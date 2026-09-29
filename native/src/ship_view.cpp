@@ -1518,16 +1518,29 @@ void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
     box(-1.6f, 0.7f, -len * 0.2f, 0.9f, 0.6f, len * 1.35f, wood[0], wood[1], wood[2]);
     box( 1.6f, 0.7f, -len * 0.2f, 0.9f, 0.6f, len * 1.35f, wood[0], wood[1], wood[2]);
 
-    // Gangplank: a stair of timber steps up to the deck at the stern.
+    // Gangplank: treads whose tops follow yardGangplank, so the feet that walk
+    // that ramp stand on the timber instead of a stair that starts lower and
+    // further aft than the model.
     {
-        const float deckY = deckStandHeight(ship);
-        const float hl = len * 0.5f;
-        const int steps = 6;
+        const sea::DeckFrame frame = sea::deckFrameFor(ship);
+        const sea::PlankSpec ramp = sea::yardGangplank(frame);
+        const float y0 = float(ramp.dockY);
+        const float y1 = deckStandHeight(ship);
+        const float z0 = float(ramp.dockZ);
+        const float z1 = float(ramp.deckLocalZ);
+        const int steps = 8;
+        const float span = z1 - z0;
         for (int i = 0; i < steps; ++i) {
-            const float t = i / float(steps - 1);
-            const float sy = 1.0f + t * (deckY - 1.0f);      // top of this step
-            const float sz = -hl - 3.4f + t * 3.4f;          // dock (-hl-3.4) up to deck edge (-hl)
-            box(0.0f, sy * 0.5f, sz, 1.8f, sy, 1.1f, wood[0], wood[1], wood[2]);
+            const float t = (i + 0.5f) / float(steps);
+            const float top = y0 + t * (y1 - y0);
+            const float sz = z0 + t * span;
+            const float stepLen = std::fabs(span) / float(steps) + 0.06f;
+            box(0.0f, top - 0.09f, sz, 1.5f, 0.18f, stepLen, wood[0], wood[1], wood[2]);
+            if (i == 0) continue;
+            const float prevTop = y0 + ((i - 0.5f) / float(steps)) * (y1 - y0);
+            const float riserH = std::max(0.12f, top - prevTop);
+            const float rz = z0 + (float(i) / float(steps)) * span;
+            box(0.0f, top - riserH * 0.5f, rz, 1.5f, riserH, 0.12f, timber[0], timber[1], timber[2]);
         }
     }
 
