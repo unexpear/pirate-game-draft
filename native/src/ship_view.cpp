@@ -360,11 +360,32 @@ void shadowFrame(float relX, float relZ, float& cx, float& cz, float& radius, bo
     else { cx = relX * 0.5f; cz = relZ * 0.5f; radius = dist * 0.5f + 72.0f; }
 }
 
+static void drawBowSpray(uint16_t viewId, const sea::WakeHull* hulls, int count, float timeSec) {
+    if (ship_mesh::depthPass() || !hulls || count <= 0) return;
+    int budget = sea::kMaxBowSprayDrops;
+    for (int i = 0; i < count && budget > 0; ++i) {
+        sea::SprayDrop drops[sea::kBowSprayPerHull];
+        const int room = budget < sea::kBowSprayPerHull ? budget : sea::kBowSprayPerHull;
+        const int n = sea::sampleBowSpray(hulls[i], timeSec, drops, room);
+        budget -= n;
+        const float yaw = std::atan2(hulls[i].sinH, hulls[i].cosH);
+        for (int d = 0; d < n; ++d) {
+            const float s = drops[d].size;
+            // Flat white sheets, yawed with the hull, so the bow reads as throwing water.
+            ship_mesh::renderBoxRot(viewId, drops[d].x, drops[d].y, drops[d].z,
+                                    s * 1.7f, s * 0.32f, s * 0.85f,
+                                    0.0f, yaw, 0.0f,
+                                    0.93f, 0.97f, 1.0f, 0.0f);
+        }
+    }
+}
+
 void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>& waves,
             const sea::FloatPose& pose, float timeSec, float heading,
             float worldX, float worldZ, float windDir, float sailFullness,
             int width, int height, float heelScale,
-            float cutWorldX, float cutWorldZ, float cutR, float speed) {
+            float cutWorldX, float cutWorldZ, float cutR, float speed,
+            const sea::WakeHull* extraWakes, int extraWakeCount) {
     // Chase camera behind the ship's heading (ship stays at the origin; the
     // ocean scrolls past via worldX/worldZ).
     const float dist = 24.0f;
@@ -385,18 +406,31 @@ void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>
     bgfx::setViewRect(viewId, 0, 0, uint16_t(width), uint16_t(height));
 
     sky_gpu::render(viewId, kSkyTop, kSkyHorizon);
-    // The hull sits at the scene origin; feed the water shader the heading, hull
-    // footprint and speed so it draws a waterline foam ring, bow wave and wake.
-    const float shipSpd = speed > 0.0f ? (speed / 7.0f < 1.0f ? speed / 7.0f : 1.0f) : 0.0f;
     // In isolation the sea is cut out everywhere (a huge land-cut radius) — the
     // call still sets the shared fog/camera uniforms the building shaders read.
+    // Otherwise every hull in the list gets the same waterline / bow / wake.
     const bool iso = s_isoId > 0;
+    sea::WakeHull wakes[sea::kMaxWakeHulls];
+    int wakeCount = 0;
+    if (!iso) {
+        wakes[wakeCount++] = sea::makeWake(heading, float(ship.bounds.length), float(ship.bounds.width),
+                                           speed, 0.0f, 0.0f, pose.heaveY);
+        if (extraWakes && extraWakeCount > 0) {
+            for (int i = 0; i < extraWakeCount && wakeCount < sea::kMaxWakeHulls; ++i)
+                wakes[wakeCount++] = extraWakes[i];
+        }
+        // A real island cut (not the isolation disc, not open ocean).
+        if (cutR > 0.5f && cutR < 500.0f && wakeCount < sea::kMaxWakeHulls) {
+            wakeCount += sea::harbourMoorings(cutWorldX - worldX, cutWorldZ - worldZ,
+                                              wakes + wakeCount, sea::kMaxWakeHulls - wakeCount);
+        }
+    }
     water_gpu::render(viewId, waves, timeSec, eye.x, eye.y, eye.z, worldX, worldZ,
                       iso ? 0.0f : cutWorldX, iso ? 0.0f : cutWorldZ, iso ? 1.0e7f : cutR,
-                      bx::sin(heading), bx::cos(heading),
-                      float(ship.bounds.length) * 0.5f, float(ship.bounds.width) * 0.6f, shipSpd);
+                      wakeCount > 0 ? wakes : nullptr, wakeCount);
     if (!iso)
         ship_mesh::render(viewId, ship, pose, heading, windDir, sailFullness, timeSec, 0.0f, 0.0f, heelScale);
+    if (!iso) drawBowSpray(viewId, wakes, wakeCount, timeSec);
 }
 
 void renderShadow(uint16_t viewId, float relX, float relZ, float halfWid, float halfLen) {
@@ -484,20 +518,22 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
         }
     };
     // A small moored boat (hull + a stub mast) tied at the dock.
-    auto mooredBoat = [&](float cx, float cz, float len) {
-        B(cx, 0.7f, cz, 2.6f, 1.0f, len, 0.44f, 0.30f, 0.17f, 1.0f);
+    // Bow block sits toward +Z, so heading in kHarbourMoorings must stay 0.
+    auto mooredBoat = [&](float cx, float cz, float len, float beam) {
+        B(cx, 0.7f, cz, beam, 1.0f, len, 0.44f, 0.30f, 0.17f, 1.0f);
         B(cx, 0.3f, cz + len * 0.5f, 1.4f, 0.7f, 1.2f, 0.44f, 0.30f, 0.17f, 1.0f);
         B(cx, 3.2f, cz, 0.2f, 5.0f, 0.2f, 0.36f, 0.26f, 0.16f, MAT_FLAT);
     };
     // A big MOORED SAILING SHIP alongside the quay — the pirate-port anchor. A
     // weathered plank hull with a raised stern, three masts with furled off-white
     // sails on yards, and a bowsprit; the masts rise above the town rooflines.
-    auto mooredShip = [&](float cx, float cz, float len) {
+    // Bowsprit points toward -Z, so the galleon's heading in kHarbourMoorings is pi.
+    auto mooredShip = [&](float cx, float cz, float len, float beam) {
         const float hull[3] = { 0.34f, 0.24f, 0.15f };
         const float deck[3] = { 0.46f, 0.33f, 0.20f };
         const float spar[3] = { 0.38f, 0.28f, 0.17f };
         const float canv[3] = { 0.86f, 0.82f, 0.70f };
-        B(cx, 1.4f, cz, 6.0f, 3.6f, len, hull[0], hull[1], hull[2], 1.0f);           // hull
+        B(cx, 1.4f, cz, beam, 3.6f, len, hull[0], hull[1], hull[2], 1.0f);          // hull
         B(cx, 3.4f, cz, 5.2f, 1.2f, len * 0.94f, deck[0], deck[1], deck[2], 1.0f);   // gunwale/deck
         B(cx, 5.0f, cz + len * 0.42f, 5.6f, 3.4f, len * 0.18f, hull[0], hull[1], hull[2], 1.0f); // raised stern castle
         B(cx, 2.6f, cz - len * 0.5f - 3.0f, 0.5f, 0.5f, 6.0f, spar[0], spar[1], spar[2], MAT_FLAT); // bowsprit
@@ -581,14 +617,19 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
     B(-2, 1.1f, -56, 4.5f, 0.8f, 34, wood[0], wood[1], wood[2]);   // pier 2
     B(22, 1.1f, -52, 4.5f, 0.8f, 26, wood[0], wood[1], wood[2]);   // pier 3
     pilings(-26, -54, 30, 1.7f, 1.5f); pilings(-2, -56, 34, 1.7f, 1.5f); pilings(22, -52, 26, 1.7f, 1.5f);
-    mooredBoat(-32, -50, 7); mooredBoat(-8, -52, 8);         // small boats tied along the piers
-    mooredShip(31, -56, 22);                                 // the hero: a moored galleon alongside the east pier
+    // Positions, lengths, and beams come from sea::kHarbourMoorings so the
+    // waterline foam (harbourMoorings) sits on the same hulls.
+    for (int mi = 0; mi < sea::kHarbourMooringCount; ++mi) {
+        const sea::MoorSpec& m = sea::kHarbourMoorings[mi];
+        if (m.kind == 0) mooredBoat(m.localX, m.localZ, m.length, m.beam);
+        else mooredShip(m.localX, m.localZ, m.length, m.beam);
+    }
     // (Old warehouses A/B and the harbourmaster tower are superseded by the new
     //  King's Bonded Warehouse and the west-point Sea Bastion in the town below.)
     B(-8, 2.1f, -40, 2.4f, 2, 2.4f, crate[0], crate[1], crate[2]); // crates on the quay
     B(-4, 2.1f, -41, 2.4f, 2, 2.4f, crate[0], crate[1], crate[2]);
     B(6, 2.6f, -39, 3, 3, 3, crate[0], crate[1], crate[2]);
-    B(-26, 1.7f, -60, 3, 1.2f, 8, wood[0], wood[1], wood[2]);      // moored fishing boat
+    B(-26, 1.7f, -60, 3, 1.2f, 8, wood[0], wood[1], wood[2]);      // fishing boat on the pier deck (above the water — no foam ring)
     } // town (port)
     if (want(29)) {                                                 // [29] LIGHTHOUSE
     const float rockC[3] = { 0.44f, 0.41f, 0.37f };                 // the reef rock it stands on (not a bare post in the sea)

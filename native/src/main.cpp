@@ -829,7 +829,24 @@ int main(int argc, char** argv) {
                 ship_view::renderIsland(kShadowView, islX, islZ);
                 ship_mesh::setDepthPass(false);
             }
-            ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height, float(activeProfile.heelFactor), islandX, islandZ, kLandCutRadius, speed);
+            // Enemy wake follows her scene position. The slipway hull is moored
+            // (no way on) so she only gets the waterline ring.
+            sea::WakeHull extraWakes[2];
+            int extraCount = 0;
+            if (!iso && !enemyGone) {
+                extraWakes[extraCount++] = sea::makeWake(
+                    enemyHeading, float(enemy.bounds.length), float(enemy.bounds.width),
+                    enemySpeed, enemyWorldX - worldX, enemyWorldZ - worldZ, enemyPose.heaveY);
+            }
+            const float slipHead = 0.15f;
+            const float slipX = islX + 24.0f, slipZ = islZ - 44.0f;
+            sea::FloatPose yardPose; yardPose.heaveY = 1.9f;
+            if (!iso) {
+                extraWakes[extraCount++] = sea::makeWake(
+                    slipHead, float(yardShip.bounds.length), float(yardShip.bounds.width),
+                    0.0f, slipX, slipZ, yardPose.heaveY);
+            }
+            ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height, float(activeProfile.heelFactor), islandX, islandZ, kLandCutRadius, speed, extraWakes, extraCount);
             if (!enemyGone && !iso) {
                 ship_view::renderShip(kClearView, enemy, enemyPose, enemyHeading, windDir,
                                       enemyStruck ? 0.0f : 0.75f, timeSec, // furled sails once she strikes
@@ -849,9 +866,8 @@ int main(int argc, char** argv) {
                 const float byo = 0.8f + 0.3f * std::sin(timeSec * 1.5f + i);
                 ship_view::renderTracer(kClearView, bxo, byo, bzo, 0.6f, 0.86f, 0.42f, 0.12f); // weathered nav-buoy orange
             }
-            sea::FloatPose yardPose; yardPose.heaveY = 1.9f;
-            if (!iso) ship_view::renderShip(kClearView, yardShip, yardPose, 0.15f, windDir, 0.0f, timeSec,
-                                  islX + 24.0f, islZ - 44.0f);
+            if (!iso) ship_view::renderShip(kClearView, yardShip, yardPose, slipHead, windDir, 0.0f, timeSec,
+                                  slipX, slipZ);
         }
         imgui_bgfx::endFrame(kImGuiView);
 
