@@ -132,14 +132,15 @@ int main(int argc, char** argv) {
     //   --pos <x> <z>        initial ship world position (framing)
     //   --head <rad>         initial ship heading
     //   --shot-frames <n>    frames to render before capture (default 90, lets waves settle)
-    //   --foot helm|deck|plank|dock
+    //   --foot helm|deck|plank|dock|swim
     //                    pose the body (follow cam). plank: --scene build --walk --foot plank
     //                    dock:  --foot dock --pos -2 70   (pier 2, just south of the quay)
+    //                    swim:  --foot swim            (in the water off the starboard rail)
     std::string shotPath;
     std::string shotScene = "sail";
     float shotPosX = 0.0f, shotPosZ = 0.0f, shotHead = 0.0f;
     bool shotWalk = false;
-    const char* shotFoot = "";          // --foot helm|deck|plank|dock
+    const char* shotFoot = "";          // --foot helm|deck|plank|dock|swim
     int shotFrames = 90;
     float shotCam[6] = { 0, 0, 0, 0, 0, 0 }; // --cam ex ey ez  ax ay az (scene space free camera)
     bool useCam = false;
@@ -387,6 +388,11 @@ int main(int argc, char** argv) {
         foot.face = 3.14159265; foot.camBlend = 1.0;
         foot.x = double(islandX - 2.0f - worldX);
         foot.z = double(islandZ - 56.0f - worldZ);
+        footInited = true;
+    } else if (shotMode && std::strcmp(shotFoot, "swim") == 0) {
+        foot.mode = sea::ControlMode::Foot;
+        foot.surface = sea::FootSurface::Water;
+        foot.x = 3.5; foot.z = 0.6; foot.face = -1.5707963; foot.camBlend = 1.0;
         footInited = true;
     }
     const int shotAt = shotMode ? (maxFrames > 3 ? maxFrames - 3 : 0) : -1; // request a few frames before exit
@@ -641,8 +647,9 @@ int main(int argc, char** argv) {
         }
         wasBuildMode = buildMode;
 
-        // On foot: deck (ship-local, rides the hull), gangplank, or dock. The same
-        // step runs in the yard and at sea; only the walkable ground changes.
+        // On foot: deck (ship-local, rides the hull), gangplank, dock, beach, or
+        // the water. The same step runs in the yard and at sea; the yard has no
+        // swim, and at sea the beach is the sand at the waterline.
         const sea::DeckFrame deck = sea::deckFrameFor(ship);
         sea::BerthRect berths[sea::kHarbourBerthCount];
         sea::harbourBerths(berths);
@@ -672,6 +679,16 @@ int main(int argc, char** argv) {
             bodyWorld.berthToSceneZ = double(islandZ - worldZ);
             bodyWorld.berths = berths;
             bodyWorld.berthCount = sea::kHarbourBerthCount;
+            bodyWorld.swim = true;
+            bodyWorld.shore = true;
+            // Wave under the body. Deck x/z are ship-local, so sample at the hull
+            // until the step (or the previous one) has you in scene space.
+            {
+                double sx = 0.0, sz = 0.0;
+                if (foot.surface == sea::FootSurface::Water || foot.surface == sea::FootSurface::Ground)
+                    { sx = foot.x; sz = foot.z; }
+                bodyWorld.waterY = sea::sampleWater(waves, double(worldX) + sx, double(worldZ) + sz, timeSec).height;
+            }
             sea::PlankSpec planned = sea::planGangplank(deck, bodyPose, berths, sea::kHarbourBerthCount,
                                                        bodyWorld.berthToSceneX, bodyWorld.berthToSceneZ, double(speed));
             // A still shot of the ramp at sea, even with no pier in reach.
@@ -679,10 +696,11 @@ int main(int argc, char** argv) {
                 planned = sea::yardGangplank(deck);
                 planned.dockY = 0.45;
             }
-            // Keep the ramp while you're on it or ashore, so it doesn't hop to
-            // another rail as you walk the quay. Replan from the deck.
+            // Keep the ramp while you're on it, ashore, or swimming, so it doesn't
+            // hop to another rail. Replan from the deck.
             const bool offDeck = foot.surface == sea::FootSurface::Plank
-                              || foot.surface == sea::FootSurface::Ground;
+                              || foot.surface == sea::FootSurface::Ground
+                              || foot.surface == sea::FootSurface::Water;
             if (offDeck && heldPlankOn) {
                 bodyWorld.plank = heldPlank;
                 bodyWorld.plank.dockX -= double(worldX);
@@ -740,7 +758,7 @@ int main(int argc, char** argv) {
             ImGui::SameLine();
             if (ImGui::Button("Reset")) resetShip();
             ImGui::TextDisabled("Keys: W raise sail (hold at full = travel), S lower, A/D steer");
-            ImGui::TextDisabled("      F leave helm / take the wheel   WASD walk the deck, A/D turn");
+            ImGui::TextDisabled("      F leave helm / take the wheel   WASD walk or swim, A/D turn");
             ImGui::TextDisabled("      Space fire, B board  ·  C/V cargo, X damage, Z repair, R reset");
             ImGui::Separator();
             ImGui::Text("Body: %s%s", sea::shipFootLabel(foot),
@@ -752,7 +770,9 @@ int main(int argc, char** argv) {
             }
             if (!buildMode && foot.mode == sea::ControlMode::Foot && foot.surface == sea::FootSurface::Deck
                 && !bodyWorld.plank.deployed)
-                ImGui::TextDisabled("Anchor alongside a pier to walk ashore.");
+                ImGui::TextDisabled("Step off the rail to swim, or come alongside a pier.");
+            if (!buildMode && foot.surface == sea::FootSurface::Water)
+                ImGui::TextDisabled("Swim into the hull, a pier, or the beach to climb out.");
         }
         if (ImGui::CollapsingHeader("Build mode", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Checkbox("Guided assembly (freeze & build)", &buildMode);
@@ -908,7 +928,12 @@ int main(int argc, char** argv) {
         }
 
         // Where the body stands this frame (buttons above may have moved it).
+        // Resample the wave at a swimmer so the chest stays on the surface they
+        // actually reached, not the crest from the start of the step.
+        if (!buildMode && foot.surface == sea::FootSurface::Water)
+            bodyWorld.waterY = sea::sampleWater(waves, double(worldX) + foot.x, double(worldZ) + foot.z, timeSec).height;
         const sea::FootSample body = sea::sampleShipFoot(foot, bodyWorld);
+        const bool swimming = foot.surface == sea::FootSurface::Water;
 
         // 3D scene. In build mode: only the pieces placed so far, on calm water,
         // in this tradition's construction order (sailing & combat frozen).
@@ -951,7 +976,7 @@ int main(int argc, char** argv) {
                                            enemyStruck ? 0.0f : 0.75f, enemyWorldX - worldX, enemyWorldZ - worldZ);
                 ship_mesh::setDepthPass(true);
                 ship_mesh::renderCharacter(kShadowView, float(body.x), float(body.y), float(body.z),
-                                           float(body.renderYaw), walkPhase);
+                                           float(body.renderYaw), walkPhase, swimming);
                 ship_mesh::setDepthPass(false);
             }
             if (shIsland && !noShadow) {
@@ -964,7 +989,7 @@ int main(int argc, char** argv) {
                               float(foot.camBlend), float(body.x), float(body.y), float(body.z), float(body.moveYaw));
             if (!iso) {
                 ship_mesh::renderCharacter(kClearView, float(body.x), float(body.y), float(body.z),
-                                           float(body.renderYaw), walkPhase);
+                                           float(body.renderYaw), walkPhase, swimming);
                 if (bodyWorld.plank.deployed) {
                     double px, py, pz;
                     sea::shipLocalToScene(bodyWorld.plank.deckLocalX, deck.deckY, bodyWorld.plank.deckLocalZ,
