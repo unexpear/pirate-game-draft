@@ -21,6 +21,9 @@ float landRadius();
 // ship at the origin. The heightfield is static; only the translation changes.
 void render(uint16_t viewId, float relX, float relZ);
 
+// Depth-only: the same heightfield into a shadow view, so the hill casts.
+void renderDepth(uint16_t viewId, float relX, float relZ);
+
 // Ground height (feet) at island-local (lx,lz) — for seating structures on the
 // terrain instead of guessing a flat y.
 float heightAt(float lx, float lz);

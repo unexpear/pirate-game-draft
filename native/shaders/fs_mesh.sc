@@ -11,28 +11,7 @@ uniform vec4 u_lightDir; // xyz = direction to the sun
 uniform vec4 u_mat;      // x: 0 = flat, 1 = timber planks, 2 = stone courses, 3 = canvas sail
 uniform vec4 u_camPos;   // xyz = eye position (for distance fog)
 uniform vec4 u_fog;      // xyz = horizon fog colour, w = fog far distance
-uniform mat4 u_lightMtx; // light view-proj, for shadow lookup
-SAMPLER2D(s_shadowMap, 4);
-
-// How much of the SUN reaches this point (1 = full sun, 0 = fully shadowed),
-// from the shadow map with a 3x3 PCF. Shadowing removes only the sun term — the
-// sky still fills a shadow — so shade reads as real shade, not a grey wash.
-float sunVisibility(vec3 wpos) {
-	vec4 lc = mul(u_lightMtx, vec4(wpos, 1.0));
-	vec3 ndc = lc.xyz / lc.w;
-	vec2 uv = ndc.xy * 0.5 + 0.5;
-#if BGFX_SHADER_LANGUAGE_HLSL || BGFX_SHADER_LANGUAGE_PSSL || BGFX_SHADER_LANGUAGE_METAL || BGFX_SHADER_LANGUAGE_SPIRV
-	uv.y = 1.0 - uv.y;
-#endif
-	if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 1.0;
-	float cur = ndc.z - 0.0006;
-	float texel = 1.0 / 2048.0;
-	float sh = 0.0;
-	for (int y = -1; y <= 1; ++y)
-	for (int x = -1; x <= 1; ++x)
-		sh += (cur > texture2DLod(s_shadowMap, uv + vec2(float(x), float(y)) * texel, 0.0).x) ? 1.0 : 0.0;
-	return 1.0 - sh / 9.0;
-}
+#include "shadow_sample.sh"
 
 // Soft highlight shoulder: everything below 0.82 is left exactly as-is (so sky,
 // fog and shade match), and brighter values roll smoothly toward 1 instead of
@@ -102,7 +81,7 @@ void main()
 		// offset so lit faces don't self-shadow), plus a HEMISPHERIC ambient: cool
 		// sky light from above, warm bounce off the sand and stone from below — so
 		// roofs, walls and eaves each get a different fill and read as form.
-		float vis = sunVisibility(v_wpos + N * 0.30);
+		float vis = shadowVisibility(v_wpos + N * 0.30);
 		vec3 sun = vec3(1.30, 1.16, 0.94);
 		vec3 sky = vec3(0.52, 0.64, 0.82);
 		vec3 gnd = vec3(0.50, 0.44, 0.35);

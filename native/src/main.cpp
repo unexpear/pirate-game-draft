@@ -17,6 +17,8 @@
 #include "ship_view.h"
 #include "ship_mesh.h"
 #include "shadow_gpu.h"
+#include "shadow_focus.h"
+#include "island_gpu.h"
 #include "screenshot.h"
 
 #include "ship_model.hpp"
@@ -31,12 +33,10 @@
 
 namespace {
 
-constexpr uint16_t kShadowView = 0; // sun's depth pass (renders first, lowest id)
-constexpr uint16_t kClearView = 1;  // main scene
+constexpr uint16_t kShadowView = 0;    // cascade 0, ship (renders first)
+constexpr uint16_t kShadowViewFar = 1; // cascade 1, island
+constexpr uint16_t kClearView = 2;     // main scene
 constexpr uint16_t kImGuiView = 200;
-
-// Sun direction (must match the lighting in the shaders).
-constexpr float kSunX = 0.42f, kSunY = 0.68f, kSunZ = -0.55f;
 
 void* nativeWindowHandle(SDL_Window* w) {
 #if defined(_WIN32)
@@ -218,7 +218,7 @@ int main(int argc, char** argv) {
     const std::vector<sea::Wave> waves = sea::makeWaveField("sea-trial-native");
 
     ship_view::init();
-    shadow::init(2048); // covers the whole town when it's in view, so needs the texels
+    shadow::init(shadow::kCascadeResolution); // ship + island cascades, both this size
 
     std::printf("self-tests: %d / %d passing\n", passing, total);
     std::printf("renderer: %s\n", bgfx::getRendererName(bgfx::getRendererType()));
@@ -802,32 +802,55 @@ int main(int argc, char** argv) {
             const bool complete = reveal >= int(border.size());
             if (!complete) { shown.systems.mast_count = 0; shown.systems.sail_count = 0; }
             const float buildOrbit = shotMode ? shotHead : timeSec * 0.12f; // --head frames the shot
-            // Shadow pass: the hull on the stocks casts onto the dock.
-            shadow::beginPass(kShadowView, kSunX, kSunY, kSunZ, 0.0f, 0.0f, 34.0f);
+            // Shadow pass: the hull on the stocks casts onto the dock. One tight
+            // map — the yard isn't the offshore island gap.
+            shadow::prepareFrame();
+            shadow::beginCascade(0, kShadowView, shadow::kSunX, shadow::kSunY, shadow::kSunZ, 0.0f, 0.0f, 34.0f);
             sea::FloatPose bp; bp.heaveY = 2.9f + float(ship.bounds.depth) * 0.55f;
-            ship_mesh::renderDepth(kShadowView, shown, bp, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+            if (!noShadow)
+                ship_mesh::renderDepth(kShadowView, shown, bp, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
             ship_view::renderBuildScene(kClearView, shown, waves, timeSec, buildOrbit, width, height,
                                         walkMode, charX, charY, charZ, charHeading, walkPhase);
         } else {
-            // Shadow depth pass: the sun renders the ship(s) into the shadow map
-            // (view 0, before the scene) so they cast real shadows on the sea.
-            // The map covers the ship at sea, and widens over the town when the
-            // island is near, so buildings shadow the streets, each other and
-            // themselves (eaves over walls, towers across roofs).
+            // Two shadow maps (shadow_focus.h): a tight one on the hull, and a
+            // second on the island while it can still reach the camera. The ship
+            // map is not widened near land, so near-hull shadows stay sharp; the
+            // island map is what keeps the town shadowed when you're offshore.
             const bool iso = ship_view::isolating();
-            float shCx = 0.0f, shCz = 0.0f, shR = 30.0f; bool shIsland = false;
-            ship_view::shadowFrame(islX, islZ, shCx, shCz, shR, shIsland);
-            shadow::beginPass(kShadowView, kSunX, kSunY, kSunZ, shCx, shCz, shR);
-            if (!iso && !noShadow) {
-                ship_mesh::renderDepth(kShadowView, ship, pose, heading, windDir, sailFullness, 0.0f, 0.0f, float(activeProfile.heelFactor));
+            const shadow::FrameFocus focus = shadow::planFrame(islX, islZ, ship_view::shadowIsoRadius());
+            shadow::prepareFrame();
+            auto castHulls = [&](uint16_t view) {
+                if (iso || noShadow) return;
+                ship_mesh::renderDepth(view, ship, pose, heading, windDir, sailFullness, 0.0f, 0.0f, float(activeProfile.heelFactor));
                 if (!enemyGone)
-                    ship_mesh::renderDepth(kShadowView, enemy, enemyPose, enemyHeading, windDir,
+                    ship_mesh::renderDepth(view, enemy, enemyPose, enemyHeading, windDir,
                                            enemyStruck ? 0.0f : 0.75f, enemyWorldX - worldX, enemyWorldZ - worldZ);
-            }
-            if (shIsland && !noShadow) {
+            };
+            auto castTown = [&](uint16_t view, bool terrain) {
+                if (noShadow) return;
                 ship_mesh::setDepthPass(true);
-                ship_view::renderIsland(kShadowView, islX, islZ);
+                ship_view::renderIsland(view, islX, islZ);
                 ship_mesh::setDepthPass(false);
+                if (terrain) island_gpu::renderDepth(view, islX, islZ);
+                // The slipway hull is drawn on its own (not inside renderIsland).
+                if (!iso) {
+                    sea::FloatPose yardPose;
+                    yardPose.heaveY = 1.9f;
+                    ship_mesh::renderDepth(view, yardShip, yardPose, 0.15f, windDir, 0.0f,
+                                           islX + 24.0f, islZ - 44.0f);
+                }
+            };
+            if (focus.ship.active) {
+                shadow::beginCascade(0, kShadowView, shadow::kSunX, shadow::kSunY, shadow::kSunZ,
+                                     focus.ship.cx, focus.ship.cz, focus.ship.radius);
+                castHulls(kShadowView);
+                if (focus.townInShipMap) castTown(kShadowView, !iso);
+            }
+            if (focus.island.active) {
+                shadow::beginCascade(1, kShadowViewFar, shadow::kSunX, shadow::kSunY, shadow::kSunZ,
+                                     focus.island.cx, focus.island.cz, focus.island.radius);
+                if (focus.hullsInIslandMap) castHulls(kShadowViewFar);
+                castTown(kShadowViewFar, true);
             }
             ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height, float(activeProfile.heelFactor), islandX, islandZ, kLandCutRadius, speed);
             if (!enemyGone && !iso) {
