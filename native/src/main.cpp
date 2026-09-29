@@ -132,10 +132,14 @@ int main(int argc, char** argv) {
     //   --pos <x> <z>        initial ship world position (framing)
     //   --head <rad>         initial ship heading
     //   --shot-frames <n>    frames to render before capture (default 90, lets waves settle)
+    //   --foot helm|deck|plank|dock
+    //                    pose the body (follow cam). plank: --scene build --walk --foot plank
+    //                    dock:  --foot dock --pos -2 70   (pier 2, just south of the quay)
     std::string shotPath;
     std::string shotScene = "sail";
     float shotPosX = 0.0f, shotPosZ = 0.0f, shotHead = 0.0f;
     bool shotWalk = false;
+    const char* shotFoot = "";          // --foot helm|deck|plank|dock
     int shotFrames = 90;
     float shotCam[6] = { 0, 0, 0, 0, 0, 0 }; // --cam ex ey ez  ax ay az (scene space free camera)
     bool useCam = false;
@@ -153,6 +157,7 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--pos") == 0 && i + 2 < argc) { shotPosX = float(std::atof(argv[++i])); shotPosZ = float(std::atof(argv[++i])); }
         else if (std::strcmp(argv[i], "--head") == 0 && i + 1 < argc) shotHead = float(std::atof(argv[++i]));
         else if (std::strcmp(argv[i], "--walk") == 0) shotWalk = true;
+        else if (std::strcmp(argv[i], "--foot") == 0 && i + 1 < argc) shotFoot = argv[++i];
         else if (std::strcmp(argv[i], "--cam") == 0 && i + 6 < argc) { for (int k = 0; k < 6; ++k) shotCam[k] = float(std::atof(argv[++i])); useCam = true; }
         else if (std::strcmp(argv[i], "--shot-frames") == 0 && i + 1 < argc) shotFrames = std::atoi(argv[++i]);
         else if (std::strcmp(argv[i], "--walldebug") == 0) wallDebug = true;
@@ -271,10 +276,18 @@ int main(int argc, char** argv) {
     bool launching = false, launched = true;
     float launchTimer = 0.0f;
 
-    // On-foot character — walk the shipyard. Position is in the build-scene's local
-    // space (the ship sits on the stocks at the origin).
-    bool walkMode = false, onDeck = false;
-    float charX = 9.0f, charY = 1.8f, charZ = -11.0f, charHeading = -0.7f, walkPhase = 0.0f;
+    // On-foot body. Deck coordinates are ship-local (they ride heave/pitch/heel);
+    // ashore they are scene-space. Starts at the helm, so leaving it is a step.
+    sea::ShipFoot foot;
+    bool walkMode = false;             // build mode: follow the body instead of the orbit cam
+    bool wantFoot = false;             // F — leave the helm, or take it at the wheel
+    bool footInited = false;           // first "walk the yard" plants you on the dock
+    bool wasBuildMode = false;
+    float walkPhase = 0.0f;
+    // Ramp in use while you're on it or ashore. Dock XZ is world-space so it
+    // stays on the pier while the scene origin is the ship. Replanned from the deck.
+    sea::PlankSpec heldPlank;
+    bool heldPlankOn = false;
 
     // A large island with a port + shipyard, moored at a fixed spot to the north.
     const float islandX = 0.0f, islandZ = 120.0f;
@@ -339,6 +352,10 @@ int main(int argc, char** argv) {
     auto resetShip = [&]() {
         ship = sea::makeShipFromConfig(cfg);
         sinkDepth = 0.0f; sailTier = 1; wHoldTime = 0.0f; speed = 0.0f; heading = 0.0f; worldX = 0.0f; worldZ = 0.0f;
+        foot.mode = sea::ControlMode::Helm;
+        foot.surface = sea::FootSurface::Deck;
+        foot.camBlend = 0.0;
+        heldPlankOn = false;
         shots.clear();
         spawnEnemyForZone();
     };
@@ -353,6 +370,25 @@ int main(int argc, char** argv) {
     ship_view::setAuditOnly(auditOnly);
     ship_view::setIsolate(isoId, isoView);
     ship_view::setDebugCharacter(charOn, charDX, charDZ, charDH, charDY);
+    if (shotMode && std::strcmp(shotFoot, "deck") == 0) {
+        foot.mode = sea::ControlMode::Foot;
+        foot.surface = sea::FootSurface::Deck;
+        foot.x = 0.0; foot.z = 1.2; foot.face = 0.0; foot.camBlend = 1.0;
+        footInited = true;
+    } else if (shotMode && std::strcmp(shotFoot, "plank") == 0) {
+        foot.mode = sea::ControlMode::Foot;
+        foot.surface = sea::FootSurface::Plank;
+        foot.plankT = 0.45; foot.face = 0.0; foot.camBlend = 1.0;
+        footInited = true;
+        if (buildMode) walkMode = true;
+    } else if (shotMode && std::strcmp(shotFoot, "dock") == 0) {
+        foot.mode = sea::ControlMode::Foot;
+        foot.surface = sea::FootSurface::Ground;
+        foot.face = 3.14159265; foot.camBlend = 1.0;
+        foot.x = double(islandX - 2.0f - worldX);
+        foot.z = double(islandZ - 56.0f - worldZ);
+        footInited = true;
+    }
     const int shotAt = shotMode ? (maxFrames > 3 ? maxFrames - 3 : 0) : -1; // request a few frames before exit
     bool shotRequested = false;
 
@@ -375,6 +411,7 @@ int main(int argc, char** argv) {
                     case SDL_SCANCODE_R: resetShip(); break;
                     case SDL_SCANCODE_SPACE: if (!e.key.repeat) wantFire = true; break;
                     case SDL_SCANCODE_B: if (!e.key.repeat) wantBoard = true; break;
+                    case SDL_SCANCODE_F: if (!e.key.repeat) wantFoot = true; break;
                     default: break; // W/S/A/D sailing is polled below (hold-aware)
                     }
                 }
@@ -417,7 +454,9 @@ int main(int argc, char** argv) {
         // speed, so a near-stop pivots sharpest while full/travel turn wide (the
         // stop-to-turn tactic). Ship-centric: the ship holds the origin, ocean scrolls.
         const bool* keys = SDL_GetKeyboardState(nullptr);
-        const bool kbFree = !ImGui::GetIO().WantCaptureKeyboard && !buildMode; // no sailing input while building/walking
+        // Sail gearbox only at the helm. On foot WASD walks; it must not also steer.
+        const bool atHelm = foot.mode == sea::ControlMode::Helm;
+        const bool kbFree = !ImGui::GetIO().WantCaptureKeyboard && !buildMode && atHelm;
         float steer = 0.0f;
         if (kbFree) {
             if (keys[SDL_SCANCODE_D]) steer += 1.0f;
@@ -462,7 +501,8 @@ int main(int argc, char** argv) {
         // Turn radius couples to speed AND the hull's agility (short & beamy turns tighter).
         const float turnRate = 1.35f * (1.0f - 0.62f * speedFrac) * float(activeProfile.turnFactor);
         heading += steer * turnRate * dt;
-        if (buildMode) speed = 0.0f; // frozen on the stocks while building
+        // Moored on the gangplank or ashore: hold position. On deck she keeps her way.
+        if (buildMode || !sea::footUnderWay(foot)) speed = 0.0f;
         worldX += std::sin(heading) * speed * dt;
         worldZ += std::cos(heading) * speed * dt;
         // Run aground: keep the hull out of the island's shore circle.
@@ -535,7 +575,7 @@ int main(int argc, char** argv) {
 
         // Our broadside (Space) fires from whichever side faces the enemy.
         reload = clampf(reload - dt, 0.0f, 10.0f);
-        if (wantFire && reload <= 0.0f && !buildMode && !inSafeZone) {
+        if (wantFire && atHelm && reload <= 0.0f && !buildMode && !inSafeZone) {
             const float dxE = enemyWorldX - worldX, dzE = enemyWorldZ - worldZ;
             const float starboardComp = dxE * std::cos(heading) - dzE * std::sin(heading);
             const int side = starboardComp >= 0.0f ? 1 : -1;
@@ -574,7 +614,7 @@ int main(int argc, char** argv) {
         const float bdx = enemyWorldX - worldX, bdz = enemyWorldZ - worldZ;
         const float enemyRange = std::sqrt(bdx * bdx + bdz * bdz);
         const bool boardable = enemyStruck && !captured && !enemyGone && enemyRange < 12.0f && speed < 4.5f;
-        if (wantBoard && boardable && !boarding) { boarding = true; boardTimer = 1.5f; }
+        if (wantBoard && atHelm && boardable && !boarding) { boarding = true; boardTimer = 1.5f; }
         wantBoard = false;
         if (boarding) { boardTimer -= dt; if (boardTimer <= 0.0f) { boarding = false; captured = true; } }
         const bool weSank = sinkDepth > 22.0f;
@@ -590,33 +630,92 @@ int main(int argc, char** argv) {
             launchTimer -= dt;
             if (launchTimer <= 0.0f) { launching = false; launched = true; activeProfile = sea::bakeHullProfile(ship); }
         }
-        // On-foot: walk the yard (WASD move, A/D turn), kept on the dock.
-        if (buildMode && walkMode) {
-            const bool* wk = SDL_GetKeyboardState(nullptr);
-            float mv = 0.0f, tn = 0.0f;
-            if (!ImGui::GetIO().WantCaptureKeyboard) {
-                if (wk[SDL_SCANCODE_W]) mv += 1.0f;
-                if (wk[SDL_SCANCODE_S]) mv -= 1.0f;
-                if (wk[SDL_SCANCODE_D]) tn += 1.0f;
-                if (wk[SDL_SCANCODE_A]) tn -= 1.0f;
-            }
-            charHeading += tn * 2.2f * dt;
-            charX += std::sin(charHeading) * mv * 3.4f * dt;
-            charZ += std::cos(charHeading) * mv * 3.4f * dt;
-            if (onDeck) {
-                // Stay on the deck of the ship (at the origin on the stocks).
-                const float hw = float(ship.bounds.width) * 0.5f - 0.5f;
-                const float hl = float(ship.bounds.length) * 0.5f - 0.5f;
-                charX = clampf(charX, -hw, hw);
-                charZ = clampf(charZ, -hl, hl);
-                charY = ship_view::deckStandHeight(ship);
-            } else {
-                charX = clampf(charX, -26.0f, 26.0f);
-                charZ = clampf(charZ, -20.0f, 26.0f);
-                charY = 1.8f; // dock top
-            }
-            if (mv != 0.0f) walkPhase += dt * 9.0f;
+        // The yard and the sea do not share a footing. Shot mode poses the body
+        // before the loop, so it must not be cleared on the first frame.
+        if (buildMode != wasBuildMode && !shotMode) {
+            foot.mode = sea::ControlMode::Helm;
+            foot.surface = sea::FootSurface::Deck;
+            foot.camBlend = 0.0;
+            footInited = false;
+            heldPlankOn = false;
         }
+        wasBuildMode = buildMode;
+
+        // On foot: deck (ship-local, rides the hull), gangplank, or dock. The same
+        // step runs in the yard and at sea; only the walkable ground changes.
+        const sea::DeckFrame deck = sea::deckFrameFor(ship);
+        sea::BerthRect berths[sea::kHarbourBerthCount];
+        sea::harbourBerths(berths);
+        for (int bi = 0; bi < sea::kHarbourBerthCount; ++bi)
+            berths[bi].feetY += double(ship_view::sceneryLift(float(berths[bi].cx), float(berths[bi].cz)));
+        sea::PoseTR bodyPose;
+        bodyPose.heaveY = pose.heaveY;
+        bodyPose.pitch = pose.pitch;
+        bodyPose.heading = heading;
+        bodyPose.heel = pose.heel + sea::sailWindHeel(heading, windDir, sailFullness, activeProfile.heelFactor);
+        sea::FootWorld bodyWorld;
+        bodyWorld.deck = deck;
+        bodyWorld.pose = bodyPose;
+        if (buildMode) {
+            bodyWorld.yard = true;
+            bodyWorld.pose = {};
+            bodyWorld.pose.heaveY = sea::stocksHeaveY(ship.bounds.depth);
+            bodyWorld.plank = sea::yardGangplank(deck);
+            if (walkMode && !footInited) {
+                foot.mode = sea::ControlMode::Foot;
+                foot.surface = sea::FootSurface::Ground;
+                foot.x = 9.0; foot.z = -11.0; foot.face = -0.7; foot.camBlend = 1.0;
+                footInited = true;
+            }
+        } else {
+            bodyWorld.berthToSceneX = double(islandX - worldX);
+            bodyWorld.berthToSceneZ = double(islandZ - worldZ);
+            bodyWorld.berths = berths;
+            bodyWorld.berthCount = sea::kHarbourBerthCount;
+            sea::PlankSpec planned = sea::planGangplank(deck, bodyPose, berths, sea::kHarbourBerthCount,
+                                                       bodyWorld.berthToSceneX, bodyWorld.berthToSceneZ, double(speed));
+            // A still shot of the ramp at sea, even with no pier in reach.
+            if (shotMode && std::strcmp(shotFoot, "plank") == 0) {
+                planned = sea::yardGangplank(deck);
+                planned.dockY = 0.45;
+            }
+            // Keep the ramp while you're on it or ashore, so it doesn't hop to
+            // another rail as you walk the quay. Replan from the deck.
+            const bool offDeck = foot.surface == sea::FootSurface::Plank
+                              || foot.surface == sea::FootSurface::Ground;
+            if (offDeck && heldPlankOn) {
+                bodyWorld.plank = heldPlank;
+                bodyWorld.plank.dockX -= double(worldX);
+                bodyWorld.plank.dockZ -= double(worldZ);
+            } else {
+                heldPlank = planned;
+                heldPlank.dockX += double(worldX);
+                heldPlank.dockZ += double(worldZ);
+                heldPlankOn = planned.deployed;
+                bodyWorld.plank = planned;
+            }
+        }
+        sea::FootInput fin;
+        fin.dt = dt;
+        const bool footKeys = !ImGui::GetIO().WantCaptureKeyboard && foot.mode == sea::ControlMode::Foot
+                              && (!buildMode || walkMode);
+        if (footKeys) {
+            const bool* wk = SDL_GetKeyboardState(nullptr);
+            if (wk[SDL_SCANCODE_W]) fin.move += 1.0;
+            if (wk[SDL_SCANCODE_S]) fin.move -= 1.0;
+            if (wk[SDL_SCANCODE_D]) fin.turn += 1.0;
+            if (wk[SDL_SCANCODE_A]) fin.turn -= 1.0;
+        }
+        if (!buildMode) {
+            fin.leaveHelm = wantFoot && foot.mode == sea::ControlMode::Helm;
+            fin.takeHelm = wantFoot && foot.mode == sea::ControlMode::Foot;
+        }
+        wantFoot = false;
+        if (!buildMode || walkMode) {
+            sea::stepShipFoot(foot, fin, bodyWorld);
+            if (std::fabs(fin.move) > 0.1) walkPhase += dt * 9.0f;
+        }
+        if (!buildMode || walkMode) sea::stepCameraHandoff(foot, dt);
 
         imgui_bgfx::beginFrame(width, height, dt, mouseX, mouseY, mouseButtons, wheel);
 
@@ -641,7 +740,19 @@ int main(int argc, char** argv) {
             ImGui::SameLine();
             if (ImGui::Button("Reset")) resetShip();
             ImGui::TextDisabled("Keys: W raise sail (hold at full = travel), S lower, A/D steer");
+            ImGui::TextDisabled("      F leave helm / take the wheel   WASD walk the deck, A/D turn");
             ImGui::TextDisabled("      Space fire, B board  ·  C/V cargo, X damage, Z repair, R reset");
+            ImGui::Separator();
+            ImGui::Text("Body: %s%s", sea::shipFootLabel(foot),
+                        bodyWorld.plank.deployed ? "   (gangplank down)" : "");
+            if (!buildMode && foot.mode == sea::ControlMode::Helm) {
+                if (ImGui::Button("Leave the helm")) foot.mode = sea::ControlMode::Foot;
+            } else if (!buildMode && sea::helmInReach(foot, deck)) {
+                if (ImGui::Button("Take the helm")) foot.mode = sea::ControlMode::Helm;
+            }
+            if (!buildMode && foot.mode == sea::ControlMode::Foot && foot.surface == sea::FootSurface::Deck
+                && !bodyWorld.plank.deployed)
+                ImGui::TextDisabled("Anchor alongside a pier to walk ashore.");
         }
         if (ImGui::CollapsingHeader("Build mode", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Checkbox("Guided assembly (freeze & build)", &buildMode);
@@ -651,17 +762,22 @@ int main(int argc, char** argv) {
             if (buildMode) {
                 ImGui::Checkbox("Walk the yard (on foot)", &walkMode);
                 if (walkMode) {
-                    if (!onDeck) {
-                        if (ImGui::Button("Board ship (up the gangplank)")) {
-                            onDeck = true; charX = 0.0f; charZ = -float(ship.bounds.length) * 0.3f;
-                            charHeading = 0.0f; charY = ship_view::deckStandHeight(ship);
+                    ImGui::Text("  %s", sea::shipFootLabel(foot));
+                    if (foot.surface != sea::FootSurface::Deck) {
+                        if (ImGui::Button("Board ship (shortcut)")) {
+                            foot.mode = sea::ControlMode::Foot;
+                            foot.surface = sea::FootSurface::Deck;
+                            foot.x = 0.0; foot.z = -ship.bounds.length * 0.3; foot.face = 0.0;
+                            foot.camBlend = 1.0;
                         }
-                        ImGui::TextColored(kGreen, "  On the dock - WASD walk, A/D turn.");
+                        ImGui::TextColored(kGreen, "  On the dock - walk up the gangplank (WASD).");
                     } else {
-                        if (ImGui::Button("Go ashore")) {
-                            onDeck = false; charX = 9.0f; charZ = -11.0f; charHeading = -0.7f; charY = 1.8f;
+                        if (ImGui::Button("Go ashore (shortcut)")) {
+                            foot.mode = sea::ControlMode::Foot;
+                            foot.surface = sea::FootSurface::Ground;
+                            foot.x = 9.0; foot.z = -11.0; foot.face = -0.7;
                         }
-                        ImGui::TextColored(kGreen, "  On deck - WASD walk, A/D turn.");
+                        ImGui::TextColored(kGreen, "  On deck - walk down the gangplank (WASD).");
                     }
                 }
                 ImGui::Separator();
@@ -772,7 +888,7 @@ int main(int argc, char** argv) {
         }
         ImGui::Separator();
         ImGui::Text("Frame %d   %.1f FPS", frame, ImGui::GetIO().Framerate);
-        ImGui::TextDisabled("Orbit camera - Esc to quit");
+        ImGui::TextDisabled("F helm / foot  -  Esc to quit");
         ImGui::End();
         } // !hideUI
 
@@ -791,6 +907,9 @@ int main(int argc, char** argv) {
                          kTrueWind, sea::pointOfSail(awaDeg), windFactor < 0.08f, timeSec);
         }
 
+        // Where the body stands this frame (buttons above may have moved it).
+        const sea::FootSample body = sea::sampleShipFoot(foot, bodyWorld);
+
         // 3D scene. In build mode: only the pieces placed so far, on calm water,
         // in this tradition's construction order (sailing & combat frozen).
         if (buildMode) {
@@ -806,8 +925,15 @@ int main(int argc, char** argv) {
             shadow::beginPass(kShadowView, kSunX, kSunY, kSunZ, 0.0f, 0.0f, 34.0f);
             sea::FloatPose bp; bp.heaveY = 2.9f + float(ship.bounds.depth) * 0.55f;
             ship_mesh::renderDepth(kShadowView, shown, bp, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+            if (walkMode && !noShadow) {
+                ship_mesh::setDepthPass(true);
+                ship_mesh::renderCharacter(kShadowView, float(body.x), float(body.y), float(body.z),
+                                           float(body.renderYaw), walkPhase);
+                ship_mesh::setDepthPass(false);
+            }
             ship_view::renderBuildScene(kClearView, shown, waves, timeSec, buildOrbit, width, height,
-                                        walkMode, charX, charY, charZ, charHeading, walkPhase);
+                                        walkMode, float(body.x), float(body.y), float(body.z),
+                                        float(body.moveYaw), walkPhase, float(body.renderYaw));
         } else {
             // Shadow depth pass: the sun renders the ship(s) into the shadow map
             // (view 0, before the scene) so they cast real shadows on the sea.
@@ -823,13 +949,31 @@ int main(int argc, char** argv) {
                 if (!enemyGone)
                     ship_mesh::renderDepth(kShadowView, enemy, enemyPose, enemyHeading, windDir,
                                            enemyStruck ? 0.0f : 0.75f, enemyWorldX - worldX, enemyWorldZ - worldZ);
+                ship_mesh::setDepthPass(true);
+                ship_mesh::renderCharacter(kShadowView, float(body.x), float(body.y), float(body.z),
+                                           float(body.renderYaw), walkPhase);
+                ship_mesh::setDepthPass(false);
             }
             if (shIsland && !noShadow) {
                 ship_mesh::setDepthPass(true);
                 ship_view::renderIsland(kShadowView, islX, islZ);
                 ship_mesh::setDepthPass(false);
             }
-            ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height, float(activeProfile.heelFactor), islandX, islandZ, kLandCutRadius, speed);
+            ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness,
+                              width, height, float(activeProfile.heelFactor), islandX, islandZ, kLandCutRadius, speed,
+                              float(foot.camBlend), float(body.x), float(body.y), float(body.z), float(body.moveYaw));
+            if (!iso) {
+                ship_mesh::renderCharacter(kClearView, float(body.x), float(body.y), float(body.z),
+                                           float(body.renderYaw), walkPhase);
+                if (bodyWorld.plank.deployed) {
+                    double px, py, pz;
+                    sea::shipLocalToScene(bodyWorld.plank.deckLocalX, deck.deckY, bodyWorld.plank.deckLocalZ,
+                                          bodyWorld.pose, px, py, pz);
+                    ship_view::renderGangplank(kClearView,
+                                               float(bodyWorld.plank.dockX), float(bodyWorld.plank.dockY), float(bodyWorld.plank.dockZ),
+                                               float(px), float(py), float(pz));
+                }
+            }
             if (!enemyGone && !iso) {
                 ship_view::renderShip(kClearView, enemy, enemyPose, enemyHeading, windDir,
                                       enemyStruck ? 0.0f : 0.75f, timeSec, // furled sails once she strikes
