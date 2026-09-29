@@ -342,7 +342,8 @@ void renderShadow(uint16_t viewId, float x, float y, float z, float sx, float sz
     bgfx::submit(viewId, s_prog);
 }
 
-void renderCharacter(uint16_t viewId, float x, float y, float z, float heading, float walkPhase, bool swimming) {
+void renderCharacter(uint16_t viewId, float x, float y, float z, float heading, float walkPhase, bool swimming,
+                      float coatR, float coatG, float coatB) {
     if (s_capture) return;                                  // not scenery: nothing to measure
     const float lightV[4] = { 0.42f, 0.68f, -0.55f, 0.0f };
     bgfx::setUniform(u_lightDir, lightV);
@@ -372,7 +373,7 @@ void renderCharacter(uint16_t viewId, float x, float y, float z, float heading, 
     };
     const float sw = std::sin(walkPhase) * (swimming ? 0.28f : 0.18f);
     const float bob = swimming ? 0.0f : std::fabs(std::sin(walkPhase)) * 0.04f;
-    const float skin = 0.80f, coatR = 0.45f, coatG = 0.28f, coatB = 0.20f;
+    const float skin = 0.80f;
     part(0.0f, 1.55f + bob, 0.0f, 0.28f, 0.30f, 0.28f, skin, 0.62f, 0.48f);      // head
     part(0.0f, 1.08f + bob, swimming ? 0.06f : 0.0f, 0.52f, 0.66f, 0.30f, coatR, coatG, coatB); // torso
     if (swimming) {

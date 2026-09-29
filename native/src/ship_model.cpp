@@ -1005,8 +1005,211 @@ PlankSpec planGangplank(const DeckFrame& deck, const PoseTR& pose,
     return best;
 }
 
+static void deckEdges(const DeckFrame& deck, double out[8][2]) {
+    const double e[8][2] = {
+        { 0.0, deck.halfLength }, { 0.0, -deck.halfLength },
+        { -deck.halfBeam, 0.0 }, { deck.halfBeam, 0.0 },
+        { -deck.halfBeam, deck.halfLength }, { deck.halfBeam, deck.halfLength },
+        { -deck.halfBeam, -deck.halfLength }, { deck.halfBeam, -deck.halfLength },
+    };
+    for (int i = 0; i < 8; ++i) { out[i][0] = e[i][0]; out[i][1] = e[i][1]; }
+}
+
+PlankSpec planBoardingPlank(const DeckFrame& own, const PoseTR& ownPose,
+                            const DeckFrame& prize, const PoseTR& prizePose,
+                            double speed, double reach, double maxSpeed) {
+    PlankSpec best;
+    if (speed > maxSpeed) return best;
+    double ownE[8][2], prizeE[8][2];
+    deckEdges(own, ownE);
+    deckEdges(prize, prizeE);
+    double bestD = reach;
+    for (const auto& o : ownE) {
+        double ox, oy, oz;
+        shipLocalToScene(o[0], own.deckY, o[1], ownPose, ox, oy, oz);
+        for (const auto& p : prizeE) {
+            double px, py, pz;
+            shipLocalToScene(p[0], prize.deckY, p[1], prizePose, px, py, pz);
+            const double dx = ox - px, dy = oy - py, dz = oz - pz;
+            const double d = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (d <= bestD) {
+                bestD = d;
+                best.deployed = true;
+                best.prize = true;
+                best.deckLocalX = o[0];
+                best.deckLocalZ = o[1];
+                best.prizeLocalX = p[0];
+                best.prizeLocalZ = p[1];
+                best.dockX = px;
+                best.dockY = py;
+                best.dockZ = pz;
+            }
+        }
+    }
+    return best;
+}
+
+void seatBoardingPlank(PlankSpec& plank, const DeckFrame& prize, const PoseTR& prizePose) {
+    if (!plank.deployed || !plank.prize) return;
+    shipLocalToScene(plank.prizeLocalX, prize.deckY, plank.prizeLocalZ, prizePose,
+                     plank.dockX, plank.dockY, plank.dockZ);
+}
+
+namespace {
+
+constexpr double kPlayerHp = 5.0;
+constexpr double kCrewHp = 2.0;
+constexpr double kStrikeReach = 1.65;
+constexpr double kStrikeArc = 0.45;   // cos of the half-angle in front of the blade
+constexpr double kPlayerCooldown = 0.42;
+constexpr double kCrewReach = 1.45;
+constexpr double kCrewSpeed = 2.15;
+constexpr double kCrewCooldown = 1.05;
+constexpr double kHurtTime = 0.28;
+
+void woundCrew(DeckCrew& c) {
+    c.hp -= 1.0;
+    c.hurt = kHurtTime;
+    if (c.hp <= 0.0) { c.hp = 0.0; c.alive = false; }
+}
+
+int nearestCrewInArc(const DeckFight& fight, double px, double pz, double face) {
+    const double fx = std::sin(face), fz = std::cos(face);
+    int best = -1;
+    double bestD = kStrikeReach;
+    for (int i = 0; i < int(fight.crew.size()); ++i) {
+        const DeckCrew& c = fight.crew[i];
+        if (!c.alive) continue;
+        const double dx = c.x - px, dz = c.z - pz;
+        const double d = std::sqrt(dx * dx + dz * dz);
+        if (d > kStrikeReach || d < 1.0e-6) continue;
+        const double dot = (dx / d) * fx + (dz / d) * fz;
+        if (dot < kStrikeArc) continue;
+        if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+}
+
+void clampCrew(DeckCrew& c, const DeckFight& fight) {
+    c.x = clampd(c.x, -fight.halfBeam, fight.halfBeam);
+    c.z = clampd(c.z, -fight.halfLength, fight.halfLength);
+}
+
+} // namespace
+
+DeckFight beginDeckFight(const DeckFrame& deck, int boardSide) {
+    DeckFight f;
+    f.phase = DeckFightPhase::Fighting;
+    f.playerMax = kPlayerHp;
+    f.playerHp = kPlayerHp;
+    f.halfBeam = deck.halfBeam;
+    f.halfLength = deck.halfLength;
+    const int side = boardSide >= 0 ? 1 : -1;
+    const int n = 3;
+    f.crew.resize(n);
+    for (int i = 0; i < n; ++i) {
+        DeckCrew& c = f.crew[i];
+        const double u = (i + 1.0) / (n + 1.0);
+        c.hp = kCrewHp;
+        c.alive = true;
+        c.z = lerp(-deck.halfLength * 0.15, deck.halfLength * 0.72, u);
+        c.x = -side * deck.halfBeam * (i % 2 == 0 ? 0.35 : 0.62);
+        c.cooldown = 0.55 + 0.28 * i;
+        c.face = std::atan2(side * deck.halfBeam - c.x, -c.z);
+        clampCrew(c, f);
+    }
+    return f;
+}
+
+void stepDeckFight(DeckFight& fight, double px, double pz, double face,
+                   bool aboard, bool strike, bool block, double dt) {
+    if (fight.phase != DeckFightPhase::Fighting) return;
+    if (dt < 0.0) dt = 0.0;
+    if (dt > 0.25) dt = 0.25;
+
+    fight.playerCooldown = std::max(0.0, fight.playerCooldown - dt);
+    fight.playerHurt = std::max(0.0, fight.playerHurt - dt);
+    for (auto& c : fight.crew) {
+        c.cooldown = std::max(0.0, c.cooldown - dt);
+        c.hurt = std::max(0.0, c.hurt - dt);
+    }
+    // Off her deck the crew hold their ground and cannot reach you.
+    if (!aboard) return;
+
+    if (strike && !block && fight.playerCooldown <= 0.0 && fight.playerHp > 0.0) {
+        fight.playerCooldown = kPlayerCooldown;
+        const int idx = nearestCrewInArc(fight, px, pz, face);
+        if (idx >= 0) woundCrew(fight.crew[idx]);
+    }
+    if (deckCrewLeft(fight) == 0) {
+        fight.phase = DeckFightPhase::Won;
+        return;
+    }
+
+    const int nCrew = int(fight.crew.size());
+    for (int i = 0; i < nCrew; ++i) {
+        DeckCrew& c = fight.crew[i];
+        if (!c.alive) continue;
+        const double dx = px - c.x, dz = pz - c.z;
+        const double d0 = std::sqrt(dx * dx + dz * dz);
+        // A little flank so three sailors don't stack on one plank.
+        const double flank = ((i % 2 == 0) ? -1.0 : 1.0) * 0.40;
+        const double nx = (d0 < 1.0e-6) ? 1.0 : -dz / d0;
+        const double nz = (d0 < 1.0e-6) ? 0.0 : dx / d0;
+        const double ax = px + nx * flank;
+        const double az = pz + nz * flank;
+        c.face = std::atan2(ax - c.x, az - c.z);
+        const double stop = kCrewReach * 0.72;
+        if (d0 > stop) {
+            const double step = std::min(kCrewSpeed * dt, d0 - stop);
+            c.x += std::sin(c.face) * step;
+            c.z += std::cos(c.face) * step;
+            c.walk += dt * 8.0;
+            clampCrew(c, fight);
+        }
+        const double hx = px - c.x, hz = pz - c.z;
+        const double hd = std::sqrt(hx * hx + hz * hz);
+        if (fight.playerHp > 0.0 && c.cooldown <= 0.0 && hd <= kCrewReach) {
+            c.cooldown = kCrewCooldown + 0.08 * i;
+            if (!block) {
+                fight.playerHp -= 1.0;
+                fight.playerHurt = kHurtTime;
+                if (fight.playerHp <= 0.0) {
+                    fight.playerHp = 0.0;
+                    fight.phase = DeckFightPhase::Lost;
+                    return;
+                }
+            }
+        }
+    }
+
+    for (int i = 0; i < nCrew; ++i) {
+        if (!fight.crew[i].alive) continue;
+        for (int j = i + 1; j < nCrew; ++j) {
+            if (!fight.crew[j].alive) continue;
+            DeckCrew& a = fight.crew[i];
+            DeckCrew& b = fight.crew[j];
+            double sx = b.x - a.x, sz = b.z - a.z;
+            double sd = std::sqrt(sx * sx + sz * sz);
+            const double gap = 0.72;
+            if (sd >= gap) continue;
+            if (sd < 1.0e-4) { sx = 1.0; sz = 0.0; sd = 1.0; }
+            const double push = (gap - sd) * 0.5;
+            a.x -= sx / sd * push;
+            a.z -= sz / sd * push;
+            b.x += sx / sd * push;
+            b.z += sz / sd * push;
+            clampCrew(a, fight);
+            clampCrew(b, fight);
+        }
+    }
+
+    if (deckCrewLeft(fight) == 0) fight.phase = DeckFightPhase::Won;
+}
+
 static void placeAtHelm(ShipFoot& foot, const DeckFrame& deck) {
     foot.surface = FootSurface::Deck;
+    foot.prizeRamp = false;
     foot.x = deck.helmX;
     foot.z = deck.helmZ;
     foot.face = 0.0;
@@ -1025,7 +1228,9 @@ bool footUnderWay(const ShipFoot& foot) {
 
 const char* shipFootLabel(const ShipFoot& foot) {
     if (foot.mode == ControlMode::Helm) return "at the helm";
-    if (foot.surface == FootSurface::Plank) return "on the gangplank";
+    if (foot.surface == FootSurface::EnemyDeck) return "on the enemy deck";
+    if (foot.surface == FootSurface::Plank)
+        return foot.prizeRamp ? "on the boarding plank" : "on the gangplank";
     if (foot.surface == FootSurface::Water) return "swimming";
     if (foot.surface == FootSurface::Ground) return "ashore";
     return "on deck";
@@ -1036,7 +1241,7 @@ static void plankEnds(const PlankSpec& plank, const FootWorld& world,
     shipLocalToScene(plank.deckLocalX, world.deck.deckY, plank.deckLocalZ, world.pose, deckX, deckY, deckZ);
 }
 
-static double sceneMoveYawFromLocal(double localFace, double heading) {
+double sceneMoveYawFromLocal(double localFace, double heading) {
     // Mesh yaw sends local (sin f, cos f) to scene (sin(f - h), cos(f - h)).
     return localFace - heading;
 }
@@ -1163,6 +1368,39 @@ static bool climbHull(ShipFoot& foot, const FootWorld& world, double moveSign) {
     return true;
 }
 
+static void standInboard(double railX, double railZ, double halfBeam, double halfLength,
+                         double nudge, double& x, double& z, double& face) {
+    double ix = -railX, iz = -railZ;
+    double il = std::sqrt(ix * ix + iz * iz);
+    if (il < 1.0e-4) { ix = 0.0; iz = 1.0; il = 1.0; }
+    x = clampd(railX + ix / il * nudge, -halfBeam, halfBeam);
+    z = clampd(railZ + iz / il * nudge, -halfLength, halfLength);
+    face = std::atan2(ix, iz);
+}
+
+void boardPrize(ShipFoot& foot, const DeckFrame& prize, const PlankSpec& board) {
+    if (!board.deployed || !board.prize) return;
+    foot.mode = ControlMode::Foot;
+    foot.surface = FootSurface::EnemyDeck;
+    foot.prizeRamp = false;
+    foot.plankT = 0.0;
+    standInboard(board.prizeLocalX, board.prizeLocalZ, prize.halfBeam, prize.halfLength,
+                 0.55, foot.x, foot.z, foot.face);
+}
+
+void repulseToOwnDeck(ShipFoot& foot, const DeckFrame& own, const PlankSpec& board) {
+    foot.mode = ControlMode::Foot;
+    foot.surface = FootSurface::Deck;
+    foot.prizeRamp = false;
+    foot.plankT = 1.0;
+    if (board.deployed) {
+        standInboard(board.deckLocalX, board.deckLocalZ, own.halfBeam, own.halfLength,
+                     0.55, foot.x, foot.z, foot.face);
+    } else {
+        placeAtHelm(foot, own);
+    }
+}
+
 void stepShipFoot(ShipFoot& foot, const FootInput& in, const FootWorld& world) {
     const double dt = in.dt > 0.0 ? in.dt : 0.0;
     const DeckFrame& deck = world.deck;
@@ -1182,20 +1420,41 @@ void stepShipFoot(ShipFoot& foot, const FootInput& in, const FootWorld& world) {
     const double climbSpeed = 2.15;
     foot.face += in.turn * turnRate * dt;
 
-    auto mountPlank = [&](double t) {
+    auto mountPlank = [&](double t, bool prize) {
         foot.surface = FootSurface::Plank;
+        foot.prizeRamp = prize;
         foot.plankT = t;
         if (t >= 0.5)
             foot.face = sceneMoveYawFromLocal(foot.face, world.pose.heading);
     };
+    auto nearRail = [](double ox, double oz, double rx, double rz) {
+        const double dx = ox - rx, dz = oz - rz;
+        return dx * dx + dz * dz < 1.3 * 1.3;
+    };
+
+    // She foundered, or the fight threw you back: the model will not leave you
+    // standing on a hull that is no longer there.
+    if (!world.prizeLive && (foot.surface == FootSurface::EnemyDeck || foot.prizeRamp)) {
+        repulseToOwnDeck(foot, deck, world.board);
+        return;
+    }
 
     if (foot.surface == FootSurface::Deck) {
         const double ox = foot.x + std::sin(foot.face) * in.move * walkSpeed * dt;
         const double oz = foot.z + std::cos(foot.face) * in.move * walkSpeed * dt;
         const bool outside = std::fabs(ox) > deck.halfBeam || std::fabs(oz) > deck.halfLength;
-        const double dx = ox - world.plank.deckLocalX, dz = oz - world.plank.deckLocalZ;
-        if (world.plank.deployed && outside && dx * dx + dz * dz < 1.3 * 1.3) {
-            mountPlank(1.0);
+        const bool harbour = world.plank.deployed && outside
+                          && nearRail(ox, oz, world.plank.deckLocalX, world.plank.deckLocalZ);
+        const bool prize = world.board.deployed && world.board.prize && outside
+                        && nearRail(ox, oz, world.board.deckLocalX, world.board.deckLocalZ);
+        if (harbour || prize) {
+            bool usePrize = prize;
+            if (harbour && prize) {
+                const double dhx = ox - world.plank.deckLocalX, dhz = oz - world.plank.deckLocalZ;
+                const double dpx = ox - world.board.deckLocalX, dpz = oz - world.board.deckLocalZ;
+                usePrize = dpx * dpx + dpz * dpz < dhx * dhx + dhz * dhz;
+            }
+            mountPlank(1.0, usePrize);
         } else if (world.swim && outside && std::fabs(in.move) > 0.2) {
             dropOffDeck(foot, world, ox, oz);
         } else {
@@ -1205,19 +1464,46 @@ void stepShipFoot(ShipFoot& foot, const FootInput& in, const FootWorld& world) {
         return;
     }
 
+    if (foot.surface == FootSurface::EnemyDeck) {
+        const DeckFrame& pd = world.prizeDeck;
+        const double spd = walkSpeed * (in.block ? 0.35 : 1.0);
+        const double ox = foot.x + std::sin(foot.face) * in.move * spd * dt;
+        const double oz = foot.z + std::cos(foot.face) * in.move * spd * dt;
+        const bool outside = std::fabs(ox) > pd.halfBeam || std::fabs(oz) > pd.halfLength;
+        if (world.board.deployed && world.board.prize && outside
+            && nearRail(ox, oz, world.board.prizeLocalX, world.board.prizeLocalZ)
+            && std::fabs(in.move) > 0.2) {
+            foot.surface = FootSurface::Plank;
+            foot.prizeRamp = true;
+            foot.plankT = 0.0;
+            double deckX, deckY, deckZ;
+            plankEnds(world.board, world, deckX, deckY, deckZ);
+            const double dirX = deckX - world.board.dockX, dirZ = deckZ - world.board.dockZ;
+            foot.face = std::atan2(dirX, dirZ); // scene yaw, back toward your own rail
+            return;
+        }
+        // The far rails are the fight. Stepping off them does not drop you in
+        // the sea — swim-to-board is a later slice.
+        foot.x = clampd(ox, -pd.halfBeam, pd.halfBeam);
+        foot.z = clampd(oz, -pd.halfLength, pd.halfLength);
+        return;
+    }
+
+    const PlankSpec& ramp = foot.prizeRamp ? world.board : world.plank;
     double deckX, deckY, deckZ;
-    plankEnds(world.plank, world, deckX, deckY, deckZ);
-    const double rampX = deckX - world.plank.dockX;
-    const double rampZ = deckZ - world.plank.dockZ;
+    plankEnds(ramp, world, deckX, deckY, deckZ);
+    const double rampX = deckX - ramp.dockX;
+    const double rampZ = deckZ - ramp.dockZ;
     const double rampLen = std::max(0.2, std::sqrt(rampX * rampX + rampZ * rampZ));
-    const double dirX = rampX / rampLen, dirZ = rampZ / rampLen; // toward the deck
+    const double dirX = rampX / rampLen, dirZ = rampZ / rampLen; // toward your deck
 
     if (foot.surface == FootSurface::Plank) {
-        if (!world.plank.deployed) {
-            // She sailed out from under the ramp: stay with the hull.
+        if (!ramp.deployed) {
+            // She sailed out from under the ramp: stay with your hull.
+            foot.prizeRamp = false;
             foot.surface = FootSurface::Deck;
-            foot.x = world.plank.deckLocalX;
-            foot.z = world.plank.deckLocalZ;
+            foot.x = ramp.deckLocalX;
+            foot.z = ramp.deckLocalZ;
             foot.face = foot.face + world.pose.heading;
             return;
         }
@@ -1225,11 +1511,12 @@ void stepShipFoot(ShipFoot& foot, const FootInput& in, const FootWorld& world) {
         foot.plankT += in.move * along * climbSpeed * dt / rampLen;
         if (foot.plankT >= 1.0) {
             foot.surface = FootSurface::Deck;
+            foot.prizeRamp = false;
             foot.plankT = 1.0;
-            const double ix = -world.plank.deckLocalX, iz = -world.plank.deckLocalZ;
+            const double ix = -ramp.deckLocalX, iz = -ramp.deckLocalZ;
             const double il = std::sqrt(ix * ix + iz * iz);
-            foot.x = world.plank.deckLocalX;
-            foot.z = world.plank.deckLocalZ;
+            foot.x = ramp.deckLocalX;
+            foot.z = ramp.deckLocalZ;
             if (il > 1e-4) {
                 foot.x += ix / il * 0.45;
                 foot.z += iz / il * 0.45;
@@ -1240,10 +1527,15 @@ void stepShipFoot(ShipFoot& foot, const FootInput& in, const FootWorld& world) {
             return;
         }
         if (foot.plankT <= 0.0) {
-            foot.surface = FootSurface::Ground;
             foot.plankT = 0.0;
-            foot.x = world.plank.dockX;
-            foot.z = world.plank.dockZ;
+            if (ramp.prize && world.prizeLive) {
+                boardPrize(foot, world.prizeDeck, ramp);
+                return;
+            }
+            foot.prizeRamp = false;
+            foot.surface = FootSurface::Ground;
+            foot.x = ramp.dockX;
+            foot.z = ramp.dockZ;
             return;
         }
         return;
@@ -1338,6 +1630,13 @@ void stepCameraHandoff(ShipFoot& foot, double dt) {
 
 FootSample sampleShipFoot(const ShipFoot& foot, const FootWorld& world) {
     FootSample s;
+    if (foot.surface == FootSurface::EnemyDeck) {
+        const double y = world.prizeDeck.deckY;
+        shipLocalToScene(foot.x, y, foot.z, world.prizePose, s.x, s.y, s.z);
+        s.moveYaw = sceneMoveYawFromLocal(foot.face, world.prizePose.heading);
+        s.renderYaw = renderYawFromMove(s.moveYaw);
+        return s;
+    }
     if (foot.surface == FootSurface::Deck || foot.mode == ControlMode::Helm) {
         const double lx = foot.mode == ControlMode::Helm ? world.deck.helmX : foot.x;
         const double lz = foot.mode == ControlMode::Helm ? world.deck.helmZ : foot.z;
@@ -1347,13 +1646,14 @@ FootSample sampleShipFoot(const ShipFoot& foot, const FootWorld& world) {
         s.renderYaw = renderYawFromMove(s.moveYaw);
         return s;
     }
-    if (foot.surface == FootSurface::Plank && world.plank.deployed) {
+    const PlankSpec& ramp = foot.prizeRamp ? world.board : world.plank;
+    if (foot.surface == FootSurface::Plank && ramp.deployed) {
         double deckX, deckY, deckZ;
-        plankEnds(world.plank, world, deckX, deckY, deckZ);
+        plankEnds(ramp, world, deckX, deckY, deckZ);
         const double t = clampd(foot.plankT, 0.0, 1.0);
-        s.x = world.plank.dockX + (deckX - world.plank.dockX) * t;
-        s.y = world.plank.dockY + (deckY - world.plank.dockY) * t;
-        s.z = world.plank.dockZ + (deckZ - world.plank.dockZ) * t;
+        s.x = ramp.dockX + (deckX - ramp.dockX) * t;
+        s.y = ramp.dockY + (deckY - ramp.dockY) * t;
+        s.z = ramp.dockZ + (deckZ - ramp.dockZ) * t;
         s.moveYaw = foot.face;
         s.renderYaw = renderYawFromMove(s.moveYaw);
         return s;
@@ -2304,6 +2604,172 @@ std::vector<TestResult> runSelfTest() {
             push("The shipyard apron does not drop you into the sea",
                  body.surface == FootSurface::Ground && body.x <= yard.yardMaxX + 1e-6);
         }
+    }
+
+    // --- Board a struck prize and take her on deck ---------------------------
+    {
+        auto near = [](double a, double b, double eps = 0.08) { return std::fabs(a - b) < eps; };
+        const DeckFrame own = deckFrameFor(makeShipFromConfig(ShipConfig{}));
+        const DeckFrame prize = deckFrameFor(makeShipFromConfig(enemyConfigForLevel(1)));
+        PoseTR ownPose;
+        ownPose.heaveY = 1.1;
+        PoseTR prizePose = ownPose;
+        prizePose.originX = own.halfBeam + prize.halfBeam + 2.0;
+        const PlankSpec alongside = planBoardingPlank(own, ownPose, prize, prizePose, 0.0);
+        const PlankSpec fast = planBoardingPlank(own, ownPose, prize, prizePose, 6.0);
+        prizePose.originX = 48.0;
+        const PlankSpec distant = planBoardingPlank(own, ownPose, prize, prizePose, 0.0);
+        prizePose.originX = own.halfBeam + prize.halfBeam + 2.0;
+        const PlankSpec board = planBoardingPlank(own, ownPose, prize, prizePose, 1.0);
+        const bool gap = board.deployed && board.prize
+                      && std::fabs(board.deckLocalX) > own.halfBeam - 0.2
+                      && std::fabs(board.prizeLocalX) > prize.halfBeam - 0.2;
+        push("Alongside and slow, a boarding plank spans the two rails",
+             alongside.deployed && gap && !fast.deployed && !distant.deployed);
+
+        FootWorld world;
+        world.deck = own;
+        world.pose = ownPose;
+        world.prizeLive = true;
+        world.prizeDeck = prize;
+        world.prizePose = prizePose;
+        world.board = board;
+        world.swim = true;
+        FootInput stroke;
+        stroke.move = 1.0;
+        stroke.dt = 0.05;
+
+        ShipFoot foot;
+        foot.mode = ControlMode::Foot;
+        foot.surface = FootSurface::Deck;
+        foot.x = board.deckLocalX > 0.0 ? own.halfBeam - 0.05 : -own.halfBeam + 0.05;
+        foot.z = board.deckLocalZ;
+        foot.face = std::atan2(board.deckLocalX - foot.x, board.deckLocalZ - foot.z);
+        for (int i = 0; i < 80 && foot.surface != FootSurface::EnemyDeck; ++i) stepShipFoot(foot, stroke, world);
+        const FootSample onPrize = sampleShipFoot(foot, world);
+        const bool boarded = foot.surface == FootSurface::EnemyDeck && onPrize.x > own.halfBeam + 0.5
+                          && std::string(shipFootLabel(foot)) == "on the enemy deck"
+                          && !footUnderWay(foot);
+        push("Walking the boarding plank puts you on the enemy deck", boarded,
+             boarded ? "" : shipFootLabel(foot));
+
+        const double deckZ0 = foot.z;
+        foot.face = 0.0;
+        for (int i = 0; i < 40; ++i) stepShipFoot(foot, stroke, world);
+        const bool held = foot.surface == FootSurface::EnemyDeck && foot.z >= deckZ0 - 0.05
+                       && foot.z <= prize.halfLength + 1e-6;
+        push("The far rail of her deck does not drop you in the sea", held);
+
+        foot.x = board.prizeLocalX > 0.0 ? prize.halfBeam - 0.15 : -prize.halfBeam + 0.15;
+        foot.z = board.prizeLocalZ;
+        foot.face = std::atan2(board.prizeLocalX - foot.x, board.prizeLocalZ - foot.z);
+        for (int i = 0; i < 80 && foot.surface != FootSurface::Deck; ++i) stepShipFoot(foot, stroke, world);
+        const bool home = foot.surface == FootSurface::Deck && footUnderWay(foot)
+                       && std::fabs(foot.x) <= own.halfBeam + 1e-6;
+        push("Walking back brings you onto your own deck", home, home ? "" : shipFootLabel(foot));
+
+        foot.x = own.helmX;
+        foot.z = own.helmZ;
+        foot.face = 0.0;
+        FootInput grab;
+        grab.dt = 0.05;
+        grab.takeHelm = true;
+        stepShipFoot(foot, grab, world);
+        push("The wheel still takes you after you cross back", foot.mode == ControlMode::Helm);
+
+        ShipFoot climber;
+        climber.mode = ControlMode::Helm;
+        boardPrize(climber, prize, board);
+        DeckFight fresh = beginDeckFight(prize, board.prizeLocalX >= 0.0 ? 1 : -1);
+        const bool climbed = climber.mode == ControlMode::Foot
+                          && climber.surface == FootSurface::EnemyDeck
+                          && deckCrewLeft(fresh) == 3 && !prizeTaken(fresh);
+        push("Climbing aboard does not take the prize", climbed);
+
+        world.prizeLive = false;
+        stepShipFoot(climber, stroke, world);
+        push("A prize that founders sends you back to your own deck",
+             climber.surface == FootSurface::Deck && climber.mode == ControlMode::Foot);
+        world.prizeLive = true;
+
+        DeckFight fight = beginDeckFight(prize, 1);
+        fight.crew.resize(1);
+        fight.crew[0].alive = true;
+        fight.crew[0].hp = 2;
+        fight.crew[0].cooldown = 100;
+        fight.crew[0].x = 0.0;
+        fight.crew[0].z = -1.2;
+        stepDeckFight(fight, 0.0, 0.0, 0.0, true, true, false, 0.05);
+        const bool missed = fight.crew[0].hp == 2 && fight.phase == DeckFightPhase::Fighting;
+        fight.crew[0].z = 1.05;
+        fight.crew[0].x = 0.0;
+        fight.playerCooldown = 0.0;
+        stepDeckFight(fight, 0.0, 0.0, 0.0, true, true, false, 0.05);
+        const bool cut = fight.crew[0].hp == 1;
+        stepDeckFight(fight, 0.0, 0.0, 0.0, true, true, false, 0.05);
+        const bool cooled = fight.crew[0].hp == 1;
+        push("A cut in front wounds; a cut behind misses, and the blade needs a beat",
+             missed && cut && cooled);
+
+        auto lineUp = [](DeckFight& f) {
+            int k = 0;
+            for (auto& c : f.crew) if (c.alive) {
+                c.x = 0.2 * k;
+                c.z = 1.05;
+                c.cooldown = 100.0;
+                ++k;
+            }
+        };
+        DeckFight melee = beginDeckFight(prize, -1);
+        for (auto& c : melee.crew) c.hp = 1;
+        bool cleared = false;
+        for (int swing = 0; swing < 6 && !cleared; ++swing) {
+            lineUp(melee);
+            melee.playerCooldown = 0.0;
+            stepDeckFight(melee, 0.0, 0.0, 0.0, true, true, false, 0.05);
+            for (int i = 0; i < 10; ++i)
+                stepDeckFight(melee, 0.0, 0.0, 0.0, true, false, false, 0.05);
+            cleared = prizeTaken(melee) && deckCrewLeft(melee) == 0;
+        }
+        push("Clearing her crew takes the prize", cleared && melee.phase == DeckFightPhase::Won);
+
+        DeckFight blows = beginDeckFight(prize, 1);
+        blows.crew.resize(1);
+        blows.crew[0] = DeckCrew{};
+        blows.crew[0].alive = true;
+        blows.crew[0].hp = 2;
+        blows.crew[0].x = 0.0;
+        blows.crew[0].z = 1.0;
+        blows.crew[0].cooldown = 0.0;
+        const double hp0 = blows.playerHp;
+        stepDeckFight(blows, 0.0, 0.0, 0.0, true, false, true, 0.05);
+        const bool blocked = near(blows.playerHp, hp0) && blows.phase == DeckFightPhase::Fighting;
+        blows.crew[0].cooldown = 0.0;
+        stepDeckFight(blows, 0.0, 0.0, 0.0, true, false, false, 0.05);
+        const bool hit = near(blows.playerHp, hp0 - 1.0);
+        blows.playerHp = 1.0;
+        blows.crew[0].cooldown = 0.0;
+        stepDeckFight(blows, 0.0, 0.0, 0.0, true, false, false, 0.05);
+        const bool lost = blows.phase == DeckFightPhase::Lost && !prizeTaken(blows) && blows.playerHp == 0.0;
+        ShipFoot back;
+        back.surface = FootSurface::EnemyDeck;
+        repulseToOwnDeck(back, own, board);
+        push("A block catches a blow; losing the fight repulses you and does not take the prize",
+             blocked && hit && lost && back.surface == FootSurface::Deck && back.mode == ControlMode::Foot
+             && !back.prizeRamp);
+
+        DeckFight hold = beginDeckFight(prize, 1);
+        hold.crew.resize(1);
+        hold.crew[0].alive = true;
+        hold.crew[0].hp = 2;
+        hold.crew[0].cooldown = 0.0;
+        hold.crew[0].x = 0.0;
+        hold.crew[0].z = 1.0;
+        const double hpHold = hold.playerHp;
+        for (int i = 0; i < 30; ++i)
+            stepDeckFight(hold, 0.0, 0.0, 0.0, false, false, false, 0.05);
+        push("Her crew cannot strike you once you have stepped back to your own deck",
+             near(hold.playerHp, hpHold) && hold.phase == DeckFightPhase::Fighting && !prizeTaken(hold));
     }
 
     return r;

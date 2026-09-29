@@ -132,16 +132,17 @@ int main(int argc, char** argv) {
     //   --pos <x> <z>        initial ship world position (framing)
     //   --head <rad>         initial ship heading
     //   --shot-frames <n>    frames to render before capture (default 90, lets waves settle)
-    //   --foot helm|deck|plank|dock|swim|town
+    //   --foot helm|deck|plank|dock|swim|town|prize
     //                    pose the body (follow cam). plank: --scene build --walk --foot plank
     //                    dock:  --foot dock --pos -2 70   (pier 2, just south of the quay)
     //                    swim:  --foot swim            (in the water off the starboard rail)
     //                    town:  --foot town --pos 0 55 (harbour street, stair lane, ship in the harbour)
+    //                    prize: --foot prize           (on a struck ship's deck, alongside)
     std::string shotPath;
     std::string shotScene = "sail";
     float shotPosX = 0.0f, shotPosZ = 0.0f, shotHead = 0.0f;
     bool shotWalk = false;
-    const char* shotFoot = "";          // --foot helm|deck|plank|dock|swim|town
+    const char* shotFoot = "";          // --foot helm|deck|plank|dock|swim|town|prize
     int shotFrames = 90;
     float shotCam[6] = { 0, 0, 0, 0, 0, 0 }; // --cam ex ey ez  ax ay az (scene space free camera)
     bool useCam = false;
@@ -235,7 +236,7 @@ int main(int argc, char** argv) {
     const ImVec4 kRed(1.0f, 0.55f, 0.55f, 1.0f);
 
     int mouseX = 0, mouseY = 0;
-    uint8_t mouseButtons = 0;
+    uint8_t mouseButtons = 0, prevMouse = 0;
     float wheel = 0.0f;
     uint64_t last = SDL_GetTicks();
     float timeSec = 0.0f;
@@ -263,9 +264,11 @@ int main(int argc, char** argv) {
     std::vector<sea::Projectile> enemyShots; // theirs -> hit us
     float reload = 0.0f;
     bool wantFire = false;
-    bool enemyStruck = false, boarding = false, captured = false;
-    float boardTimer = 0.0f;
+    bool enemyStruck = false, captured = false;
+    sea::DeckFight fight;          // on her deck; Won is the only capture
+    float repulseFlash = 0.0f;     // seconds left on the "back on your own deck" line
     bool wantBoard = false;
+    bool onPrize = false;          // last frame: on her deck or the boarding plank (holds the patrol)
 
     // Build mode: freeze and assemble the hull plank-by-plank in a tradition's order.
     bool buildMode = false;
@@ -290,6 +293,8 @@ int main(int argc, char** argv) {
     // stays on the pier while the scene origin is the ship. Replanned from the deck.
     sea::PlankSpec heldPlank;
     bool heldPlankOn = false;
+    sea::PlankSpec heldBoard;
+    bool heldBoardOn = false;
 
     // A large island with a port + shipyard, moored at a fixed spot to the north.
     const float islandX = 0.0f, islandZ = 120.0f;
@@ -348,7 +353,7 @@ int main(int argc, char** argv) {
         enemyWorldX = float(sx); enemyWorldZ = float(sz);
         enemyHeading = float(ang + 3.14159);
         enemySink = 0.0f; enemySpeed = 0.0f; enemyReload = 1.0f; respawnTimer = 0.0f;
-        enemyStruck = false; boarding = false; captured = false; boardTimer = 0.0f;
+        enemyStruck = false; captured = false; fight = {}; repulseFlash = 0.0f;
         enemyShots.clear();
     };
     auto resetShip = [&]() {
@@ -356,8 +361,12 @@ int main(int argc, char** argv) {
         sinkDepth = 0.0f; sailTier = 1; wHoldTime = 0.0f; speed = 0.0f; heading = 0.0f; worldX = 0.0f; worldZ = 0.0f;
         foot.mode = sea::ControlMode::Helm;
         foot.surface = sea::FootSurface::Deck;
+        foot.prizeRamp = false;
         foot.camBlend = 0.0;
         heldPlankOn = false;
+        heldBoardOn = false;
+        fight = {};
+        repulseFlash = 0.0f;
         shots.clear();
         spawnEnemyForZone();
     };
@@ -403,6 +412,23 @@ int main(int argc, char** argv) {
         foot.x = double(islandX - 4.0f - worldX);
         foot.z = double(islandZ - 32.0f - worldZ);
         footInited = true;
+    } else if (shotMode && std::strcmp(shotFoot, "prize") == 0) {
+        // Struck, alongside to starboard, player on her port rail facing the crew.
+        enemyWorldX = shotPosX + 8.0f;
+        enemyWorldZ = shotPosZ;
+        enemyHeading = shotHead;
+        enemySpeed = 0.0f;
+        enemyStruck = true;
+        enemySink = 0.0f;
+        const sea::DeckFrame pd = sea::deckFrameFor(enemy);
+        foot.mode = sea::ControlMode::Foot;
+        foot.surface = sea::FootSurface::EnemyDeck;
+        foot.x = -pd.halfBeam + 0.65;
+        foot.z = 0.4;
+        foot.face = 1.5707963;
+        foot.camBlend = 1.0;
+        footInited = true;
+        fight = sea::beginDeckFight(pd, -1);
     }
     const int shotAt = shotMode ? (maxFrames > 3 ? maxFrames - 3 : 0) : -1; // request a few frames before exit
     bool shotRequested = false;
@@ -516,8 +542,11 @@ int main(int argc, char** argv) {
         // Turn radius couples to speed AND the hull's agility (short & beamy turns tighter).
         const float turnRate = 1.35f * (1.0f - 0.62f * speedFrac) * float(activeProfile.turnFactor);
         heading += steer * turnRate * dt;
-        // Moored on the gangplank or ashore: hold position. On deck she keeps her way.
+        // Moored on the gangplank, ashore, swimming, or on a prize's deck: hold position.
+        // On your own deck she keeps her way, unless a boarding plank is already down.
+        // Leaving the helm then holds her alongside so the grapple doesn't sail away.
         if (buildMode || !sea::footUnderWay(foot)) speed = 0.0f;
+        else if (foot.mode == sea::ControlMode::Foot && heldBoardOn) speed = 0.0f;
         worldX += std::sin(heading) * speed * dt;
         worldZ += std::cos(heading) * speed * dt;
         // Run aground: keep the hull out of the island's shore circle.
@@ -598,7 +627,8 @@ int main(int argc, char** argv) {
             shots.insert(shots.end(), volley.begin(), volley.end());
             reload = 1.2f;
         }
-        wantFire = false;
+        // wantFire stays set so a swing on her deck can use the same Space edge.
+        // It is cleared after the fight step.
 
         // Advance both volleys; ours flood the enemy, theirs flood us.
         sea::stepProjectiles(shots, dt);
@@ -617,7 +647,8 @@ int main(int argc, char** argv) {
         // Endless zone patrol: once the current enemy is sunk or taken, a fresh one
         // scaled to the player's zone sails in after a beat — but never while the
         // player is holed up in the harbour truce (peace holds there).
-        const bool enemyResolved = enemyGone || captured;
+        // Don't sail the next patrol in over a deck you're still standing on.
+        const bool enemyResolved = (enemyGone || captured) && !onPrize;
         if (enemyResolved && !buildMode) {
             respawnTimer += dt;
             if (respawnTimer > 4.0f && !inSafeZone) spawnEnemyForZone();
@@ -625,14 +656,11 @@ int main(int argc, char** argv) {
             respawnTimer = 0.0f;
         }
 
-        // Boarding: pull alongside a struck (surrendered) enemy at low speed, press B.
+        // Range is for the panel. Capture is the deck fight, not a timer at the helm.
         const float bdx = enemyWorldX - worldX, bdz = enemyWorldZ - worldZ;
         const float enemyRange = std::sqrt(bdx * bdx + bdz * bdz);
-        const bool boardable = enemyStruck && !captured && !enemyGone && enemyRange < 12.0f && speed < 4.5f;
-        if (wantBoard && atHelm && boardable && !boarding) { boarding = true; boardTimer = 1.5f; }
-        wantBoard = false;
-        if (boarding) { boardTimer -= dt; if (boardTimer <= 0.0f) { boarding = false; captured = true; } }
         const bool weSank = sinkDepth > 22.0f;
+        if (repulseFlash > 0.0f) repulseFlash = std::max(0.0f, repulseFlash - dt);
 
         // Build mode: the ship's pieces in this tradition's construction order.
         std::vector<int> border;
@@ -650,9 +678,13 @@ int main(int argc, char** argv) {
         if (buildMode != wasBuildMode && !shotMode) {
             foot.mode = sea::ControlMode::Helm;
             foot.surface = sea::FootSurface::Deck;
+            foot.prizeRamp = false;
             foot.camBlend = 0.0;
             footInited = false;
             heldPlankOn = false;
+            heldBoardOn = false;
+            fight = {};
+            repulseFlash = 0.0f;
         }
         wasBuildMode = buildMode;
 
@@ -712,16 +744,40 @@ int main(int argc, char** argv) {
             const bool offDeck = foot.surface == sea::FootSurface::Plank
                               || foot.surface == sea::FootSurface::Ground
                               || foot.surface == sea::FootSurface::Water;
-            if (offDeck && heldPlankOn) {
+            if (offDeck && heldPlankOn && !foot.prizeRamp) {
                 bodyWorld.plank = heldPlank;
                 bodyWorld.plank.dockX -= double(worldX);
                 bodyWorld.plank.dockZ -= double(worldZ);
-            } else {
+            } else if (!foot.prizeRamp) {
                 heldPlank = planned;
                 heldPlank.dockX += double(worldX);
                 heldPlank.dockZ += double(worldZ);
                 heldPlankOn = planned.deployed;
                 bodyWorld.plank = planned;
+            }
+            // A struck hull still in the water can be boarded, including after
+            // you have taken her, so the same plank is the way back to your deck.
+            bodyWorld.prizeDeck = sea::deckFrameFor(enemy);
+            bodyWorld.prizePose.heaveY = enemyPose.heaveY;
+            bodyWorld.prizePose.pitch = enemyPose.pitch;
+            bodyWorld.prizePose.heel = enemyPose.heel;
+            bodyWorld.prizePose.heading = enemyHeading;
+            bodyWorld.prizePose.originX = double(enemyWorldX - worldX);
+            bodyWorld.prizePose.originZ = double(enemyWorldZ - worldZ);
+            bodyWorld.prizeLive = enemyStruck && !enemyGone;
+            if (bodyWorld.prizeLive) {
+                const bool stay = (foot.surface == sea::FootSurface::EnemyDeck || foot.prizeRamp) && heldBoardOn;
+                if (!stay) {
+                    heldBoard = sea::planBoardingPlank(deck, bodyPose, bodyWorld.prizeDeck, bodyWorld.prizePose,
+                                                       double(speed));
+                    heldBoardOn = heldBoard.deployed;
+                }
+                if (heldBoardOn) {
+                    sea::seatBoardingPlank(heldBoard, bodyWorld.prizeDeck, bodyWorld.prizePose);
+                    bodyWorld.board = heldBoard;
+                }
+            } else {
+                heldBoardOn = false;
             }
         }
         sea::FootInput fin;
@@ -734,6 +790,9 @@ int main(int argc, char** argv) {
             if (wk[SDL_SCANCODE_S]) fin.move -= 1.0;
             if (wk[SDL_SCANCODE_D]) fin.turn += 1.0;
             if (wk[SDL_SCANCODE_A]) fin.turn -= 1.0;
+            if (foot.surface == sea::FootSurface::EnemyDeck
+                && (wk[SDL_SCANCODE_LSHIFT] || wk[SDL_SCANCODE_RSHIFT]))
+                fin.block = true;
         }
         if (!buildMode) {
             fin.leaveHelm = wantFoot && foot.mode == sea::ControlMode::Helm;
@@ -744,6 +803,38 @@ int main(int argc, char** argv) {
             sea::stepShipFoot(foot, fin, bodyWorld);
             if (std::fabs(fin.move) > 0.1) walkPhase += dt * 9.0f;
         }
+        // B from the helm or your own deck climbs the boarding plank. It starts
+        // the fight; it does not take the prize.
+        if (!buildMode && wantBoard && bodyWorld.prizeLive && bodyWorld.board.deployed) {
+            const bool ownDeck = foot.mode == sea::ControlMode::Helm
+                || (foot.surface == sea::FootSurface::Deck && !foot.prizeRamp);
+            if (ownDeck) sea::boardPrize(foot, bodyWorld.prizeDeck, bodyWorld.board);
+        }
+        wantBoard = false;
+        if (!buildMode && bodyWorld.prizeLive && foot.surface == sea::FootSurface::EnemyDeck
+            && fight.phase != sea::DeckFightPhase::Fighting
+            && fight.phase != sea::DeckFightPhase::Won) {
+            const int side = bodyWorld.board.prizeLocalX >= 0.0 ? 1 : -1;
+            fight = sea::beginDeckFight(bodyWorld.prizeDeck, side);
+        }
+        if (!buildMode && !bodyWorld.prizeLive && fight.phase == sea::DeckFightPhase::Fighting)
+            fight.phase = sea::DeckFightPhase::Inactive;
+        if (!buildMode && !shotMode && fight.phase == sea::DeckFightPhase::Fighting) {
+            const bool aboard = foot.surface == sea::FootSurface::EnemyDeck;
+            const bool click = (mouseButtons & 0x01) && !(prevMouse & 0x01)
+                            && !ImGui::GetIO().WantCaptureMouse;
+            const bool strike = aboard && (wantFire || click);
+            sea::stepDeckFight(fight, foot.x, foot.z, foot.face, aboard, strike, fin.block, dt);
+            if (fight.phase == sea::DeckFightPhase::Lost && aboard) {
+                sea::repulseToOwnDeck(foot, deck, bodyWorld.board);
+                repulseFlash = 4.0f;
+            }
+            if (fight.phase == sea::DeckFightPhase::Won) captured = true;
+        } else if (!buildMode && fight.phase == sea::DeckFightPhase::Won) {
+            captured = true;
+        }
+        wantFire = false;
+        onPrize = !buildMode && (foot.surface == sea::FootSurface::EnemyDeck || foot.prizeRamp);
         if (!buildMode || walkMode) sea::stepCameraHandoff(foot, dt);
 
         imgui_bgfx::beginFrame(width, height, dt, mouseX, mouseY, mouseButtons, wheel);
@@ -770,7 +861,8 @@ int main(int argc, char** argv) {
             if (ImGui::Button("Reset")) resetShip();
             ImGui::TextDisabled("Keys: W raise sail (hold at full = travel), S lower, A/D steer");
             ImGui::TextDisabled("      F leave helm / take the wheel   WASD walk or swim, A/D turn");
-            ImGui::TextDisabled("      Space fire, B board  ·  C/V cargo, X damage, Z repair, R reset");
+            ImGui::TextDisabled("      Space fires from the helm; on her deck Space strikes, Shift blocks");
+            ImGui::TextDisabled("      B climbs onto a struck ship alongside  ·  C/V cargo, X/Z/R");
             ImGui::Separator();
             ImGui::Text("Body: %s%s", sea::shipFootLabel(foot),
                         bodyWorld.plank.deployed ? "   (gangplank down)" : "");
@@ -780,8 +872,17 @@ int main(int argc, char** argv) {
                 if (ImGui::Button("Take the helm")) foot.mode = sea::ControlMode::Helm;
             }
             if (!buildMode && foot.mode == sea::ControlMode::Foot && foot.surface == sea::FootSurface::Deck
-                && !bodyWorld.plank.deployed)
-                ImGui::TextDisabled("Step off the rail to swim, or come alongside a pier.");
+                && !bodyWorld.plank.deployed && !bodyWorld.board.deployed)
+                ImGui::TextDisabled("Step off the rail to swim, or come alongside a pier or a struck ship.");
+            if (!buildMode && bodyWorld.board.deployed && foot.surface != sea::FootSurface::EnemyDeck)
+                ImGui::TextColored(kGreen, "Boarding plank is down. Walk across, or press B to climb on.");
+            if (!buildMode && foot.surface == sea::FootSurface::EnemyDeck && fight.phase == sea::DeckFightPhase::Fighting) {
+                ImGui::Text("Her deck:  HP %.0f / %.0f    crew %d",
+                            fight.playerHp, fight.playerMax, sea::deckCrewLeft(fight));
+                ImGui::TextDisabled("Space strikes the sailor in front of you. Shift blocks. Walk back to your own deck.");
+            }
+            if (repulseFlash > 0.0f)
+                ImGui::TextColored(kRed, "REPULSED - back on your own deck. She is still struck.");
             if (!buildMode && foot.surface == sea::FootSurface::Water)
                 ImGui::TextDisabled("Swim into the hull, a pier, a slipway, or the beach to climb out.");
             if (!buildMode && foot.surface == sea::FootSurface::Ground)
@@ -885,8 +986,10 @@ int main(int argc, char** argv) {
                         activeProfile.topSpeedFactor * 100.0, activeProfile.turnFactor * 100.0, hs);
         }
         if (ImGui::CollapsingHeader("Gunnery & boarding", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const bool onHerDeck = foot.surface == sea::FootSurface::EnemyDeck;
             const char* est = captured ? "captured" : (enemyGone ? "sunk"
-                            : (enemyStruck ? "STRUCK - boardable" : (enemyStats.sinking ? "SINKING" : "afloat")));
+                            : (onHerDeck && fight.phase == sea::DeckFightPhase::Fighting ? "STRUCK - fighting on deck"
+                            : (enemyStruck ? "STRUCK - board her" : (enemyStats.sinking ? "SINKING" : "afloat"))));
             ImGui::Text("Enemy:   %s (level %d)", enemy.display_name.c_str(), enemyLevel);
             ImGui::TextColored(captured ? kGreen
                                : ((enemyGone || enemyStruck || enemyStats.sinking) ? kRed : kGreen),
@@ -895,8 +998,12 @@ int main(int argc, char** argv) {
             ImGui::Text("Range:   %.0f m", enemyRange);
             ImGui::Text("Incoming: %d shots", int(enemyShots.size()));
             if (inSafeZone)     ImGui::TextColored(kGreen, "Safe zone - no combat");
-            else if (boarding)  ImGui::TextColored(kGreen, "Boarding...");
-            else if (boardable) ImGui::TextColored(kGreen, "Alongside - press B to board!");
+            else if (onHerDeck && fight.phase == sea::DeckFightPhase::Fighting)
+                ImGui::Text("HP %.0f / %.0f    crew left %d", fight.playerHp, fight.playerMax, sea::deckCrewLeft(fight));
+            else if (bodyWorld.board.deployed && !captured)
+                ImGui::TextColored(kGreen, "Boarding plank down - cross it, or B to climb on");
+            else if (enemyStruck && !captured)
+                ImGui::TextDisabled("Come alongside under 4.5 m/s to drop a boarding plank");
             else                ImGui::TextDisabled(reload > 0.0f ? "Reloading..." : "Space: fire broadside");
         }
         ImGui::Separator();
@@ -990,6 +1097,16 @@ int main(int argc, char** argv) {
                 ship_mesh::setDepthPass(true);
                 ship_mesh::renderCharacter(kShadowView, float(body.x), float(body.y), float(body.z),
                                            float(body.renderYaw), walkPhase, swimming);
+                if (bodyWorld.prizeLive) {
+                    for (const auto& c : fight.crew) {
+                        if (!c.alive) continue;
+                        double cx, cy, cz;
+                        sea::shipLocalToScene(c.x, bodyWorld.prizeDeck.deckY, c.z, bodyWorld.prizePose, cx, cy, cz);
+                        const double moveYaw = sea::sceneMoveYawFromLocal(c.face, bodyWorld.prizePose.heading);
+                        ship_mesh::renderCharacter(kShadowView, float(cx), float(cy), float(cz),
+                                                   float(sea::renderYawFromMove(moveYaw)), float(c.walk));
+                    }
+                }
                 ship_mesh::setDepthPass(false);
             }
             if (shIsland && !noShadow) {
@@ -1010,6 +1127,28 @@ int main(int argc, char** argv) {
                     ship_view::renderGangplank(kClearView,
                                                float(bodyWorld.plank.dockX), float(bodyWorld.plank.dockY), float(bodyWorld.plank.dockZ),
                                                float(px), float(py), float(pz));
+                }
+                if (bodyWorld.board.deployed) {
+                    double px, py, pz;
+                    sea::shipLocalToScene(bodyWorld.board.deckLocalX, deck.deckY, bodyWorld.board.deckLocalZ,
+                                          bodyWorld.pose, px, py, pz);
+                    ship_view::renderGangplank(kClearView,
+                                               float(bodyWorld.board.dockX), float(bodyWorld.board.dockY), float(bodyWorld.board.dockZ),
+                                               float(px), float(py), float(pz));
+                }
+                if (bodyWorld.prizeLive) {
+                    for (const auto& c : fight.crew) {
+                        if (!c.alive) continue;
+                        double cx, cy, cz;
+                        sea::shipLocalToScene(c.x, bodyWorld.prizeDeck.deckY, c.z, bodyWorld.prizePose, cx, cy, cz);
+                        const double moveYaw = sea::sceneMoveYawFromLocal(c.face, bodyWorld.prizePose.heading);
+                        const float cr = c.hurt > 0.0 ? 0.95f : 0.62f;
+                        const float cg = c.hurt > 0.0 ? 0.55f : 0.16f;
+                        const float cb = c.hurt > 0.0 ? 0.40f : 0.14f;
+                        ship_mesh::renderCharacter(kClearView, float(cx), float(cy), float(cz),
+                                                   float(sea::renderYawFromMove(moveYaw)), float(c.walk),
+                                                   false, cr, cg, cb);
+                    }
                 }
             }
             if (!enemyGone && !iso) {
@@ -1043,6 +1182,7 @@ int main(int argc, char** argv) {
             shotRequested = true;
         }
         bgfx::frame();
+        prevMouse = mouseButtons;
 
         if (maxFrames >= 0 && ++frame >= maxFrames) running = false;
     }
