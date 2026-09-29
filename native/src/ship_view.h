@@ -28,12 +28,16 @@ void setFreeCamera(bool enabled, float ex, float ey, float ez, float ax, float a
 // (0 = furled .. 1 = full canvas). `timeSec` drives the wave animation.
 // `cut*` (world XZ centre + radius) carves the sea out under the island so land
 // reads as land, not a box floating on the water; pass radius <= 0 for none.
+// `footBlend` eases the camera from the chase view (0) to a third-person follow
+// on the body at (footX, footY, footZ), looking along `footMoveYaw` (1).
 void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>& waves,
             const sea::FloatPose& pose, float timeSec, float heading,
             float worldX, float worldZ, float windDir, float sailFullness,
             int width, int height, float heelScale = 1.0f,
             float cutWorldX = 0.0f, float cutWorldZ = 0.0f, float cutR = 0.0f,
-            float speed = 0.0f);
+            float speed = 0.0f,
+            float footBlend = 0.0f, float footX = 0.0f, float footY = 0.0f,
+            float footZ = 0.0f, float footMoveYaw = 0.0f);
 
 // Draw another ship into the same view (camera already set by render()), placed
 // at scene position (posX,posZ) relative to our ship at the origin.
@@ -87,13 +91,22 @@ void renderIsland(uint16_t viewId, float relX, float relZ);
 // scene — where a character stands when boarded. Matches renderBuildScene.
 float deckStandHeight(const sea::Ship& ship);
 
+// Terrain lift scenery adds when its centre is at island-local (x, z). 0 offshore.
+// Matches the B() lift in renderIsland, so a walker stands on the quay top.
+float sceneryLift(float x, float z);
+
+// A timber ramp from (x0,y0,z0) to (x1,y1,z1) — the gangplank, once it's down.
+void renderGangplank(uint16_t viewId, float x0, float y0, float z0, float x1, float y1, float z1);
+
 // Build-mode scene: the hull up on a building STAND (keel blocks + shoring) at
 // the island's shipyard. Orbit camera (`orbitAngle`) to look the ship over, or
 // (`walk`) a third-person follow camera on a character walking the yard at
-// (cx,cy,cz) facing `cheading`, stride animated by `walkPhase`.
+// (cx,cy,cz). `moveYaw` aims the camera; `renderYaw` turns the body so it faces
+// that way (the mesh yaw is not the movement yaw).
 void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
                       const std::vector<sea::Wave>& waves, float timeSec,
                       float orbitAngle, int width, int height,
-                      bool walk, float cx, float cy, float cz, float cheading, float walkPhase);
+                      bool walk, float cx, float cy, float cz, float moveYaw, float walkPhase,
+                      float renderYaw = 0.0f);
 
 } // namespace ship_view

@@ -364,14 +364,24 @@ void render(uint16_t viewId, const sea::Ship& ship, const std::vector<sea::Wave>
             const sea::FloatPose& pose, float timeSec, float heading,
             float worldX, float worldZ, float windDir, float sailFullness,
             int width, int height, float heelScale,
-            float cutWorldX, float cutWorldZ, float cutR, float speed) {
+            float cutWorldX, float cutWorldZ, float cutR, float speed,
+            float footBlend, float footX, float footY, float footZ, float footMoveYaw) {
     // Chase camera behind the ship's heading (ship stays at the origin; the
-    // ocean scrolls past via worldX/worldZ).
+    // ocean scrolls past via worldX/worldZ). On foot, ease from that chase to a
+    // third-person follow so leaving the helm doesn't snap the view.
     const float dist = 24.0f;
     const float fwdX = bx::sin(heading);
     const float fwdZ = bx::cos(heading);
     bx::Vec3 eye = s_freeCam ? s_freeEye : bx::Vec3{ -fwdX * dist, 9.0f, -fwdZ * dist };
     bx::Vec3 at  = s_freeCam ? s_freeAt  : bx::Vec3{ fwdX * 5.0f, -0.4f, fwdZ * 5.0f };
+    if (!s_freeCam && s_isoId <= 0 && footBlend > 0.001f) {
+        const float fx = bx::sin(footMoveYaw), fz = bx::cos(footMoveYaw);
+        const bx::Vec3 fe = { footX - fx * 7.0f, footY + 4.2f, footZ - fz * 7.0f };
+        const bx::Vec3 fa = { footX + fx * 3.0f, footY + 1.4f, footZ + fz * 3.0f };
+        const float s = footBlend < 0.0f ? 0.0f : (footBlend > 1.0f ? 1.0f : footBlend);
+        eye.x += (fe.x - eye.x) * s; eye.y += (fe.y - eye.y) * s; eye.z += (fe.z - eye.z) * s;
+        at.x  += (fa.x - at.x) * s;  at.y  += (fa.y - at.y) * s;  at.z  += (fa.z - at.z) * s;
+    }
     if (s_isoId > 0 && !s_freeCam) isoCamera(s_isoView, eye, at); // orbit the isolated building
     const bx::Vec3 up = { 0.0f, 1.0f, 0.0f };
 
@@ -1386,20 +1396,45 @@ void renderIsland(uint16_t viewId, float relX, float relZ) {
 float deckStandHeight(const sea::Ship& ship) {
     // Matches renderBuildScene: keel rests on blocks (top 2.9) -> hull origin at
     // +depth*0.55 -> deck piece at +depth*0.03 -> stand on its top.
+    // sea::stocksHeaveY + deckFrame.deckY is the same sum.
     const float depth = float(ship.bounds.depth);
     return 2.9f + depth * 0.55f + depth * 0.03f + 0.06f;
+}
+
+float sceneryLift(float x, float z) {
+    const float h = groundH(x, z);
+    return h > 0.0f ? h : 0.0f;
+}
+
+void renderGangplank(uint16_t viewId, float x0, float y0, float z0, float x1, float y1, float z1) {
+    const float dx = x1 - x0, dz = z1 - z0;
+    const float len = std::sqrt(dx * dx + dz * dz);
+    if (len < 0.2f) return;
+    // Mesh yaw sends local +Z to (-sin, cos); aim that along the ramp.
+    const float yaw = std::atan2(-dx / len, dz / len);
+    const int n = 6;
+    const float seg = len / float(n) + 0.08f;
+    for (int i = 0; i < n; ++i) {
+        const float t = (i + 0.5f) / float(n);
+        const float x = x0 + dx * t;
+        const float y = y0 + (y1 - y0) * t;
+        const float z = z0 + dz * t;
+        ship_mesh::renderBoxRot(viewId, x, y - 0.09f, z, 1.45f, 0.16f, seg,
+                                0.0f, yaw, 0.0f, 0.46f, 0.32f, 0.18f, 1.0f);
+    }
 }
 
 void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
                       const std::vector<sea::Wave>& waves, float timeSec,
                       float orbitAngle, int width, int height,
-                      bool walk, float cx, float cy, float cz, float cheading, float walkPhase) {
+                      bool walk, float cx, float cy, float cz, float moveYaw, float walkPhase,
+                      float renderYaw) {
     // Camera: orbit the stocks to look the hull over, OR (walk mode) a third-person
     // camera following the character on foot in the yard.
     const bx::Vec3 up = { 0.0f, 1.0f, 0.0f };
     bx::Vec3 eye = { 0.0f, 0.0f, 0.0f }, at = { 0.0f, 0.0f, 0.0f };
     if (walk) {
-        const float fx = bx::sin(cheading), fz = bx::cos(cheading);
+        const float fx = bx::sin(moveYaw), fz = bx::cos(moveYaw);
         eye = { cx - fx * 7.0f, cy + 4.2f, cz - fz * 7.0f };
         at  = { cx + fx * 3.0f, cy + 1.4f, cz + fz * 3.0f };
     } else {
@@ -1501,7 +1536,7 @@ void renderBuildScene(uint16_t viewId, const sea::Ship& ship,
     bp.heaveY = blockTop + float(ship.bounds.depth) * 0.55; // keel local y = -depth*0.55
     ship_mesh::render(viewId, ship, bp, 0.0f, 0.0f, 0.0f, timeSec, 0.0f, 0.0f);
 
-    if (walk) ship_mesh::renderCharacter(viewId, cx, cy, cz, cheading, walkPhase);
+    if (walk) ship_mesh::renderCharacter(viewId, cx, cy, cz, renderYaw, walkPhase);
 }
 
 } // namespace ship_view

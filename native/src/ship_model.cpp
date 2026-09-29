@@ -762,6 +762,358 @@ Ship deserialize(const std::string& text) {
     return s;
 }
 
+double stocksHeaveY(double depth) { return 2.9 + depth * 0.55; }
+
+DeckFrame deckFrameFor(const Ship& ship) {
+    DeckFrame d;
+    d.length = ship.bounds.length;
+    d.beam = ship.bounds.width;
+    d.depth = ship.bounds.depth;
+    // Top of the deck plank, plus a couple of centimetres so the feet sit on it
+    // rather than in it. Summed with stocksHeaveY this is the yard deck height.
+    d.deckY = ship.bounds.depth * 0.03 + 0.06;
+    d.halfBeam = std::max(0.6, ship.bounds.width * 0.5 - 0.35);
+    d.halfLength = std::max(0.8, ship.bounds.length * 0.5 - 0.35);
+    d.helmX = 0.0;
+    // Just forward of the wheel (the helm piece is centred at -length*0.34 and
+    // about 1.3 m fore-and-aft), so the body stands at the wheel instead of in it.
+    d.helmZ = clampd(-ship.bounds.length * 0.34 + 0.85, -d.halfLength + 0.4, d.halfLength - 0.4);
+    return d;
+}
+
+void shipLocalToScene(double lx, double ly, double lz, const PoseTR& pose,
+                      double& ox, double& oy, double& oz) {
+    // bx::mtxSRT / mtxRotateZYX, column-major, M * v. Columns below.
+    const double sx = std::sin(pose.pitch), cx = std::cos(pose.pitch);
+    const double sy = std::sin(pose.heading), cy = std::cos(pose.heading);
+    const double sz = std::sin(pose.heel), cz = std::cos(pose.heel);
+    const double c0x = cy * cz;
+    const double c0y = cz * sx * sy - cx * sz;
+    const double c0z = cx * cz * sy + sx * sz;
+    const double c1x = cy * sz;
+    const double c1y = cx * cz + sx * sy * sz;
+    const double c1z = -cz * sx + cx * sy * sz;
+    const double c2x = -sy;
+    const double c2y = cy * sx;
+    const double c2z = cx * cy;
+    ox = pose.originX + c0x * lx + c1x * ly + c2x * lz;
+    oy = pose.heaveY + c0y * lx + c1y * ly + c2y * lz;
+    oz = pose.originZ + c0z * lx + c1z * ly + c2z * lz;
+}
+
+void sceneToShipLocal(double sx, double sy, double sz, const PoseTR& pose,
+                      double& lx, double& ly, double& lz) {
+    const double spx = std::sin(pose.pitch), cx = std::cos(pose.pitch);
+    const double spy = std::sin(pose.heading), cy = std::cos(pose.heading);
+    const double shz = std::sin(pose.heel), cz = std::cos(pose.heel);
+    const double c0x = cy * cz;
+    const double c0y = cz * spx * spy - cx * shz;
+    const double c0z = cx * cz * spy + spx * shz;
+    const double c1x = cy * shz;
+    const double c1y = cx * cz + spx * spy * shz;
+    const double c1z = -cz * spx + cx * spy * shz;
+    const double c2x = -spy;
+    const double c2y = cy * spx;
+    const double c2z = cx * cy;
+    const double dx = sx - pose.originX, dy = sy - pose.heaveY, dz = sz - pose.originZ;
+    lx = c0x * dx + c0y * dy + c0z * dz;
+    ly = c1x * dx + c1y * dy + c1z * dz;
+    lz = c2x * dx + c2y * dy + c2z * dz;
+}
+
+double sailWindHeel(double heading, double windDir, double sailFullness, double heelScale) {
+    const double align = std::cos(heading - windDir);
+    const double awa = std::acos(clampd(-align, -1.0, 1.0));
+    const double lee = (std::sin(windDir - heading) >= 0.0) ? 1.0 : -1.0;
+    const double power = sailPower(awa * (180.0 / PI));
+    return lee * 0.34 * power * std::sin(awa) * sailFullness * heelScale;
+}
+
+double renderYawFromMove(double moveYaw) { return -moveYaw; }
+
+PlankSpec yardGangplank(const DeckFrame& deck) {
+    PlankSpec p;
+    p.deployed = true;
+    p.deckLocalX = 0.0;
+    p.deckLocalZ = -deck.halfLength;
+    p.dockX = 0.0;
+    p.dockY = 1.8; // dry-dock top in the build scene
+    p.dockZ = -deck.halfLength - 2.6;
+    return p;
+}
+
+void harbourBerths(BerthRect out[kHarbourBerthCount]) {
+    // Island-local, matching ship_view::renderIsland (y is the box centre).
+    // Quay:  B(-6, -1.55, -40, 82, 6.9, 10)  top = 1.90
+    // Pier 1: B(-26, 1.1, -54, 4.5, 0.8, 30) top = 1.50
+    // Pier 2: B(-2,  1.1, -56, 4.5, 0.8, 34) top = 1.50
+    // Pier 3: B(22,  1.1, -52, 4.5, 0.8, 26) top = 1.50
+    out[0] = { -6.0, -40.0, 41.0, 5.0, 1.90 };
+    out[1] = { -26.0, -54.0, 2.25, 15.0, 1.50 };
+    out[2] = { -2.0, -56.0, 2.25, 17.0, 1.50 };
+    out[3] = { 22.0, -52.0, 2.25, 13.0, 1.50 };
+}
+
+double nearestBerth(const BerthRect* berths, int count, double x, double z,
+                    double& outX, double& outZ, double& outY) {
+    if (!berths || count <= 0) { outX = x; outZ = z; outY = 0.0; return 1.0e9; }
+    double best = 1.0e9;
+    outX = x; outZ = z; outY = berths[0].feetY;
+    for (int i = 0; i < count; ++i) {
+        const BerthRect& b = berths[i];
+        const double cx = clampd(x, b.cx - b.hx, b.cx + b.hx);
+        const double cz = clampd(z, b.cz - b.hz, b.cz + b.hz);
+        const double dx = x - cx, dz = z - cz;
+        const double d = std::sqrt(dx * dx + dz * dz);
+        if (d < best) { best = d; outX = cx; outZ = cz; outY = b.feetY; }
+    }
+    return best;
+}
+
+static bool berthContains(const BerthRect* berths, int count, double x, double z, double& y) {
+    double bx, bz, by;
+    const double d = nearestBerth(berths, count, x, z, bx, bz, by);
+    if (d > 1.0e-6) return false;
+    y = by;
+    return true;
+}
+
+PlankSpec planGangplank(const DeckFrame& deck, const PoseTR& pose,
+                        const BerthRect* berths, int count,
+                        double berthToSceneX, double berthToSceneZ,
+                        double speed, double reach, double maxSpeed) {
+    PlankSpec best;
+    if (!berths || count <= 0 || speed > maxSpeed) return best;
+    const double edge[8][2] = {
+        { 0.0, deck.halfLength }, { 0.0, -deck.halfLength },
+        { -deck.halfBeam, 0.0 }, { deck.halfBeam, 0.0 },
+        { -deck.halfBeam, deck.halfLength }, { deck.halfBeam, deck.halfLength },
+        { -deck.halfBeam, -deck.halfLength }, { deck.halfBeam, -deck.halfLength },
+    };
+    double bestD = reach;
+    for (const auto& e : edge) {
+        double sx, sy, sz;
+        shipLocalToScene(e[0], deck.deckY, e[1], pose, sx, sy, sz);
+        double qx, qz, qy;
+        const double d = nearestBerth(berths, count, sx - berthToSceneX, sz - berthToSceneZ, qx, qz, qy);
+        if (d <= bestD) {
+            bestD = d;
+            best.deployed = true;
+            best.deckLocalX = e[0];
+            best.deckLocalZ = e[1];
+            best.dockX = qx + berthToSceneX;
+            best.dockZ = qz + berthToSceneZ;
+            best.dockY = qy;
+        }
+    }
+    return best;
+}
+
+static void placeAtHelm(ShipFoot& foot, const DeckFrame& deck) {
+    foot.surface = FootSurface::Deck;
+    foot.x = deck.helmX;
+    foot.z = deck.helmZ;
+    foot.face = 0.0;
+    foot.plankT = 1.0;
+}
+
+bool helmInReach(const ShipFoot& foot, const DeckFrame& deck) {
+    if (foot.mode != ControlMode::Foot || foot.surface != FootSurface::Deck) return false;
+    const double dx = foot.x - deck.helmX, dz = foot.z - deck.helmZ;
+    return dx * dx + dz * dz <= 1.05 * 1.05;
+}
+
+bool footUnderWay(const ShipFoot& foot) {
+    return foot.mode == ControlMode::Helm || foot.surface == FootSurface::Deck;
+}
+
+const char* shipFootLabel(const ShipFoot& foot) {
+    if (foot.mode == ControlMode::Helm) return "at the helm";
+    if (foot.surface == FootSurface::Plank) return "on the gangplank";
+    if (foot.surface == FootSurface::Ground) return "ashore";
+    return "on deck";
+}
+
+static void plankEnds(const PlankSpec& plank, const FootWorld& world,
+                      double& deckX, double& deckY, double& deckZ) {
+    shipLocalToScene(plank.deckLocalX, world.deck.deckY, plank.deckLocalZ, world.pose, deckX, deckY, deckZ);
+}
+
+static double sceneMoveYawFromLocal(double localFace, double heading) {
+    // Mesh yaw sends local (sin f, cos f) to scene (sin(f - h), cos(f - h)).
+    return localFace - heading;
+}
+
+void stepShipFoot(ShipFoot& foot, const FootInput& in, const FootWorld& world) {
+    const double dt = in.dt > 0.0 ? in.dt : 0.0;
+    const DeckFrame& deck = world.deck;
+    if (foot.mode == ControlMode::Helm) {
+        placeAtHelm(foot, deck);
+        if (in.leaveHelm) foot.mode = ControlMode::Foot;
+        return;
+    }
+    if (in.takeHelm && helmInReach(foot, deck)) {
+        foot.mode = ControlMode::Helm;
+        placeAtHelm(foot, deck);
+        return;
+    }
+
+    const double turnRate = 2.2;
+    const double walkSpeed = 3.4;
+    const double climbSpeed = 2.15;
+    foot.face += in.turn * turnRate * dt;
+
+    auto mountPlank = [&](double t) {
+        foot.surface = FootSurface::Plank;
+        foot.plankT = t;
+        if (t >= 0.5)
+            foot.face = sceneMoveYawFromLocal(foot.face, world.pose.heading);
+    };
+
+    if (foot.surface == FootSurface::Deck) {
+        const double ox = foot.x + std::sin(foot.face) * in.move * walkSpeed * dt;
+        const double oz = foot.z + std::cos(foot.face) * in.move * walkSpeed * dt;
+        const bool outside = std::fabs(ox) > deck.halfBeam || std::fabs(oz) > deck.halfLength;
+        const double dx = ox - world.plank.deckLocalX, dz = oz - world.plank.deckLocalZ;
+        if (world.plank.deployed && outside && dx * dx + dz * dz < 1.3 * 1.3) {
+            mountPlank(1.0);
+        } else {
+            foot.x = clampd(ox, -deck.halfBeam, deck.halfBeam);
+            foot.z = clampd(oz, -deck.halfLength, deck.halfLength);
+        }
+        return;
+    }
+
+    double deckX, deckY, deckZ;
+    plankEnds(world.plank, world, deckX, deckY, deckZ);
+    const double rampX = deckX - world.plank.dockX;
+    const double rampZ = deckZ - world.plank.dockZ;
+    const double rampLen = std::max(0.2, std::sqrt(rampX * rampX + rampZ * rampZ));
+    const double dirX = rampX / rampLen, dirZ = rampZ / rampLen; // toward the deck
+
+    if (foot.surface == FootSurface::Plank) {
+        if (!world.plank.deployed) {
+            // She sailed out from under the ramp: stay with the hull.
+            foot.surface = FootSurface::Deck;
+            foot.x = world.plank.deckLocalX;
+            foot.z = world.plank.deckLocalZ;
+            foot.face = foot.face + world.pose.heading;
+            return;
+        }
+        const double along = std::sin(foot.face) * dirX + std::cos(foot.face) * dirZ;
+        foot.plankT += in.move * along * climbSpeed * dt / rampLen;
+        if (foot.plankT >= 1.0) {
+            foot.surface = FootSurface::Deck;
+            foot.plankT = 1.0;
+            const double ix = -world.plank.deckLocalX, iz = -world.plank.deckLocalZ;
+            const double il = std::sqrt(ix * ix + iz * iz);
+            foot.x = world.plank.deckLocalX;
+            foot.z = world.plank.deckLocalZ;
+            if (il > 1e-4) {
+                foot.x += ix / il * 0.45;
+                foot.z += iz / il * 0.45;
+            }
+            foot.x = clampd(foot.x, -deck.halfBeam, deck.halfBeam);
+            foot.z = clampd(foot.z, -deck.halfLength, deck.halfLength);
+            foot.face = foot.face + world.pose.heading; // scene move-yaw -> ship-local
+            return;
+        }
+        if (foot.plankT <= 0.0) {
+            foot.surface = FootSurface::Ground;
+            foot.plankT = 0.0;
+            foot.x = world.plank.dockX;
+            foot.z = world.plank.dockZ;
+            return;
+        }
+        return;
+    }
+
+    // Ground.
+    const double nx = foot.x + std::sin(foot.face) * in.move * walkSpeed * dt;
+    const double nz = foot.z + std::cos(foot.face) * in.move * walkSpeed * dt;
+    auto onGround = [&](double gx, double gz) {
+        if (world.yard)
+            return gx >= world.yardMinX && gx <= world.yardMaxX && gz >= world.yardMinZ && gz <= world.yardMaxZ;
+        double y = 0.0;
+        const double ilx = gx - world.berthToSceneX, ilz = gz - world.berthToSceneZ;
+        return berthContains(world.berths, world.berthCount, ilx, ilz, y);
+    };
+    if (onGround(nx, nz)) { foot.x = nx; foot.z = nz; }
+    else if (onGround(nx, foot.z)) foot.x = nx;
+    else if (onGround(foot.x, nz)) foot.z = nz;
+    else if (!onGround(foot.x, foot.z)) {
+        // Washed off a rect (or just stepped off the plank onto its outer edge
+        // that the nudge missed): snap back onto the nearest walkable point.
+        if (world.yard) {
+            foot.x = clampd(foot.x, world.yardMinX, world.yardMaxX);
+            foot.z = clampd(foot.z, world.yardMinZ, world.yardMaxZ);
+        } else if (world.berthCount > 0) {
+            double qx, qz, qy;
+            nearestBerth(world.berths, world.berthCount,
+                         foot.x - world.berthToSceneX, foot.z - world.berthToSceneZ, qx, qz, qy);
+            foot.x = qx + world.berthToSceneX;
+            foot.z = qz + world.berthToSceneZ;
+        }
+    }
+
+    if (world.plank.deployed && in.move > 0.2) {
+        const double dx = foot.x - world.plank.dockX, dz = foot.z - world.plank.dockZ;
+        const double toDeck = std::sin(foot.face) * (deckX - foot.x) + std::cos(foot.face) * (deckZ - foot.z);
+        if (dx * dx + dz * dz < 1.25 * 1.25 && toDeck > 0.0) {
+            foot.surface = FootSurface::Plank;
+            foot.plankT = 0.0;
+        }
+    }
+}
+
+void stepCameraHandoff(ShipFoot& foot, double dt) {
+    const double target = foot.mode == ControlMode::Foot ? 1.0 : 0.0;
+    const double k = 3.2;
+    const double t = dt > 0.0 ? dt : 0.0;
+    foot.camBlend += (target - foot.camBlend) * std::min(1.0, t * k);
+    if (std::fabs(foot.camBlend - target) < 1.0e-3) foot.camBlend = target;
+}
+
+FootSample sampleShipFoot(const ShipFoot& foot, const FootWorld& world) {
+    FootSample s;
+    if (foot.surface == FootSurface::Deck || foot.mode == ControlMode::Helm) {
+        const double lx = foot.mode == ControlMode::Helm ? world.deck.helmX : foot.x;
+        const double lz = foot.mode == ControlMode::Helm ? world.deck.helmZ : foot.z;
+        const double face = foot.mode == ControlMode::Helm ? 0.0 : foot.face;
+        shipLocalToScene(lx, world.deck.deckY, lz, world.pose, s.x, s.y, s.z);
+        s.moveYaw = sceneMoveYawFromLocal(face, world.pose.heading);
+        s.renderYaw = renderYawFromMove(s.moveYaw);
+        return s;
+    }
+    if (foot.surface == FootSurface::Plank && world.plank.deployed) {
+        double deckX, deckY, deckZ;
+        plankEnds(world.plank, world, deckX, deckY, deckZ);
+        const double t = clampd(foot.plankT, 0.0, 1.0);
+        s.x = world.plank.dockX + (deckX - world.plank.dockX) * t;
+        s.y = world.plank.dockY + (deckY - world.plank.dockY) * t;
+        s.z = world.plank.dockZ + (deckZ - world.plank.dockZ) * t;
+        s.moveYaw = foot.face;
+        s.renderYaw = renderYawFromMove(s.moveYaw);
+        return s;
+    }
+    s.x = foot.x;
+    s.z = foot.z;
+    s.moveYaw = foot.face;
+    s.renderYaw = renderYawFromMove(s.moveYaw);
+    if (world.yard) {
+        s.y = world.yardFeetY;
+    } else {
+        double y = world.yardFeetY;
+        const double ilx = foot.x - world.berthToSceneX, ilz = foot.z - world.berthToSceneZ;
+        if (!berthContains(world.berths, world.berthCount, ilx, ilz, y)) {
+            double qx, qz;
+            nearestBerth(world.berths, world.berthCount, ilx, ilz, qx, qz, y);
+        }
+        s.y = y;
+    }
+    return s;
+}
+
 std::vector<TestResult> runSelfTest() {
     std::vector<TestResult> r;
     auto eq = [](double a, double b) { return std::fabs(a - b) < 1e-6; };
@@ -1100,6 +1452,223 @@ std::vector<TestResult> runSelfTest() {
              num(l1.cannonCount) + " -> " + num(l5.cannonCount));
         push("Higher-level enemies are larger", l5.length > l1.length && l5.width > l1.width);
         push("Enemy broadsides are even (guns split per side)", (l1.cannonCount % 2) == 0 && (l5.cannonCount % 2) == 0);
+    }
+
+    // --- Seamless ship <-> foot ----------------------------------------------
+    {
+        auto near = [](double a, double b, double eps = 1e-6) { return std::fabs(a - b) < eps; };
+        const Ship sloop = makeShipFromConfig(ShipConfig{});
+        const DeckFrame deck = deckFrameFor(sloop);
+        push("Helm stands on the walkable deck",
+             std::fabs(deck.helmZ) < deck.halfLength && std::fabs(deck.helmX) <= deck.halfBeam);
+        push("Yard deck height matches the stocks",
+             near(deck.deckY + stocksHeaveY(deck.depth),
+                  2.9 + deck.depth * 0.55 + deck.depth * 0.03 + 0.06));
+
+        PoseTR pose;
+        double ox, oy, oz, lx, ly, lz;
+        pose.heading = 0.4;
+        shipLocalToScene(0.0, 0.0, 1.0, pose, ox, oy, oz);
+        push("Bow follows the mesh yaw (bx ZYX)",
+             near(ox, -std::sin(0.4)) && near(oz, std::cos(0.4)) && near(oy, 0.0));
+
+        pose.heading = 0.0;
+        pose.heel = 0.3;
+        pose.heaveY = 2.0;
+        shipLocalToScene(1.0, 0.0, 0.0, pose, ox, oy, oz);
+        push("Positive heel drops the starboard rail", oy < pose.heaveY - 0.05);
+
+        pose.pitch = 0.12;
+        pose.heel = -0.18;
+        pose.heading = 1.25;
+        pose.heaveY = 1.4;
+        pose.originX = 3.0;
+        pose.originZ = -6.0;
+        shipLocalToScene(0.5, 1.1, -2.0, pose, ox, oy, oz);
+        sceneToShipLocal(ox, oy, oz, pose, lx, ly, lz);
+        push("Ship-local footing round-trips through pitch, heel and yaw",
+             near(lx, 0.5, 1e-8) && near(ly, 1.1, 1e-8) && near(lz, -2.0, 1e-8));
+
+        FootWorld world;
+        world.deck = deck;
+        world.pose.heaveY = 1.2;
+        world.pose.heading = 0.4;
+        world.pose.pitch = 0.05;
+        world.pose.heel = -0.08;
+        ShipFoot foot;
+        FootInput idle;
+        idle.dt = 0.016;
+        stepShipFoot(foot, idle, world);
+        const FootSample atWheel = sampleShipFoot(foot, world);
+        idle.leaveHelm = true;
+        stepShipFoot(foot, idle, world);
+        const FootSample steppedOff = sampleShipFoot(foot, world);
+        push("Leaving the helm keeps you at the wheel",
+             foot.mode == ControlMode::Foot && foot.surface == FootSurface::Deck
+             && near(atWheel.x, steppedOff.x, 1e-8) && near(atWheel.y, steppedOff.y, 1e-8)
+             && near(atWheel.z, steppedOff.z, 1e-8));
+
+        foot.x = 0.0;
+        foot.z = deck.halfLength * 0.85;
+        foot.face = 0.0;
+        FootInput grab;
+        grab.dt = 0.016;
+        grab.takeHelm = true;
+        stepShipFoot(foot, grab, world);
+        push("The wheel is out of reach from the bow", foot.mode == ControlMode::Foot);
+
+        foot.x = deck.helmX;
+        foot.z = deck.helmZ;
+        stepShipFoot(foot, grab, world);
+        push("Taking the helm only works at the wheel", foot.mode == ControlMode::Helm);
+
+        // Fixed ship-local footing: heel and yaw move the scene point, not the feet.
+        foot.mode = ControlMode::Foot;
+        foot.surface = FootSurface::Deck;
+        foot.x = 1.0;
+        foot.z = 2.0;
+        foot.face = 0.3;
+        world.pose.heel = 0.0;
+        world.pose.pitch = 0.0;
+        world.pose.heading = 0.0;
+        world.pose.originX = 0.0;
+        world.pose.originZ = 0.0;
+        const FootSample flat = sampleShipFoot(foot, world);
+        world.pose.heel = 0.22;
+        world.pose.pitch = -0.1;
+        world.pose.heading = 1.1;
+        world.pose.originX = 10.0;
+        world.pose.originZ = -4.0;
+        FootInput hold;
+        hold.dt = 0.05;
+        stepShipFoot(foot, hold, world);
+        const FootSample rolled = sampleShipFoot(foot, world);
+        push("Heeling does not slide a planted footing",
+             near(foot.x, 1.0) && near(foot.z, 2.0) && near(foot.face, 0.3));
+        sceneToShipLocal(rolled.x, rolled.y, rolled.z, world.pose, lx, ly, lz);
+        push("A planted footing rides the hull when she heels and yaws",
+             !near(flat.y, rolled.y, 0.02) && near(lx, 1.0, 1e-6) && near(lz, 2.0, 1e-6)
+             && near(ly, deck.deckY, 1e-6) && near(world.pose.originX, 10.0));
+
+        world.plank.deployed = false;
+        foot.x = 0.0;
+        foot.z = -deck.halfLength + 0.02;
+        foot.face = PI;
+        FootInput aft;
+        aft.move = 1.0;
+        aft.dt = 0.05;
+        for (int i = 0; i < 20; ++i) stepShipFoot(foot, aft, world);
+        push("With the plank stowed you stay on deck",
+             foot.surface == FootSurface::Deck && foot.z >= -deck.halfLength - 1e-9);
+
+        world.yard = true;
+        world.pose = {};
+        world.pose.heaveY = stocksHeaveY(deck.depth);
+        world.plank = yardGangplank(deck);
+        foot.surface = FootSurface::Ground;
+        foot.x = world.plank.dockX;
+        foot.z = world.plank.dockZ;
+        foot.face = 0.0; // toward the stern, up the ramp
+        FootInput climb;
+        climb.move = 1.0;
+        climb.dt = 0.05;
+        for (int i = 0; i < 50 && foot.surface != FootSurface::Deck; ++i) stepShipFoot(foot, climb, world);
+        const FootSample aboard = sampleShipFoot(foot, world);
+        const double deckSceneY = world.pose.heaveY + deck.deckY;
+        push("Climbing the gangplank boards the deck",
+             foot.surface == FootSurface::Deck && near(aboard.y, deckSceneY, 0.15));
+
+        foot.surface = FootSurface::Plank;
+        foot.plankT = 0.5;
+        foot.face = 0.0;
+        const FootSample mid = sampleShipFoot(foot, world);
+        double deckEndX, deckEndY, deckEndZ;
+        shipLocalToScene(world.plank.deckLocalX, deck.deckY, world.plank.deckLocalZ, world.pose,
+                         deckEndX, deckEndY, deckEndZ);
+        push("The gangplank rises between dock and deck",
+             mid.y > world.plank.dockY + 0.2 && mid.y < deckEndY - 0.2
+             && near(mid.y, 0.5 * (world.plank.dockY + deckEndY), 1e-6));
+
+        foot.surface = FootSurface::Deck;
+        foot.x = 0.0;
+        foot.z = -deck.halfLength + 0.02;
+        foot.face = PI;
+        for (int i = 0; i < 40 && foot.surface != FootSurface::Ground; ++i) stepShipFoot(foot, aft, world);
+        push("Walking off the stern goes ashore, not a teleport",
+             foot.surface == FootSurface::Ground
+             && near(foot.x, world.plank.dockX, 0.6) && near(foot.z, world.plank.dockZ, 0.6));
+
+        BerthRect pier;
+        pier.cx = 0.0;
+        pier.cz = -deck.halfLength - 4.0;
+        pier.hx = 3.0;
+        pier.hz = 1.0;
+        pier.feetY = 1.5;
+        world.yard = false;
+        world.berths = &pier;
+        world.berthCount = 1;
+        world.pose = {};
+        const PlankSpec alongside = planGangplank(deck, world.pose, &pier, 1, 0.0, 0.0, 0.0);
+        const PlankSpec sailing = planGangplank(deck, world.pose, &pier, 1, 0.0, 0.0, 5.0);
+        push("A stopped hull near a pier drops the gangplank", alongside.deployed && !sailing.deployed);
+
+        BerthRect quay;
+        quay.cx = 0.0;
+        quay.cz = 0.0;
+        quay.hx = 2.0;
+        quay.hz = 2.0;
+        quay.feetY = 1.9;
+        world.berths = &quay;
+        world.berthCount = 1;
+        world.plank.deployed = false;
+        foot.surface = FootSurface::Ground;
+        foot.x = 0.0;
+        foot.z = 0.0;
+        foot.face = 0.0;
+        FootInput wander = climb;
+        for (int i = 0; i < 80; ++i) stepShipFoot(foot, wander, world);
+        double by = 0.0;
+        const bool still = berthContains(&quay, 1, foot.x, foot.z, by);
+        push("Ashore, you stay on the quay", still && foot.z > 1.5 && foot.z <= 2.0 + 1e-6);
+
+        BerthRect harbour[kHarbourBerthCount];
+        harbourBerths(harbour);
+        world.berths = harbour;
+        world.berthCount = kHarbourBerthCount;
+        foot.x = -2.0;
+        foot.z = -56.0; // pier 2, island-local == scene when the ship is at the island origin
+        foot.face = 0.0;
+        const double z0 = foot.z;
+        for (int i = 0; i < 120; ++i) stepShipFoot(foot, wander, world);
+        double hy = 0.0;
+        push("The pier connects to the quay",
+             foot.z > z0 + 8.0 && berthContains(harbour, kHarbourBerthCount, foot.x, foot.z, hy));
+
+        foot.mode = ControlMode::Foot;
+        foot.camBlend = 0.0;
+        stepCameraHandoff(foot, 0.1);
+        const double midBlend = foot.camBlend;
+        for (int i = 0; i < 30; ++i) stepCameraHandoff(foot, 0.1);
+        const double full = foot.camBlend;
+        foot.mode = ControlMode::Helm;
+        for (int i = 0; i < 30; ++i) stepCameraHandoff(foot, 0.1);
+        push("The camera eases between chase and follow",
+             midBlend > 0.2 && midBlend < 0.5 && near(full, 1.0) && near(foot.camBlend, 0.0));
+
+        push("Sail heel leans to leeward and dies in irons",
+             sailWindHeel(0.0, PI * 0.5, 1.0, 1.0) > 0.05
+             && sailWindHeel(0.0, -PI * 0.5, 1.0, 1.0) < -0.05
+             && std::fabs(sailWindHeel(0.0, PI, 1.0, 1.0)) < 0.02);
+        push("Render yaw faces the way you walk",
+             near(renderYawFromMove(0.0), 0.0) && near(renderYawFromMove(PI * 0.5), -PI * 0.5));
+        ShipFoot ashore;
+        ashore.mode = ControlMode::Foot;
+        ashore.surface = FootSurface::Ground;
+        ShipFoot onDeck;
+        onDeck.mode = ControlMode::Foot;
+        onDeck.surface = FootSurface::Deck;
+        push("The ship keeps way on deck and is moored ashore",
+             footUnderWay(ShipFoot{}) && footUnderWay(onDeck) && !footUnderWay(ashore));
     }
 
     return r;

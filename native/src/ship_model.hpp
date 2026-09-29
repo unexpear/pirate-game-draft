@@ -249,6 +249,130 @@ const char* zoneShipName(int level);
 // the level rises. Level <= 1 is the light raider; the reference sloop is L0.
 ShipConfig enemyConfigForLevel(int level);
 
+// --- Seamless ship <-> foot -------------------------------------------------
+// One body, two ways to drive it. At the helm the chase camera and the sail
+// gearbox are in charge. On foot the same body walks the deck, a gangplank, or
+// the dock — no teleport between them. Deck coordinates are ship-local, so a
+// fixed footing rides the hull through heave, pitch, heel, and yaw instead of
+// sliding off as she rolls.
+//
+// The ship-local -> scene transform matches bx::mtxSRT (rotation ZYX, column
+// vectors): local +Z is the bow, local +X is starboard. Positive pitch lifts
+// the bow; positive heel drops the starboard rail.
+enum class ControlMode { Helm, Foot };
+enum class FootSurface { Deck, Plank, Ground };
+
+struct DeckFrame {
+    double length = 0, beam = 0, depth = 0;
+    double deckY = 0;       // feet height in ship-local (stands on the deck)
+    double halfLength = 0;  // walkable extent, ship-local
+    double halfBeam = 0;
+    double helmX = 0, helmZ = 0; // where "take the wheel" lands, on the deck
+};
+
+// Heave of a hull sitting on the yard stocks. deckY + stocksHeaveY equals the
+// build-scene deck the character already stands on (ship_view::deckStandHeight).
+double stocksHeaveY(double depth);
+DeckFrame deckFrameFor(const Ship& ship);
+
+// Scene pose of the hull the body is standing on. `heel` is the total roll the
+// mesh uses (wave heel + sail heel), not wave heel alone.
+struct PoseTR {
+    double heaveY = 0, pitch = 0, heel = 0, heading = 0;
+    double originX = 0, originZ = 0;
+};
+
+void shipLocalToScene(double lx, double ly, double lz, const PoseTR& pose,
+                      double& ox, double& oy, double& oz);
+void sceneToShipLocal(double sx, double sy, double sz, const PoseTR& pose,
+                      double& lx, double& ly, double& lz);
+
+// Leeward roll (radians) from sail pressure. Same formula the mesh adds on top
+// of the wave heel, so feet and planks share one deck.
+double sailWindHeel(double heading, double windDir, double sailFullness, double heelScale);
+
+// Upright yaw for renderCharacter. Movement yaw uses (sin, cos) as its forward;
+// the mesh's yaw sends local +Z to (-sin, cos), so the body faces the other way
+// unless this conversion is applied. Follow cameras keep the movement yaw.
+double renderYawFromMove(double moveYaw);
+
+struct ShipFoot {
+    ControlMode mode = ControlMode::Helm;
+    FootSurface surface = FootSurface::Deck;
+    double x = 0, z = 0;   // Deck: ship-local. Ground: scene. Unused on the plank.
+    double face = 0;       // Deck: ship-local yaw (0 = bow). Plank/Ground: scene move-yaw.
+    double plankT = 1;     // 0 = dock end, 1 = deck end
+    double camBlend = 0;   // 0 = chase behind the bow, 1 = third-person follow
+};
+
+struct FootInput {
+    double move = 0;       // -1 astern/back, +1 forward, in the facing direction
+    double turn = 0;       // -1 port, +1 starboard
+    bool leaveHelm = false;
+    bool takeHelm = false;
+    double dt = 0;
+};
+
+// A ramp from a ship-local deck edge to a scene-space dock point.
+struct PlankSpec {
+    bool deployed = false;
+    double deckLocalX = 0, deckLocalZ = 0;
+    double dockX = 0, dockY = 0, dockZ = 0;
+};
+
+// Walkable rectangle. Harbour berths are island-local; the yard is one scene rect.
+struct BerthRect {
+    double cx = 0, cz = 0, hx = 0, hz = 0, feetY = 1.5;
+};
+
+struct FootWorld {
+    DeckFrame deck;
+    PoseTR pose;
+    PlankSpec plank;
+    bool yard = false;
+    double yardMinX = -26, yardMaxX = 26, yardMinZ = -20, yardMaxZ = 26, yardFeetY = 1.8;
+    // scene = island-local + berthToScene. Harbour berths are island-local.
+    double berthToSceneX = 0, berthToSceneZ = 0;
+    const BerthRect* berths = nullptr;
+    int berthCount = 0;
+};
+
+struct FootSample {
+    double x = 0, y = 0, z = 0;
+    double moveYaw = 0;    // follow camera
+    double renderYaw = 0;  // ship_mesh::renderCharacter
+};
+
+// The yard gangplank: stern edge down onto the dry-dock (always deployed).
+PlankSpec yardGangplank(const DeckFrame& deck);
+
+// Quay + three piers, island-local, matching the harbour boxes in ship_view.
+// feetY is the unlifted top; scenery sitting on the beach adds its own lift.
+constexpr int kHarbourBerthCount = 4;
+void harbourBerths(BerthRect out[kHarbourBerthCount]);
+
+// Nearest point on the berth set. Distance is in the same frame as x/z.
+// Returns a large value when there are no berths.
+double nearestBerth(const BerthRect* berths, int count, double x, double z,
+                    double& outX, double& outZ, double& outY);
+
+// Gangplank from the deck edge closest to a berth, when nearly stopped and in reach.
+PlankSpec planGangplank(const DeckFrame& deck, const PoseTR& pose,
+                        const BerthRect* berths, int count,
+                        double berthToSceneX, double berthToSceneZ,
+                        double speed, double reach = 8.0, double maxSpeed = 1.8);
+
+void stepShipFoot(ShipFoot& foot, const FootInput& in, const FootWorld& world);
+void stepCameraHandoff(ShipFoot& foot, double dt);
+FootSample sampleShipFoot(const ShipFoot& foot, const FootWorld& world);
+bool helmInReach(const ShipFoot& foot, const DeckFrame& deck);
+
+// True while the hull should keep her way: at the helm, or walking the deck.
+// On the plank or ashore she is moored (the caller zeros speed).
+bool footUnderWay(const ShipFoot& foot);
+
+const char* shipFootLabel(const ShipFoot& foot);
+
 std::vector<TestResult> runSelfTest();
 
 } // namespace sea

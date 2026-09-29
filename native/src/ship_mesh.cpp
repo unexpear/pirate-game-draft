@@ -128,7 +128,8 @@ void render(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& pose,
     const float awa = std::acos(std::max(-1.0f, std::min(1.0f, -align))); // 0=in irons .. pi=astern
     const float lee = (std::sin(windDir - heading) >= 0.0f) ? 1.0f : -1.0f; // leeward side
     const float power = float(sea::sailPower(double(awa) * 57.2957795));
-    const float windHeel = lee * 0.34f * power * std::sin(awa) * sailFullness * heelScale; // lean to leeward
+    // Shared with on-foot footing so a walker stays planted on this deck.
+    const float windHeel = float(sea::sailWindHeel(heading, windDir, sailFullness, heelScale));
 
     // Ship root: yaw (heading) + heave + pitch + (wave heel + wind heel) + world
     // position, above each piece's local transform.
@@ -221,7 +222,7 @@ void renderDepth(uint16_t viewId, const sea::Ship& ship, const sea::FloatPose& p
     const float awa = std::acos(std::max(-1.0f, std::min(1.0f, -align)));
     const float lee = (std::sin(windDir - heading) >= 0.0f) ? 1.0f : -1.0f;
     const float power = float(sea::sailPower(double(awa) * 57.2957795));
-    const float windHeel = lee * 0.34f * power * std::sin(awa) * sailFullness * heelScale;
+    const float windHeel = float(sea::sailWindHeel(heading, windDir, sailFullness, heelScale));
     float shipRoot[16];
     bx::mtxSRT(shipRoot, 1.0f, 1.0f, 1.0f,
         float(pose.pitch), heading, float(pose.heel) + windHeel, posX, float(pose.heaveY), posZ);
