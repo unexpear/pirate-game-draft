@@ -57,6 +57,7 @@ The Three.js browser spike at [spikes/threejs-sea-trial/](spikes/threejs-sea-tri
 - [ ] Brace (hold, timed) — negate/soften an incoming broadside; the BF defensive verb, pairs with enemy return fire.
 - [ ] Mouse camera control (drag-orbit / scroll-zoom) — also unlocks Black Flag's real *camera-direction* weapon selection (side/front/rear).
 - [ ] The full Build → Sail loop per [vertical-slice.md](vertical-slice.md); Jolt + Steamworks after.
+- [x] **Phase 8 two-player sailing mini-test** — local UDP host+join (`sea_trial --host [port]` / `--join <ipv4> [port]`, default port 27777). Each player sails their own Test Sloop in the same sea and sees the other move. The host shares the wave seed, wind, and session clock; ship snapshots (position, heading, sail, cargo, piece damage, sink) replicate, and the peer **recomputes** waterline / pitch / heel from the shared Gerstner field so the debug overlay matches within tolerance. A damage event is an idempotent write of the same hull change. Pure-C++ session spine (`native/src/session.*`) with self-tests: snapshot/damage/welcome round-trip, interpolation (short heading arc, hold past the end), in-process two-peer loopback, and a 127.0.0.1 UDP delivery check. No host migration, no Steamworks, no combat sync. How to run two instances: [native/README.md](native/README.md).
 
 ## Done
 
@@ -70,4 +71,4 @@ The Three.js browser spike at [spikes/threejs-sea-trial/](spikes/threejs-sea-tri
 
 - Open-world content (islands, quests, etc. — explicitly held back per slice §25)
 - Real Steam Workshop integration (web spike used local `/user_ships/` as stand-in)
-- Multiplayer beyond the slice's optional Phase 8 mini-test
+- Multiplayer beyond the slice's optional Phase 8 mini-test (loopback/LAN host+join is in; Steamworks SDR, host migration, and combat sync are not)

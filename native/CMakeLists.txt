@@ -13,6 +13,7 @@ option(SEA_TRIAL_BUILD_APP "Build the windowed app (SDL3 + bgfx + Dear ImGui). O
 # --- Milestone 0, part 1: self-test runner (pure logic, no dependencies) ---
 add_executable(sea_trial_selftest
     src/ship_model.cpp
+    src/session.cpp
     src/self_test.cpp
 )
 target_include_directories(sea_trial_selftest PRIVATE src)
@@ -21,6 +22,9 @@ if(MSVC)
     target_compile_options(sea_trial_selftest PRIVATE /W4 /permissive-)
 else()
     target_compile_options(sea_trial_selftest PRIVATE -Wall -Wextra)
+endif()
+if(WIN32)
+    target_link_libraries(sea_trial_selftest PRIVATE ws2_32)
 endif()
 
 enable_testing()
@@ -55,6 +59,7 @@ set(BGFX_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/extern/bgfx.cmake)
 add_executable(sea_trial
     src/main.cpp
     src/ship_model.cpp
+    src/session.cpp
     src/ship_view.cpp
     src/water_gpu.cpp
     src/island_gpu.cpp
@@ -75,6 +80,9 @@ target_include_directories(sea_trial PRIVATE
     extern/bgfx.cmake/bimg/include
 )
 target_link_libraries(sea_trial PRIVATE SDL3::SDL3-static bgfx bx bimg)
+if(WIN32)
+    target_link_libraries(sea_trial PRIVATE ws2_32)
+endif()
 
 # Compile shaders (D3D11 / dxbc profile) into headers via shaderc. The app
 # forces the D3D11 renderer so this single profile is enough.
