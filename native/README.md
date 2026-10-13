@@ -37,7 +37,9 @@ Next: ship + water rendering, then the full Build → Sail loop (see
 - `src/ship_model.hpp` / `.cpp` — ship generation, weight-vs-buoyancy stats,
   validation, deterministic Gerstner sampling, serialize/deserialize. Ported
   faithfully from the Three.js spike so the numbers match.
-- `src/self_test.cpp` — runs the 11 model-spine checks; exit code 0 iff all
+- `src/session.hpp` / `.cpp` — Phase 8 host/join session: snapshot and damage
+  codecs, interpolation, in-process peers, UDP sockets.
+- `src/self_test.cpp` — model-spine and session checks; exit code 0 iff all
   pass, so it doubles as a CI gate.
 - `CMakeLists.txt` — builds `sea_trial_selftest`; `ctest` registered.
 
@@ -51,10 +53,26 @@ CMake (any generator):
 
 Or a one-shot compile:
 
-    g++ -std=c++17 -Wall -Wextra src/ship_model.cpp src/self_test.cpp -o selftest
+    g++ -std=c++17 -Wall -Wextra src/ship_model.cpp src/session.cpp src/self_test.cpp -o selftest
     ./selftest
 
-Verified 11/11 on **g++ (MSYS2 UCRT64)** and **MSVC 2022** (via CMake).
+Verified on **g++ (MSYS2 UCRT64)** and **MSVC 2022** (via CMake). The same binary also runs the Phase 8 session checks (serialize/apply, interpolation, in-process two-peer loopback, UDP loopback).
+
+## Two-player sailing (Phase 8)
+
+A local UDP host and one joining peer. Each player sails their own ship; the host owns the wave seed, the wind, and the session clock. The other hull is drawn in the chase view. The windowed app needs a display (the self-tests do not). From `native/build` after a full app build:
+
+```text
+# terminal 1 — host, waits for one peer
+./sea_trial --host 27777
+
+# terminal 2 — join (IPv4; localhost is accepted)
+./sea_trial --join 127.0.0.1 27777
+```
+
+Port defaults to 27777 (`--host` alone, or `--join 127.0.0.1`). The joiner spawns ahead and to starboard of the host so both hulls start in view. Sail, add cargo (C/V), damage a plank (X), or repair (Z); the peer's panel shows their position and a pose-match line (recomputed heave / pitch / heel against the snapshot).
+
+The AI patrol and gunnery are paused for the session. There is no host migration and no second client. Same Test Sloop on both sides — a custom build is not transferred. Snapshots are unauthenticated text datagrams for loopback and LAN, not the internet.
 
 ## The 11 checks
 

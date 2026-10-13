@@ -20,6 +20,7 @@
 #include "screenshot.h"
 
 #include "ship_model.hpp"
+#include "session.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -146,6 +147,10 @@ int main(int argc, char** argv) {
     bool noShadow = false;                   // --noshadow: skip every caster (A/B the shadow map)
     bool charOn = false;                     // --char x z heading [y]: a person in the town
     float charDX = 0.0f, charDZ = 0.0f, charDH = 0.0f, charDY = 0.0f;
+    enum class NetRole { Off, Host, Client };
+    NetRole netRole = NetRole::Off;
+    int netPort = 27777;
+    std::string netAddr = "127.0.0.1";
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) maxFrames = std::atoi(argv[++i]);
         else if (std::strcmp(argv[i], "--shot") == 0 && i + 1 < argc) shotPath = argv[++i];
@@ -161,6 +166,15 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--iview") == 0 && i + 1 < argc) isoView = std::atoi(argv[++i]);
         else if (std::strcmp(argv[i], "--list-buildings") == 0) listBuildings = true;
         else if (std::strcmp(argv[i], "--noshadow") == 0) noShadow = true;
+        else if (std::strcmp(argv[i], "--host") == 0) {
+            netRole = NetRole::Host;
+            if (i + 1 < argc && argv[i + 1][0] != '-') netPort = std::atoi(argv[++i]);
+        }
+        else if (std::strcmp(argv[i], "--join") == 0 && i + 1 < argc) {
+            netRole = NetRole::Client;
+            netAddr = argv[++i];
+            if (i + 1 < argc && argv[i + 1][0] != '-') netPort = std::atoi(argv[++i]);
+        }
         else if (std::strcmp(argv[i], "--char") == 0 && i + 3 < argc) {
             charOn = true;
             charDX = float(std::atof(argv[++i]));
@@ -181,7 +195,10 @@ int main(int argc, char** argv) {
     }
 
     int width = 1280, height = 720;
-    SDL_Window* window = SDL_CreateWindow("Sea Trial \xE2\x80\x94 Milestone 0", width, height, SDL_WINDOW_RESIZABLE);
+    std::string windowTitle = "Sea Trial";
+    if (netRole == NetRole::Host) windowTitle += " [host]";
+    else if (netRole == NetRole::Client) windowTitle += " [join]";
+    SDL_Window* window = SDL_CreateWindow(windowTitle.c_str(), width, height, SDL_WINDOW_RESIZABLE);
     if (!window) {
         std::fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
         SDL_Quit();
@@ -208,14 +225,18 @@ int main(int argc, char** argv) {
     imgui_bgfx::init();
 
     // Model data for the panel (computed once).
-    const auto results = sea::runSelfTest();
+    auto results = sea::runSelfTest();
+    {
+        const auto sessionResults = sea::runSessionSelfTest();
+        results.insert(results.end(), sessionResults.begin(), sessionResults.end());
+    }
     int passing = 0;
     for (const auto& r : results) if (r.pass) ++passing;
     const int total = (int)results.size();
     sea::ShipConfig cfg;
     cfg.name = "Test Sloop";
     sea::Ship ship = sea::makeShipFromConfig(cfg); // mutable: cargo/damage are live
-    const std::vector<sea::Wave> waves = sea::makeWaveField("sea-trial-native");
+    std::vector<sea::Wave> waves = sea::makeWaveField("sea-trial-native");
 
     ship_view::init();
     shadow::init(2048); // covers the whole town when it's in view, so needs the texels
@@ -238,6 +259,32 @@ int main(int argc, char** argv) {
     float sailStepCooldown = 0.0f;    // debounce between sail-state steps
     float speed = 0.0f, heading = 0.0f, worldX = 0.0f, worldZ = 0.0f;
     float windDir = 2.1f;             // wind blows toward this heading (radians); drifts
+
+    // Phase 8: host owns the sea; each peer owns their own ship. Solo play
+    // leaves this dormant. The joining hull starts ahead-starboard so it is in
+    // the host's chase view.
+    const bool netPlay = netRole != NetRole::Off;
+    sea::UdpSocket netSock;
+    sea::SailSession netSession = netRole == NetRole::Client
+        ? sea::SailSession::client()
+        : sea::SailSession::host("sea-trial-native");
+    sea::NetClock netClock;
+    int netSeenGen = 0;
+    bool netWavesApplied = false;
+    bool netLinkedPrinted = false;
+    float helloTimer = -1.0f;
+    float snapTimer = -1.0f;
+    int netDmgIndex = -1;
+    bool netDmgArmed = false;
+    bool netRepairArmed = false;
+    sea::Ship remoteShip = ship;
+    sea::Stats remoteStats;
+    sea::FloatPose remotePose;
+    bool remoteVisible = false;
+    bool poseOk = false;
+    float remoteX = 0.0f, remoteZ = 0.0f, remoteHeading = 0.0f;
+    int remoteSail = 1;
+    double poseErrHeave = 0, poseErrPitch = 0, poseErrHeel = 0;
 
     // Gunnery + an AI enemy warship that maneuvers for a broadside and fires back.
     // The enemy is drawn from the difficulty ZONE the player is in: a light raider
@@ -306,10 +353,20 @@ int main(int argc, char** argv) {
         if (n == 0) return;
         const int target = int(std::fabs(std::sin(timeSec * 17.13 + n)) * n) % n;
         int k = 0;
-        for (auto& p : ship.pieces)
-            if (isHull(p) && p.damage < 1.0 && k++ == target) { p.damage = p.damage + 0.25 > 1.0 ? 1.0 : p.damage + 0.25; return; }
+        for (int i = 0; i < int(ship.pieces.size()); ++i) {
+            auto& p = ship.pieces[i];
+            if (isHull(p) && p.damage < 1.0 && k++ == target) {
+                p.damage = p.damage + 0.25 > 1.0 ? 1.0 : p.damage + 0.25;
+                netDmgIndex = i;
+                netDmgArmed = true;
+                return;
+            }
+        }
     };
-    auto repairAll = [&]() { for (auto& p : ship.pieces) p.damage = 0.0; };
+    auto repairAll = [&]() {
+        for (auto& p : ship.pieces) p.damage = 0.0;
+        netRepairArmed = true;
+    };
     // Deterministic pseudo-random in [0,1) — no rand(), seeded by time + position.
     auto pseudoRand = [&](double salt) {
         double v = std::sin((timeSec * 1.37 + salt) * 12.9898 + worldX * 0.0719 + worldZ * 0.1237) * 43758.5453;
@@ -339,6 +396,7 @@ int main(int argc, char** argv) {
     auto resetShip = [&]() {
         ship = sea::makeShipFromConfig(cfg);
         sinkDepth = 0.0f; sailTier = 1; wHoldTime = 0.0f; speed = 0.0f; heading = 0.0f; worldX = 0.0f; worldZ = 0.0f;
+        if (netRole == NetRole::Client) { worldX = 8.0f; worldZ = 28.0f; }
         shots.clear();
         spawnEnemyForZone();
     };
@@ -353,6 +411,34 @@ int main(int argc, char** argv) {
     ship_view::setAuditOnly(auditOnly);
     ship_view::setIsolate(isoId, isoView);
     ship_view::setDebugCharacter(charOn, charDX, charDZ, charDH, charDY);
+    if (netRole == NetRole::Client && !shotMode) { worldX = 8.0f; worldZ = 28.0f; }
+    if (netRole == NetRole::Host) {
+        if (!netSock.bind("0.0.0.0", netPort)) {
+            std::fprintf(stderr, "UDP host bind failed on port %d\n", netPort);
+            shadow::shutdown();
+            ship_view::shutdown();
+            imgui_bgfx::shutdown();
+            bgfx::shutdown();
+            SDL_DestroyWindow(window);
+            SDL_Quit();
+            return 1;
+        }
+        std::printf("session host on UDP port %d — waiting for one peer\n", netSock.boundPort());
+        std::fflush(stdout);
+    } else if (netRole == NetRole::Client) {
+        if (!netSock.bind("0.0.0.0", 0) || !netSock.setPeer(netAddr, netPort)) {
+            std::fprintf(stderr, "UDP join failed for %s:%d\n", netAddr.c_str(), netPort);
+            shadow::shutdown();
+            ship_view::shutdown();
+            imgui_bgfx::shutdown();
+            bgfx::shutdown();
+            SDL_DestroyWindow(window);
+            SDL_Quit();
+            return 1;
+        }
+        std::printf("session joining %s:%d\n", netAddr.c_str(), netPort);
+        std::fflush(stdout);
+    }
     const int shotAt = shotMode ? (maxFrames > 3 ? maxFrames - 3 : 0) : -1; // request a few frames before exit
     bool shotRequested = false;
 
@@ -410,6 +496,34 @@ int main(int argc, char** argv) {
         last = now;
         timeSec += dt;
 
+        // Shared session clock. Solo play keeps the local accumulator. A client
+        // adopts the host's time once a welcome or host snapshot arrives.
+        float simTime = timeSec;
+        if (netPlay) {
+            netSession.setHostClock(timeSec);
+            std::string pkt;
+            while (netSock.recv(pkt)) netSession.receive(pkt);
+            if (netRole == NetRole::Client && !netSession.joined && timeSec - helloTimer > 0.5f) {
+                netSession.queueHello("helm");
+                helloTimer = timeSec;
+            }
+            if (netSession.hostTimeGen != netSeenGen) {
+                netClock.observe(netSession.hostTime, double(timeSec));
+                netSeenGen = netSession.hostTimeGen;
+            }
+            if (netRole == NetRole::Client && netSession.joined && !netWavesApplied) {
+                waves = sea::makeWaveField(netSession.params.waveSeed);
+                netWavesApplied = true;
+            }
+            if (netRole == NetRole::Client && netClock.synced)
+                simTime = float(netClock.now(timeSec));
+            if (!netLinkedPrinted && netSession.joined) {
+                std::printf("session linked (seed %s)\n", netSession.params.waveSeed.c_str());
+                std::fflush(stdout);
+                netLinkedPrinted = true;
+            }
+        }
+
         // Sailing — Black Flag's stepped "gearbox" of sail states. Tap or hold W to
         // raise sail (anchored -> half -> full), then HOLD W at full sail to reach
         // TRAVEL SPEED, the open-water overdrive. S lowers a notch and coasts to a
@@ -438,9 +552,14 @@ int main(int argc, char** argv) {
         const int effTier = sailTier;
 
         // Real points of sail: no drive in the no-go zone (you must tack upwind),
-        // fastest on a reach, slower dead downwind. Wind shifts slowly.
-        windDir += 0.02f * dt;
-        if (windDir > 6.28318531f) windDir -= 6.28318531f;
+        // fastest on a reach, slower dead downwind. Wind shifts slowly. In a
+        // session the wind is a pure function of the shared clock.
+        if (netPlay && (netRole == NetRole::Host || netSession.joined)) {
+            windDir = float(sea::sessionWindDir(netSession.params.windBase, netSession.params.windRate, simTime));
+        } else {
+            windDir += 0.02f * dt;
+            if (windDir > 6.28318531f) windDir -= 6.28318531f;
+        }
         const float align = std::cos(heading - windDir);
         const float awaRad = std::acos(clampf(-align, -1.0f, 1.0f)); // wind angle off the bow
         const float awaDeg = awaRad * 57.2957795f;
@@ -483,25 +602,98 @@ int main(int argc, char** argv) {
         const float sailFullness = effTier == 0 ? 0.0f : (effTier == 1 ? 0.55f : 1.0f);
 
         const sea::Stats stats = sea::getShipStats(ship);
-        sea::FloatPose pose = sea::computeFloatPose(ship, waves, timeSec, worldX, worldZ, heading);
+        sea::FloatPose pose = sea::computeFloatPose(ship, waves, simTime, worldX, worldZ, heading);
         // Founder: an over-margin ship sinks progressively; recovers if lightened in time.
         if (stats.sinking) sinkDepth += dt * clampf(std::fabs(float(stats.floatMargin)) / 1200.0f, 0.3f, 3.0f);
         else sinkDepth = clampf(sinkDepth - dt * 2.5f, 0.0f, 1000.0f);
         pose.heaveY -= sinkDepth;
 
+        // Publish our hull and fold in the peer. Snapshots are absolute; a damage
+        // event is the same write, so applying both does not stack.
+        if (netPlay && netSession.joined && timeSec - snapTimer > 0.05f) {
+            sea::ShipSnapshot snap;
+            snap.playerId = netSession.localPlayerId;
+            snap.sessionTime = simTime;
+            snap.windDir = windDir;
+            snap.x = worldX;
+            snap.z = worldZ;
+            snap.heading = heading;
+            snap.speed = speed;
+            snap.sailTier = effTier;
+            snap.sinkDepth = sinkDepth;
+            snap.heaveY = pose.heaveY;
+            snap.pitch = pose.pitch;
+            snap.heel = pose.heel;
+            sea::fillSnapshotDamage(snap, ship);
+            netSession.publish(snap);
+            snapTimer = timeSec;
+        }
+        if (netPlay && netSession.joined && netDmgArmed && netDmgIndex >= 0 &&
+            netDmgIndex < int(ship.pieces.size())) {
+            sea::DamageEvent ev;
+            ev.playerId = netSession.localPlayerId;
+            ev.pieceIndex = netDmgIndex;
+            ev.damage = ship.pieces[netDmgIndex].damage;
+            ev.sessionTime = simTime;
+            netSession.publishDamage(ev);
+        }
+        if (netPlay && netSession.joined && netRepairArmed) {
+            sea::DamageEvent ev;
+            ev.playerId = netSession.localPlayerId;
+            ev.pieceIndex = -1;
+            ev.damage = 0;
+            ev.sessionTime = simTime;
+            netSession.publishDamage(ev);
+        }
+        netDmgArmed = false;
+        netRepairArmed = false;
+        if (netPlay) {
+            for (const auto& m : netSession.takeOutbound()) netSock.send(m);
+            if (netSession.hasRemote) {
+                const sea::ShipSnapshot& rs = netSession.latestRemote;
+                sea::applySnapshot(remoteShip, rs);
+                if (netSession.hasDamage && netSession.lastDamage.sessionTime + 1e-4 >= rs.sessionTime)
+                    sea::applyDamageEvent(remoteShip, netSession.lastDamage);
+                // Agreement uses the snapshot alone. poseForSnapshot re-applies it, so a
+                // damage event folded into the live replica does not disturb the check.
+                const sea::FloatPose recomputed = sea::poseForSnapshot(remoteShip, waves, rs);
+                poseErrHeave = recomputed.heaveY - rs.heaveY;
+                poseErrPitch = recomputed.pitch - rs.pitch;
+                poseErrHeel = recomputed.heel - rs.heel;
+                const double tol = 1e-3;
+                poseOk = std::fabs(poseErrHeave) <= tol && std::fabs(poseErrPitch) <= tol && std::fabs(poseErrHeel) <= tol;
+                sea::InterpShip view;
+                const double renderT = netSession.remote.newestTime() - 0.10;
+                if (!netSession.remote.sample(renderT, view)) {
+                    view.x = rs.x; view.z = rs.z; view.heading = rs.heading;
+                    view.sinkDepth = rs.sinkDepth; view.sailTier = rs.sailTier; view.sessionTime = rs.sessionTime;
+                }
+                remoteX = float(view.x);
+                remoteZ = float(view.z);
+                remoteHeading = float(view.heading);
+                remoteSail = view.sailTier;
+                remotePose = sea::computeFloatPose(remoteShip, waves, view.sessionTime, view.x, view.z, view.heading);
+                remotePose.heaveY -= view.sinkDepth;
+                remoteVisible = true;
+                remoteStats = sea::getShipStats(remoteShip);
+            }
+        }
+
         // --- Enemy warship: AI maneuver, buoyancy pose, return fire, foundering ---
+        // A session replaces the patrol with the other player. Combat stays local.
         const bool enemyGone = enemySink > 22.0f;
         enemyReload = clampf(enemyReload - dt, 0.0f, 10.0f);
         sea::FloatPose enemyPose;
         // Keep the enemy out of the harbour safe zone (and thus off the island) — it
         // blockades the mouth instead of sailing through the land or camping the truce.
-        {
+        // A session does not run the patrol at all.
+        if (!netPlay) {
             double ex = enemyWorldX, ez = enemyWorldZ;
             if (sea::keepOutsideCircle(ex, ez, islandX, islandZ, kSafeRadius)) {
                 enemyWorldX = float(ex); enemyWorldZ = float(ez);
             }
         }
-        if (!enemyGone && !enemyStruck && !buildMode) {
+        if (!netPlay && !enemyGone && !enemyStruck && !buildMode) {
             // Fighting: maneuver for a broadside and fire.
             const bool eReady = enemyReload <= 0.0f;
             const sea::AiOrders ord = sea::aiCaptain(enemyWorldX, enemyWorldZ, enemyHeading,
@@ -523,7 +715,7 @@ int main(int argc, char** argv) {
                 enemyShots.insert(enemyShots.end(), ev.begin(), ev.end());
                 enemyReload = 1.6f;
             }
-        } else {
+        } else if (!netPlay) {
             // Struck / going down: dead in the water, coasting to a stop.
             enemySpeed += (0.0f - enemySpeed) * clampf(dt * 0.8f, 0.0f, 1.0f);
             enemyWorldX += std::sin(enemyHeading) * enemySpeed * dt;
@@ -535,7 +727,7 @@ int main(int argc, char** argv) {
 
         // Our broadside (Space) fires from whichever side faces the enemy.
         reload = clampf(reload - dt, 0.0f, 10.0f);
-        if (wantFire && reload <= 0.0f && !buildMode && !inSafeZone) {
+        if (!netPlay && wantFire && reload <= 0.0f && !buildMode && !inSafeZone) {
             const float dxE = enemyWorldX - worldX, dzE = enemyWorldZ - worldZ;
             const float starboardComp = dxE * std::cos(heading) - dzE * std::sin(heading);
             const int side = starboardComp >= 0.0f ? 1 : -1;
@@ -563,7 +755,7 @@ int main(int argc, char** argv) {
         // scaled to the player's zone sails in after a beat — but never while the
         // player is holed up in the harbour truce (peace holds there).
         const bool enemyResolved = enemyGone || captured;
-        if (enemyResolved && !buildMode) {
+        if (!netPlay && enemyResolved && !buildMode) {
             respawnTimer += dt;
             if (respawnTimer > 4.0f && !inSafeZone) spawnEnemyForZone();
         } else if (!enemyResolved) {
@@ -642,6 +834,31 @@ int main(int argc, char** argv) {
             if (ImGui::Button("Reset")) resetShip();
             ImGui::TextDisabled("Keys: W raise sail (hold at full = travel), S lower, A/D steer");
             ImGui::TextDisabled("      Space fire, B board  ·  C/V cargo, X damage, Z repair, R reset");
+            if (netPlay) ImGui::TextDisabled("Session: you sail your hull; the other player sails theirs");
+        }
+        if (netPlay && ImGui::CollapsingHeader("Session", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (netRole == NetRole::Host)
+                ImGui::Text("Host   UDP %d   %s", netSock.boundPort(), netSession.joined ? "peer linked" : "waiting for peer");
+            else
+                ImGui::Text("Join   %s:%d   %s", netAddr.c_str(), netPort, netSession.joined ? "linked" : "joining...");
+            ImGui::Text("Wave seed: %s", netSession.params.waveSeed.c_str());
+            ImGui::Text("Session t: %.2f", simTime);
+            if (remoteVisible) {
+                ImGui::Text("Peer ship: (%.1f, %.1f)  hdg %.0f deg", remoteX, remoteZ, remoteHeading * 57.2957795f);
+                ImGui::Text("Peer cargo: %.0f kg   damage %.0f%%", remoteStats.cargoMass, remoteStats.damageRatio * 100.0);
+                ImGui::TextColored(remoteStats.floatMargin > 0 ? kGreen : kRed,
+                                   "Peer float margin: %.0f kg", remoteStats.floatMargin);
+                ImGui::Text("Peer heave %+.2f   pitch %+.2f   heel %+.2f",
+                            remotePose.heaveY, remotePose.pitch * 57.2957795, remotePose.heel * 57.2957795);
+                ImGui::TextColored(poseOk ? kGreen : kRed,
+                                   "Pose match: dH %+.4f  dP %+.4f  dR %+.4f  %s",
+                                   poseErrHeave, poseErrPitch, poseErrHeel, poseOk ? "OK" : "OUT");
+            } else {
+                ImGui::TextDisabled("No peer ship yet");
+            }
+            if (netSession.hasDamage)
+                ImGui::Text("Last damage event: piece %d -> %.2f",
+                            netSession.lastDamage.pieceIndex, netSession.lastDamage.damage);
         }
         if (ImGui::CollapsingHeader("Build mode", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Checkbox("Guided assembly (freeze & build)", &buildMode);
@@ -736,6 +953,7 @@ int main(int argc, char** argv) {
                         activeProfile.topSpeedFactor * 100.0, activeProfile.turnFactor * 100.0, hs);
         }
         if (ImGui::CollapsingHeader("Gunnery & boarding", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (netPlay) ImGui::TextDisabled("Combat paused while a session is open.");
             const char* est = captured ? "captured" : (enemyGone ? "sunk"
                             : (enemyStruck ? "STRUCK - boardable" : (enemyStats.sinking ? "SINKING" : "afloat")));
             ImGui::Text("Enemy:   %s (level %d)", enemy.display_name.c_str(), enemyLevel);
@@ -820,17 +1038,27 @@ int main(int argc, char** argv) {
             shadow::beginPass(kShadowView, kSunX, kSunY, kSunZ, shCx, shCz, shR);
             if (!iso && !noShadow) {
                 ship_mesh::renderDepth(kShadowView, ship, pose, heading, windDir, sailFullness, 0.0f, 0.0f, float(activeProfile.heelFactor));
-                if (!enemyGone)
+                if (!netPlay && !enemyGone)
                     ship_mesh::renderDepth(kShadowView, enemy, enemyPose, enemyHeading, windDir,
                                            enemyStruck ? 0.0f : 0.75f, enemyWorldX - worldX, enemyWorldZ - worldZ);
+                if (remoteVisible) {
+                    const float peerFull = remoteSail == 0 ? 0.0f : (remoteSail == 1 ? 0.55f : 1.0f);
+                    ship_mesh::renderDepth(kShadowView, remoteShip, remotePose, remoteHeading, windDir, peerFull,
+                                           remoteX - worldX, remoteZ - worldZ, float(activeProfile.heelFactor));
+                }
             }
             if (shIsland && !noShadow) {
                 ship_mesh::setDepthPass(true);
                 ship_view::renderIsland(kShadowView, islX, islZ);
                 ship_mesh::setDepthPass(false);
             }
-            ship_view::render(kClearView, ship, waves, pose, timeSec, heading, worldX, worldZ, windDir, sailFullness, width, height, float(activeProfile.heelFactor), islandX, islandZ, kLandCutRadius, speed);
-            if (!enemyGone && !iso) {
+            ship_view::render(kClearView, ship, waves, pose, simTime, heading, worldX, worldZ, windDir, sailFullness, width, height, float(activeProfile.heelFactor), islandX, islandZ, kLandCutRadius, speed);
+            if (remoteVisible && !iso) {
+                const float peerFull = remoteSail == 0 ? 0.0f : (remoteSail == 1 ? 0.55f : 1.0f);
+                ship_view::renderShip(kClearView, remoteShip, remotePose, remoteHeading, windDir, peerFull, simTime,
+                                      remoteX - worldX, remoteZ - worldZ);
+            }
+            if (!netPlay && !enemyGone && !iso) {
                 ship_view::renderShip(kClearView, enemy, enemyPose, enemyHeading, windDir,
                                       enemyStruck ? 0.0f : 0.75f, timeSec, // furled sails once she strikes
                                       enemyWorldX - worldX, enemyWorldZ - worldZ);
